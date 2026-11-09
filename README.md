@@ -1,4 +1,4 @@
-# ia-agent — Stack IA unifiée
+# myAIBodiesHub — Stack IA unifiée
 
 Stack IA auto-hébergée sur VPS Ubuntu, déployée via Docker Compose et gérée par Coolify. Elle regroupe un moteur LLM, une interface de chat, un orchestrateur de workflows, une mémoire vectorielle, un agent autonome et une infrastructure robotique (NAO via ROS 2).
 
