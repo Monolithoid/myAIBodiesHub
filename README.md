@@ -1,3 +1,10 @@
+<h1>
+  <img src="./assets/myAIBodiesHub-icon.png" alt="" width="48" height="48" align="middle">
+  myAIBodiesHub — Stack IA unifiée
+</h1>
+
+![Un serveur d’IA auto-hébergée relié au robot NAO via ROS 2](./assets/myAIBodiesHub-social.jpg)
+
 # myAIBodiesHub — Stack IA unifiée
 
 Stack IA auto-hébergée sur VPS Ubuntu, déployée via Docker Compose et gérée par Coolify. Elle regroupe un moteur LLM, une interface de chat, un orchestrateur de workflows, une mémoire vectorielle, un agent autonome et une infrastructure robotique (NAO via ROS 2).
