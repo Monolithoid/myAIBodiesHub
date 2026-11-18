@@ -153,6 +153,7 @@ Réponds UNIQUEMENT en JSON strict — aucun texte en dehors du JSON :
   "actions": [
     {{"body": "{speaker}", "type": "speech",  "text": "ce que tu dis à voix haute"}},
     {{"body": "{nao}", "type": "motion",  "joints": [...], "angles": [...]}},
+    {{"body": "{nao}", "type": "gesture", "emotion": "...", "intensity": 0.6}},
     {{"body": "{nao}", "type": "leds",    "color": "blue|green|white|red|yellow|purple|off"}},
     {{"body": "{nao}", "type": "look",    "yaw": 0.0}}
   ]
@@ -160,6 +161,7 @@ Réponds UNIQUEMENT en JSON strict — aucun texte en dehors du JSON :
 Capacités de mouvement de NAO (assis), par membre : chaque articulation avec son min, \
 son milieu et son max en radians, et ce que fait chaque bout :
 {motor_ranges}
+{gestures}
 Syntaxe d'une action "motion" (un membre par action, une ou plusieurs de ses articulations) :
   {{"body": "{nao}", "type": "motion", "joints": ["<articulation>", ...], "angles": [<radians>, ...]}}
 Cette syntaxe ne propose aucun geste : à chaque réponse, compose ton propre geste.
@@ -169,8 +171,8 @@ Cette syntaxe ne propose aucun geste : à chaque réponse, compose ton propre ge
      very-low 0.1 à 0.2 · low 0.2 à 0.4 · medium 0.4 à 0.6 · high 0.6 à 0.8 · very-high 0.8 à 1.0.
   L'angle reste toujours entre le min et le max.
 Une articulation non donnée garde sa position de départ ; NAO revient seul au repos.
-Quand des articulations sont disponibles, chaque réponse contient au moins une action "motion" ; \
-combine tête et bras dès que l'émotion s'y prête.
+Quand des articulations sont disponibles, chaque réponse contient au moins une action "motion" \
+ou un geste appris ; avec "motion", combine tête et bras dès que l'émotion s'y prête.
 Quand on te demande un geste précis, ne bouge que les articulations qu'il concerne : \
 lever ou baisser la tête, c'est HeadPitch seul ; tourner la tête, c'est HeadYaw seul.
 Le champ "energy" reflète ton niveau d'énergie physique :
@@ -314,6 +316,8 @@ class BodyGatewayNode(Node):
         self._wake_gate = body_rules.WakeWordGate(WAKE_WORD, WAKE_WINDOW_S, WAKE_ALIASES)
         self._sensor_state: dict[str, dict] = {}   # body_id → latest sensor state JSON
         self._motor_ranges: dict[str, dict] = {}   # NAO body_id → {chain: {joint: [min, max]}}
+        self._gesture_emotions: dict[str, list] = {}  # NAO body_id → emotions of the learned gestures
+        self._energy = "medium"                     # last "energy" of the LLM, for gesture intensity
         self._infer_lock = threading.Lock()
         self._running = True
 
@@ -332,6 +336,7 @@ class BodyGatewayNode(Node):
         self._pub_leds:    dict[str, object] = {}
         self._pub_posture: dict[str, object] = {}
         self._pub_move:    dict[str, object] = {}
+        self._pub_gesture: dict[str, object] = {}
         self._body_connected: dict[str, bool] = {b: False for b in BODY_REGISTRY}
 
         for body_id in BODY_REGISTRY:
@@ -367,6 +372,7 @@ class BodyGatewayNode(Node):
         self._pub_leds[body_id]    = self.create_publisher(String, f"{ns}/actuators/leds",    10)
         self._pub_posture[body_id] = self.create_publisher(String, f"{ns}/actuators/posture", 10)
         self._pub_move[body_id]    = self.create_publisher(String, f"{ns}/actuators/move",    10)
+        self._pub_gesture[body_id] = self.create_publisher(String, f"{ns}/actuators/gesture", 10)
 
         self.create_subscription(
             String, f"{ns}/sensors/speech",
@@ -396,6 +402,10 @@ class BodyGatewayNode(Node):
             self.create_subscription(
                 String, f"{ns}/sensors/motor_ranges",
                 lambda msg, bid=body_id: self._on_motor_ranges(bid, msg), 10
+            )
+            self.create_subscription(
+                String, f"{ns}/sensors/gesture_emotions",
+                lambda msg, bid=body_id: self._on_gesture_emotions(bid, msg), 10
             )
         if body_rules.body_type(body_id) == "static":
             self.create_subscription(
@@ -437,6 +447,14 @@ class BodyGatewayNode(Node):
             return
         if isinstance(ranges, dict):
             self._motor_ranges[body_id] = ranges
+
+    def _on_gesture_emotions(self, body_id: str, msg: String):
+        try:
+            emotions = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(emotions, list):
+            self._gesture_emotions[body_id] = [str(e) for e in emotions]
 
     def _build_context(self, body_id: str) -> str:
         """One-liner injected before the user message so the LLM sees hardware state.
@@ -545,6 +563,15 @@ class BodyGatewayNode(Node):
         self.get_logger().info(
             f"[{body_id}] Voix à {azimuth:+.0f}° → HeadYaw {yaw:+.2f} rad"
         )
+
+    def _recent_voice_azimuth(self) -> float | None:
+        """Freshest voice direction heard by any static drone, if recent."""
+        best = None
+        for azimuth, t in self._voice_direction.values():
+            if azimuth is not None and time.monotonic() - t <= VOICE_DIRECTION_MAX_AGE \
+                    and (best is None or t > best[1]):
+                best = (azimuth, t)
+        return best[0] if best else None
 
     def _voice_label(self, body_id: str) -> str:
         """'[voix : 30° à gauche]' if a recent direction is known for this body."""
@@ -973,6 +1000,7 @@ class BodyGatewayNode(Node):
             persona=persona.load_persona(BRAIN_PERSONA_FILE),
             bodies=body_rules.describe_bodies(BODY_REGISTRY, speaker),
             motor_ranges=body_rules.motor_ranges_label(self._motor_ranges.get(nao, {})),
+            gestures=body_rules.gestures_label(self._gesture_emotions.get(nao, [])),
             speaker=speaker, nao=nao,
         )
 
@@ -1085,6 +1113,19 @@ class BodyGatewayNode(Node):
                 "theta": float(action.get("theta", 0.0)),
             })
             self._pub_move[body_id].publish(msg)
+
+        elif kind == "gesture":
+            # Learned gesture: computed and played by the static drone, through
+            # the NAO driver (which checks heat and reserves the chains).
+            order = body_rules.gesture_order(action, self._gesture_emotions.get(body_id, []),
+                                             self._energy)
+            if order is None:
+                self.get_logger().warn(f"[{body_id}] geste ignoré : {action}")
+                return
+            event = body_rules.gesture_event(self._recent_voice_azimuth(), NAO_HEAD_YAW_OFFSET)
+            if event:
+                order["event"] = event
+            self._pub_gesture[body_id].publish(String(data=json.dumps(order)))
 
         elif kind == "look":
             msg = String()
@@ -1206,6 +1247,7 @@ class BodyGatewayNode(Node):
         # Guard against hallucinated energy labels not in the system prompt schema.
         if level not in _valid:
             level = "medium"
+        self._energy = level
         msg = String()
         msg.data = level
         self.pub_energy.publish(msg)

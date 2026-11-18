@@ -31,7 +31,17 @@ Décisions prises ici :
     gestes bloqués pendant posture_block secondes et pendant la marche, pas
     de marche pendant une posture ni de posture pendant la marche ;
   - chaleur : une chaîne trop chaude (motor_temp de /nao/status) refuse les
-    nouveaux ordres, mais peut encore revenir au repos.
+    nouveaux ordres, mais peut encore revenir au repos ;
+  - gestes appris (ADR 009) : un geste émotionnel est calculé et joué par le
+    drone statique (emotion_gesture.py), sur la tête, les bras, les poignets
+    et les mains à la fois.  Le driver l'accepte seulement sans posture, sans
+    marche et sans chaîne trop chaude ; il abandonne alors les cibles en
+    cours, attend que les chaînes aient fini leur étape, puis réserve toutes
+    les chaînes au drone.  Tant que le drone tient le corps (owns_body dans
+    /nao/emotion_gesture_state), aucun ordre /nao/motion, posture ou marche
+    ne part.  Le drone rend la main au repos ; s'il se tait plus de
+    gesture_timeout secondes, ou rend la main ailleurs qu'au repos, les
+    chaînes repartent par la pose de départ vers le repos.
 """
 
 DEFAULT_LIMITS = {
@@ -47,6 +57,8 @@ DEFAULT_LIMITS = {
     "joints_while_busy": False,  # accepter les gestes pendant une posture ou une marche
     "rest_return":       True,   # retour au repos après rest_delay d'inactivité
     "rest_delay":        3.0,    # s d'inactivité (après la fin du geste) avant le retour
+    "gestures":          True,   # accepter les gestes appris (drone statique, ADR 009)
+    "gesture_timeout":   60.0,   # s sans nouvelle du drone avant de reprendre les chaînes
 }
 
 # Chaînes commandables et leurs articulations.  Poignets et mains n'en font
@@ -169,6 +181,10 @@ def load_profile(profile) -> tuple[dict, list[str]]:
     return chains, errors
 
 
+# s pendant lesquelles un état du drone sans rapport avec le geste envoyé est ignoré
+GESTURE_GRACE = 2.0
+
+
 class _Chain:
     """État d'une chaîne : dernière étape envoyée, étapes à venir, cible en formation."""
 
@@ -206,6 +222,9 @@ class MotionPolicy:
         self._posture_until = 0.0
         self._last_posture = float("-inf")
         self.refused = 0
+        self._gesture_pending: dict | None = None   # geste accepté, en attente de chaînes libres
+        self._gesture_until = 0.0                     # chaînes réservées au drone jusqu'à cette heure
+        self._gesture_sent: tuple[str, float] = ("", 0.0)   # (id, heure) du dernier geste publié
 
     # -- état venu du robot ------------------------------------------------
 
@@ -234,12 +253,23 @@ class MotionPolicy:
     def _busy(self, now: float) -> bool:
         return self._walking or now < self._posture_until
 
+    def gesture_active(self, now: float) -> bool:
+        """Geste appris en attente ou en cours : le drone a (ou va avoir) la main."""
+        if self._gesture_pending is not None:
+            return True
+        if self._gesture_until and now >= self._gesture_until:
+            # Plus de nouvelles du drone : on reprend, sans savoir où sont les bras.
+            self.release_gesture(at_rest=False, now=now)
+        return now < self._gesture_until
+
     # -- ordres ------------------------------------------------------------
 
     def posture_allowed(self, name: str, now: float) -> tuple[bool, str]:
         """(autorisée ?, raison du refus).  Une posture autorisée bloque les gestes."""
         if not self.limits["postures"]:
             return False, "postures désactivées (jambes)"
+        if self.gesture_active(now):
+            return False, "geste appris en cours"
         if name not in self.limits["postures"]:
             return False, "hors liste"
         if self._walking:
@@ -261,6 +291,8 @@ class MotionPolicy:
         """
         if not self.limits["walk"]:
             return False, "marche désactivée (jambes)"
+        if self.gesture_active(now):
+            return False, "geste appris en cours"
         if now < self._posture_until:
             return False, "changement de posture en cours"
         if not walking and not self._walking:
@@ -271,7 +303,7 @@ class MotionPolicy:
     def submit(self, joints, angles, speed: float, now: float) -> int:
         """Ajoute des articulations à la cible de leur chaîne ; retourne le
         nombre d'articulations acceptées (les autres sont comptées dans refused)."""
-        if self._busy(now) and not self.limits["joints_while_busy"]:
+        if (self._busy(now) and not self.limits["joints_while_busy"]) or self.gesture_active(now):
             self.refused += len(joints)
             return 0
         accepted = 0
@@ -290,6 +322,70 @@ class MotionPolicy:
             c.last_order = now
             accepted += 1
         return accepted
+
+    def request_gesture(self, order: dict, now: float) -> tuple[bool, str]:
+        """(accepté ?, raison du refus) pour un geste appris.  Accepté, il part
+        par take_gesture() dès que les chaînes ont fini leur étape en cours."""
+        if not self.limits["gestures"]:
+            return False, "gestes appris désactivés"
+        if not self.chains:
+            return False, "pas de profil moteur"
+        if self._busy(now):
+            return False, "posture ou marche en cours"
+        if self._hot:
+            return False, "trop chaud : " + ", ".join(sorted(self._hot))
+        if self._gesture_pending is not None:
+            # Le plus récent remplace celui qui attendait encore les chaînes.
+            self._gesture_pending = order
+            return True, ""
+        for c in self.chains.values():
+            c.target = None
+            c.queue = []
+        self._gesture_pending = order
+        return True, ""
+
+    def take_gesture(self, now: float) -> dict | None:
+        """Le geste à publier sur /nao/emotion_gesture, une fois les chaînes immobiles."""
+        if self._gesture_pending is None:
+            return None
+        if any(c.hold_until > now for c in self.chains.values()):
+            return None
+        order, self._gesture_pending = self._gesture_pending, None
+        self._gesture_until = now + float(self.limits["gesture_timeout"])
+        self._gesture_sent = (str(order.get("id", "")), now)
+        return order
+
+    def gesture_state(self, owns_body: bool, at_rest: bool, now: float, gid=None) -> None:
+        """État publié par le drone : il tient encore le corps, ou il le rend.
+
+        Juste après l'envoi d'un geste, un état « rend la main » qui ne parle
+        pas de ce geste a pu partir avant que le drone le reçoive : il est
+        ignoré pendant GESTURE_GRACE secondes."""
+        if owns_body:
+            # Même un geste qui n'est pas passé par ici (bouton de la régie) réserve les chaînes.
+            if self._gesture_pending is None:
+                self._gesture_until = now + float(self.limits["gesture_timeout"])
+            return
+        if not self._gesture_until:
+            return
+        sent_id, sent_at = self._gesture_sent
+        if gid != sent_id and now - sent_at < GESTURE_GRACE:
+            return
+        self.release_gesture(at_rest, now)
+
+    def release_gesture(self, at_rest: bool, now: float) -> None:
+        """Le drone rend les chaînes.  Au repos (relâché par le robot) : rien à
+        faire.  Ailleurs : retour au repos par la pose de départ, tout de suite."""
+        self._gesture_until = 0.0
+        for c in self.chains.values():
+            c.target = None
+            c.queue = []
+            # Inactive depuis rest_delay : le retour au repos peut partir tout de suite.
+            c.hold_until = c.last_order = now - float(self.limits["rest_delay"])
+            if at_rest:
+                c.pose, c.kind = dict(c.rest), "rest"
+            else:
+                c.kind = "target"
 
     def take_refused(self) -> int:
         n, self.refused = self.refused, 0
@@ -330,7 +426,7 @@ class MotionPolicy:
         cmds = []
         for name in sorted(self.chains):
             c = self.chains[name]
-            if self._busy(now):
+            if self._busy(now) or self.gesture_active(now):
                 continue
             self._plan(c, now)
             if not c.queue or c.hold_until > now:

@@ -16,7 +16,8 @@ Chaîne d'un geste :
     generate(..., current_pose, from_rest, return_to="start")         (guardian compris)
     /nao/trajectory        → {"id", "names", "angles", "times", "start", "relax_end"}
     /nao/trajectory_state  ← playing | done | stopped | refused | error
-    /nao/emotion_gesture_state → l'état de chaque geste et la version en service
+    /nao/emotion_gesture_state → l'état de chaque geste et la version en service,
+                                 plus owns_body / at_rest pour le driver NAO
 
 Après un geste le robot reste raide à la pose de départ ; s'il ne reçoit pas de
 nouveau geste pendant GESTURE_REST_DELAY secondes, le drone envoie le retour au
@@ -195,6 +196,7 @@ class GestureService:
         self._angles_cv = threading.Condition()
         self._playing = None            # {"id", "until"}
         self._at_start = False          # robot laissé raide à la pose de départ
+        self._rested = True             # robot au repos et relâché (dernier retour au repos fini)
         self._last_end = 0.0
         self._stop = threading.Event()
 
@@ -217,9 +219,14 @@ class GestureService:
         v = self.version or {}
         info = v.get("info") or {}
         short = {"ref": v.get("ref"), "calibration": (info.get("calibration") or {}).get("calibration_version"),
-                 "runs": dict((k, (m or {}).get("run")) for k, m in (info.get("models") or {}).items())}
+                 "runs": dict((k, (m or {}).get("run")) for k, m in (info.get("models") or {}).items()),
+                 "emotions": info.get("emotions") or []}
         full = state in ("version_loaded", "version_refused")
-        msg = dict(fields, id=gid, state=state, version=self.version if full else short)
+        # owns_body : le drone tient la tête et les bras (geste en cours, ou robot
+        # raide à la pose de départ en attendant le retour au repos).  Le driver NAO
+        # ne leur envoie rien tant que c'est vrai.
+        msg = dict(fields, id=gid, state=state, version=self.version if full else short,
+                   owns_body=self._playing is not None or self._at_start, at_rest=self._rested)
         log.info("Geste %s : %s %s", gid, state, fields.get("reason", ""))
         self.publish("/nao/emotion_gesture_state", msg)
 
@@ -282,6 +289,10 @@ class GestureService:
             if playing is None or payload.get("id") != playing["id"]:
                 return
             st = payload.get("state")
+            if st == "playing" or (playing.get("to_rest") and st in ("stopped", "error")):
+                self._rested = False
+            elif st == "done" and playing.get("to_rest"):
+                self._rested = True
             if st in ("done", "stopped", "refused", "error"):
                 self._playing = None
                 self._last_end = self.clock()

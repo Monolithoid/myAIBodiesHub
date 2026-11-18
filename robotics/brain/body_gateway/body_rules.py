@@ -26,14 +26,14 @@ import unicodedata
 CAPABILITIES: dict[str, set[str]] = {
     "static": {"speech"},
     "obs":    {"speech"},
-    "nao":    {"speech", "motion", "leds", "move", "look"},
+    "nao":    {"speech", "motion", "leds", "move", "look", "gesture"},
 }
 
 # One line per body type for the LLM system prompt.
 CAPABILITY_LABELS: dict[str, str] = {
     "static": "parler, entendre, voir (haut-parleur, micros, caméra de la pièce)",
     "obs":    "parler sur le stream (voix envoyée dans le mixer OBS)",
-    "nao":    "gestes, tête, LEDs (motion, look, leds, move)",
+    "nao":    "gestes, tête, LEDs (motion, gesture, look, leds, move)",
 }
 
 # Bodies that only give NAO a voice: "speech" goes to every connected one.
@@ -278,3 +278,53 @@ def motor_ranges_label(ranges: dict) -> str:
     if not lines:
         return "Aucune articulation disponible (NAO non calibré) : n'envoie pas d'action motion."
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Learned gestures (nao-emotion-motion generator on the static drone, ADR 009)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# "energy" of the LLM answer → gesture intensity, when the action gives none.
+ENERGY_INTENSITY = {"very-low": 0.15, "low": 0.3, "medium": 0.5, "high": 0.7, "very-high": 0.9}
+
+
+def gestures_label(emotions: list) -> str:
+    """Prompt lines for the "gesture" action; empty list = not available."""
+    if not emotions:
+        return ("Gestes appris : indisponibles pour l'instant, n'envoie pas d'action "
+                "\"gesture\".")
+    return ("Gestes appris (tête, bras et mains ensemble, appris sur ce NAO) : "
+            "action {\"type\": \"gesture\", \"emotion\": <une de : "
+            + ", ".join(str(e) for e in emotions)
+            + ">, \"intensity\": 0.0 à 1.0}. Un geste appris remplace les actions "
+              "\"motion\" et \"look\" de la même réponse : n'en mets qu'un, sans motion ni look. "
+              "Préfère-le quand ton émotion est nette ; il se tourne seul vers la voix entendue.")
+
+
+def gesture_order(action: dict, emotions: list, energy: str = "") -> dict | None:
+    """{"emotion", "intensity"} for the NAO driver, or None if the action is unusable."""
+    emotion = str(action.get("emotion", "")).strip()
+    if not emotion or (emotions and emotion not in emotions):
+        return None
+    try:
+        intensity = float(action["intensity"])
+    except (KeyError, TypeError, ValueError):
+        intensity = ENERGY_INTENSITY.get(str(energy).lower().strip(), 0.5)
+    if intensity != intensity:   # NaN
+        intensity = 0.5
+    return {"emotion": emotion, "intensity": round(max(0.0, min(1.0, intensity)), 3)}
+
+
+def gesture_event(azimuth_deg: float | None, offset_deg: float = 0.0) -> dict | None:
+    """Voice direction heard by the static drone → event in the NAO torso frame.
+
+    The drone counts positive to the right, the gesture generator positive to
+    the robot's left (like HeadYaw), hence the minus sign; NAO_HEAD_YAW_OFFSET
+    as in head_yaw_rad().  Elevation unknown: 0.  Clamped to ±90°, the range
+    the gestures were recorded with.
+    """
+    if azimuth_deg is None:
+        return None
+    az = -float(azimuth_deg) + float(offset_deg)
+    az = max(-90.0, min(90.0, az))
+    return {"azimuth_deg": round(az, 1), "elevation_deg": 0.0}

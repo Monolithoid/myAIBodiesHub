@@ -393,10 +393,24 @@ Every `/nao/motion`, `/nao/gesture` and `/nao/cmd_vel` order goes through
   blocked for `posture_block` seconds after a change, and during a walk; a
   posture is refused while walking, a walk during a posture change; a
   zero-velocity `move` is only sent to stop a walk in progress.
+- **Learned gestures** ([ADR 009](decisions/009-gestes-appris.md)):
+  `/bodies/{id}/actuators/gesture` (`{"emotion", "intensity", "event"}`, from
+  `body-gateway` or the régie) is refused during a posture or a walk, with a hot
+  chain, or for an emotion the drone's generator does not know. Accepted, it
+  drops the pending targets, waits for the current steps to end, then goes out
+  on `/nao/emotion_gesture` to the static drone, which computes and plays it.
+  While the drone holds the body (`owns_body` in `/nao/emotion_gesture_state`,
+  gesture playing or robot held at the start pose), no `/nao/motion`, posture
+  or walk order leaves. The drone gives the body back at rest; given back
+  elsewhere, or silent for `gesture_timeout` seconds, the chains go back to
+  rest through the start pose.
 
 The driver publishes the ranges on `/bodies/{id}/sensors/motor_ranges`
 (`{chain: {joint: [min, max]}}`, every 15 s): `body-gateway` writes them in the
-LLM prompt. The LLM never sees the rest and start poses.
+LLM prompt. The LLM never sees the rest and start poses. It also publishes the
+emotions known by the drone's gesture generator on
+`/bodies/{id}/sensors/gesture_emotions` (JSON list, `[]` = no generator, every
+15 s): `body-gateway` then offers the `gesture` action.
 
 Joint max velocities (no-load motor speed 11 900 rpm ÷ gearbox ratio,
 Aldebaran H25 motors doc): 8.29 rad/s for HeadYaw, ShoulderPitch, ElbowYaw;
@@ -417,6 +431,8 @@ Settings: the `MOTION_LIMITS` environment variable (JSON) overrides these defaul
 | `joints_while_busy` | false | accept joint moves during a posture change or walk |
 | `rest_return` | true | go back to the rest pose when idle |
 | `rest_delay` | 3 s | idle time after the last step before the return |
+| `gestures` | true | accept learned gestures (static drone, ADR 009) |
+| `gesture_timeout` | 60 s | without news from the drone, the driver takes the chains back |
 
 Tests without ROS 2: `cd robotics/drones/nao/driver && python3 -m unittest discover -s tests -v`.
 

@@ -112,6 +112,9 @@ class FakeBridge(object):
     def states(self):
         return [(d["id"], d["state"]) for t, d in self.out if t == "/nao/emotion_gesture_state"]
 
+    def last_state(self):
+        return [d for t, d in self.out if t == "/nao/emotion_gesture_state"][-1]
+
     def trajectories(self):
         return [d for t, d in self.out if t == "/nao/trajectory"]
 
@@ -195,6 +198,9 @@ class TestService(Base):
         self.assertEqual(call[2], {"azimuth_deg": 30})
         self.assertTrue(call[4])                     # mesuré au repos
         self.assertEqual(call[5], "start")
+        self.assertTrue(self.bridge.last_state()["owns_body"])     # le driver laisse la main
+        self.bridge.robot("a", "playing")
+        self.assertFalse(self.bridge.last_state()["at_rest"])
         s.step()                                     # geste en cours : rien d'autre
         self.assertEqual(len(self.bridge.trajectories()), 1)
         self.bridge.robot("a", "done")
@@ -207,7 +213,11 @@ class TestService(Base):
         rest = self.bridge.trajectories()[-1]
         self.assertTrue(rest["relax_end"])
         self.assertEqual(rest["angles"][0][-1], POSES["rest"]["LShoulderPitch"])
+        self.bridge.robot(rest["id"], "playing")
+        self.assertTrue(self.bridge.last_state()["owns_body"])
         self.bridge.robot(rest["id"], "done")
+        self.assertFalse(self.bridge.last_state()["owns_body"])    # rendu au driver, au repos
+        self.assertTrue(self.bridge.last_state()["at_rest"])
         self.now[0] += 10
         s.step()                                     # déjà au repos : plus rien
         self.assertEqual(len(self.bridge.trajectories()), 2)

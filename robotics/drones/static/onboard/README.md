@@ -92,7 +92,7 @@ nécessaire (déjà dans `requirements.txt`).
 | `/nao/joint_angles` | ← robot | `{"id", "angles": {joint: rad}}` |
 | `/nao/trajectory` | → robot | `{"id", "names", "angles", "times", "start", "relax_end"}` |
 | `/nao/trajectory_state` | ← robot | `{"id", "state": "playing\|done\|stopped\|refused\|error", "reason"}` |
-| `/nao/emotion_gesture_state` | → VPS | état de chaque geste (`sent`, `refused`, `replaced`, `robot_playing`, `robot_done`…) et la version en service (`version_loaded`, `version_refused`) |
+| `/nao/emotion_gesture_state` | → VPS | état de chaque geste (`sent`, `refused`, `replaced`, `robot_playing`, `robot_done`…), la version en service (`version_loaded`, `version_refused`), et `owns_body` / `at_rest` : le driver NAO ne bouge pas la tête ni les bras tant que `owns_body` est vrai |
 
 Après un geste, le robot reste raide à la pose de départ. Sans nouveau geste
 pendant `GESTURE_REST_DELAY` secondes (3 par défaut), le drone envoie le

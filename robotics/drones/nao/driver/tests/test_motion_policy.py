@@ -215,5 +215,75 @@ class TestPostureWalkHeat(unittest.TestCase):
         self.assertEqual(head(p.take(3.0)[0])["HeadYaw"], 0.0)
 
 
+class TestLearnedGesture(unittest.TestCase):
+    """Gestes appris joués par le drone statique (ADR 009)."""
+
+    def test_waits_for_the_current_step_then_reserves(self):
+        p = policy(rest_delay=1.0)
+        p.submit(["HeadYaw"], [0.3], 0.0, now=0.0)
+        p.take(0.0)                                   # repos → départ, jusqu'à 1.0
+        self.assertTrue(p.request_gesture({"id": "g1", "emotion": "joie"}, 0.5)[0])
+        self.assertIsNone(p.take_gesture(0.5))        # étape en cours
+        self.assertEqual(p.take(1.0), [])             # cible abandonnée, rien ne part
+        self.assertEqual(p.take_gesture(1.0)["id"], "g1")
+        # Le drone tient le corps : ni ordre, ni retour au repos, ni posture.
+        p.gesture_state(True, False, 1.2, "g1")
+        self.assertEqual(p.submit(["HeadYaw"], [0.1], 0.0, now=2.0), 0)
+        self.assertEqual(p.take(10.0), [])
+        self.assertTrue(p.gesture_active(10.0))
+
+    def test_given_back_at_rest(self):
+        p = policy(rest_delay=1.0)
+        p.request_gesture({"id": "g1"}, 0.0)
+        p.take_gesture(0.0)
+        p.gesture_state(True, False, 1.0, "g1")
+        p.gesture_state(False, True, 20.0, "rest-1")
+        self.assertFalse(p.gesture_active(20.0))
+        self.assertEqual(p.take(30.0), [])            # déjà au repos et relâché
+        self.assertEqual(p.submit(["HeadYaw"], [0.3], 0.0, now=30.0), 1)
+
+    def test_given_back_elsewhere_goes_to_rest_by_start(self):
+        p = policy(rest_delay=1.0)
+        p.request_gesture({"id": "g1"}, 0.0)
+        p.take_gesture(0.0)
+        p.gesture_state(False, False, 5.0, "rest-1")  # retour au repos refusé par le drone
+        cmds = p.take(5.0)
+        self.assertEqual(head(cmds[0]), HEAD["start"])
+        self.assertEqual(head(p.take(6.0)[0]), HEAD["rest"])
+
+    def test_stale_state_ignored_right_after_sending(self):
+        p = policy()
+        p.request_gesture({"id": "g1"}, 0.0)
+        p.take_gesture(0.0)
+        p.gesture_state(False, True, 0.5, None)       # annonce périodique partie avant
+        self.assertTrue(p.gesture_active(0.5))
+        p.gesture_state(False, True, 0.6, "g1")       # refus du geste lui-même
+        self.assertFalse(p.gesture_active(0.6))
+
+    def test_silent_drone_times_out(self):
+        p = policy(gesture_timeout=10.0, rest_delay=1.0)
+        p.request_gesture({"id": "g1"}, 0.0)
+        p.take_gesture(0.0)
+        self.assertTrue(p.gesture_active(9.0))
+        self.assertFalse(p.gesture_active(10.0))
+        self.assertEqual(head(p.take(10.0)[0]), HEAD["start"])
+
+    def test_refused_when_hot_busy_or_off(self):
+        p = policy(postures=["Stand"])
+        p.set_motor_temps({"rarm": 80})
+        self.assertFalse(p.request_gesture({"id": "a"}, 0.0)[0])
+        p.set_motor_temps({})
+        p.posture_allowed("Stand", 0.0)
+        self.assertFalse(p.request_gesture({"id": "a"}, 1.0)[0])
+        self.assertFalse(policy(gestures=False).request_gesture({"id": "a"}, 0.0)[0])
+        self.assertFalse(MotionPolicy().request_gesture({"id": "a"}, 0.0)[0])   # pas de profil
+
+    def test_regie_gesture_reserves_too(self):
+        p = policy()
+        p.gesture_state(True, False, 0.0, "regie-1")  # pas passé par le driver
+        self.assertEqual(p.submit(["HeadYaw"], [0.1], 0.0, now=0.5), 0)
+        self.assertFalse(p.posture_allowed("Stand", 0.5)[0])
+
+
 if __name__ == "__main__":
     unittest.main()

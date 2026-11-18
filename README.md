@@ -32,6 +32,8 @@ Stack IA auto-hébergée sur VPS Ubuntu, déployée via Docker Compose et géré
 | [ADR 005](docs/decisions/005-avatar-twitch.md) | Une seule boucle stimulations → LLM → actions : Twitch comme entrée, OBS comme voix |
 | [ADR 006](docs/decisions/006-nao-via-drone-statique.md) | Le NAO ne sort vers le VPS qu'à travers un relais sur le drone statique |
 | [ADR 007](docs/decisions/007-regie-topic-events.md) | Régie : body-gateway publie ses flux sur le topic ROS standard `/events` |
+| [ADR 008](docs/decisions/008-univers-moteur-contraint.md) | Univers moteur contraint : profil moteur calibré depuis la régie |
+| [ADR 009](docs/decisions/009-gestes-appris.md) | Gestes appris (nao-emotion-motion) : générés sur le drone statique, joués par le robot |
 
 ---
 
