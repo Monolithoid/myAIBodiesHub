@@ -45,6 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from static_drone import Rosbridge, _env, _env_float, load_dotenv  # noqa: E402
+import gesture_playback  # noqa: E402
 
 log = logging.getLogger("emotion_gesture")
 
@@ -67,7 +68,7 @@ class GestureError(RuntimeError):
 def read_settings():
     """Relit emotion_gesture.env (fixé à la main) puis .env (connexion rosbridge)."""
     for key in ("GESTURE_DATASET_REPO", "GESTURE_DATASET_REF", "GESTURE_CACHE_DIR",
-                "GESTURE_REST_DELAY", "GESTURE_RATE_HZ"):
+                "GESTURE_REST_DELAY", "GESTURE_RATE_HZ", "GESTURE_PLAYBACK"):
         os.environ.pop(key, None)   # un rechargement relit le fichier, pas l'ancienne valeur
     load_dotenv(os.environ.get("GESTURE_ENV_FILE") or os.path.join(HERE, "emotion_gesture.env"))
     load_dotenv(os.path.join(HERE, ".env"))
@@ -82,7 +83,15 @@ def read_settings():
         "cache_dir": os.path.expanduser(_env("GESTURE_CACHE_DIR", "~/.cache/nao-gesture")),
         "rest_delay": _env_float("GESTURE_REST_DELAY", 3.0),
         "rate_hz": _env_float("GESTURE_RATE_HZ", 25.0),
+        "playback": _playback_mode(_env("GESTURE_PLAYBACK", "local")),
     }
+
+
+def _playback_mode(value):
+    value = (value or "local").strip().lower()
+    if value not in ("local", "uniform", "off"):
+        raise GestureError("GESTURE_PLAYBACK invalide : {} (local, uniform ou off)".format(value))
+    return value
 
 
 # ======================================================================
@@ -239,6 +248,11 @@ class GestureService:
             folder = fetch(s["repo"], s["ref"], s["cache_dir"])
             lib = load_library(folder)
             gen = lib.GestureGenerator.load(os.path.join(folder, "nao_gesture.json"))
+            # Le générateur exporté valide le geste brut : on le rend jouable comme
+            # l'interface de nao-emotion-motion (gesture_playback.py).  Une version
+            # du générateur qui le ferait elle-même (adapt_generated) est laissée telle quelle.
+            if s.get("playback", "local") != "off" and not hasattr(gen, "adapt_generated"):
+                gesture_playback.make_playable(gen, mode=s.get("playback", "local"))
             errors, warnings, rate = check_generator(lib, gen, self.profile)
         except Exception as exc:
             errors, warnings, rate, gen, lib = [str(exc)], [], 0.0, None, None
@@ -348,9 +362,17 @@ class GestureService:
             if missing:
                 raise GestureError("angles manquants : " + ", ".join(missing))
             pose = dict((j, float(pose[j])) for j in joints)
-            g = gen.generate(req.get("emotion"), float(req.get("intensity", 0.5)),
-                             event=req.get("event") or None, current_pose=pose,
-                             from_rest=self._is_at_rest(gen, pose), return_to="start")
+            from_rest = self._is_at_rest(gen, pose)
+            emotion, intensity = req.get("emotion"), float(req.get("intensity", 0.5))
+            event = req.get("event") or None
+            # Refusé : on réessaie sans l'événement, puis avec une petite variation
+            # (conseil de docs/generator-integration.md §7) ; sinon rien n'est joué.
+            tries = [(event, 0.0, None)] + ([(None, 0.0, None)] if event else []) + [(event, 0.05, 1)]
+            for ev, variation, seed in tries:
+                g = gen.generate(emotion, intensity, event=ev, current_pose=pose, from_rest=from_rest,
+                                 return_to="start", variation=variation, seed=seed)
+                if g.ok:
+                    break
         except Exception as exc:
             self.state(gid, "refused", reason=str(exc))
             return
@@ -360,7 +382,9 @@ class GestureService:
         self._send(gid, g, pose, relax_end=False, to_rest=False,
                    info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
                          "event": req.get("event"), "notes": g.notes,
-                         "adaptation": g.adaptation})
+                         "adaptation": getattr(g, "adaptation", None) or getattr(gen, "last_adaptation", None),
+                         "retry": None if (ev, variation) == (event, 0.0) else
+                         ("sans événement" if ev is None and event else "variation")})
         with self._lock:
             self._at_start = True
 

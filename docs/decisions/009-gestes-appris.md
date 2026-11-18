@@ -38,7 +38,12 @@ rien de lourd ne doit tourner dessus.
 6. **Après un geste**, le robot reste raide à la pose de départ. Sans nouveau
    geste pendant `GESTURE_REST_DELAY` secondes, le drone envoie le retour au
    repos, validé lui aussi, et le robot se relâche à la fin.
-7. **Le driver NAO arbitre** : il refuse un geste pendant une posture, une
+7. **Les gestes sont rendus jouables sur le drone** (`gesture_playback.py`),
+   comme le fait l'interface de nao-emotion-motion (`playable.py`) : le
+   générateur exporté ne le fait pas et refuse sinon presque tous les gestes.
+   nao-emotion-motion n'est pas modifié ; le guardian exporté juge toujours le
+   mouvement final.
+8. **Le driver NAO arbitre** : il refuse un geste pendant une posture, une
    marche ou avec une chaîne trop chaude, attend que les chaînes aient fini
    leur étape, puis les réserve au drone tant que celui-ci tient le corps
    (`owns_body`). Si le drone se tait trop longtemps, le driver reprend la main
@@ -64,5 +69,7 @@ Répartition :
 - Les gestes sont joués à la vitesse apprise, plus vite que la vitesse plafond
   des ordres `motion` (0,3) : c'est le guardian qui borne vitesses et
   accélérations.
+- `gesture_playback.py` copie la logique de `playable.py` : à reporter si
+  elle évolue dans nao-emotion-motion.
 - Pendant un geste appris, la tête ne suit plus la voix ; le geste s'oriente
   lui-même vers la voix entendue.

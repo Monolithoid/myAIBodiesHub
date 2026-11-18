@@ -31,16 +31,22 @@ class _Guardian(object):
     start_tolerance, rest_velocity, max_acceleration = 0.05, 0.3, 30.0
     def __init__(self, poses):
         self.poses = poses
+    constraints, min_duration_s, max_duration_s = [], 0.3, 15.0
     def pose(self, name):
         return dict(self.poses[name])
+    def allowed_range(self, joint):
+        return [-2.0, 2.0]
+    def velocity_limit(self, joint):
+        return 5.0
+    def acceleration_limit(self, joint):
+        return 50.0
     def check_rest_transition(self, t, joints, q, start_state=None, time_offset=0.0):
         return _Report(True)
 
 class Gesture(object):
-    def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations,
-                 adaptation=None, raw_report=None):
+    def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations):
         self.joints, self.times, self.positions, self.report = joints, times, positions, report
-        self.notes, self.adaptation = notes, adaptation
+        self.notes = notes
     @property
     def ok(self):
         return self.report.ok
@@ -62,21 +68,29 @@ class GestureGenerator(object):
         self.models = {"arms": 1, "head": 1}
         self.guardian = _Guardian(data["poses"])
         self.refuse = set(data.get("refuse", []))
+        self.refuse_with_event = set(data.get("refuse_with_event", []))
+        self.adapted = 0
         self.info = {"models": {"arms": {"run": "arms-1"}}, "calibration": {"calibration_version": "cal-1"}}
         self.calls = []
     @classmethod
     def load(cls, path):
         with open(path) as f:
             return cls(json.load(f))
-    def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start"):
+    def _plan(self, model, x, variation, seed):
+        return [[0.0]], 1.0
+    def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None):
+        return ["LShoulderPitch"], [0.0, 1.0], [[0.8], [0.9]], {"notes": [], "durations": {}}
+    def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
+                 variation=0.0, seed=None):
         self.calls.append((emotion, intensity, event, dict(current_pose or {}), from_rest, return_to))
+        self.gesture(emotion, intensity, event, variation, seed)
         joints = ["LShoulderPitch", "HeadYaw"]
         start = self.guardian.pose("start")
         q0 = [current_pose[j] for j in joints]
         rows = [q0, [x + 0.1 for x in q0], [start[j] for j in joints]]
-        ok = emotion not in self.refuse
+        ok = emotion not in self.refuse and not (event and emotion in self.refuse_with_event)
         return Gesture(joints, [0.0, 0.5, 1.0], rows, _Report(ok, "" if ok else "velocity"), None, [], {},
-                       ["note"], {}, {"changed": False})
+                       ["note"], {})
 '''
 
 POSES = {"rest": {"LShoulderPitch": 1.4, "HeadYaw": 0.0}, "start": {"LShoulderPitch": 0.8, "HeadYaw": 0.0}}
@@ -234,6 +248,34 @@ class TestService(Base):
         self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a", "c"])
         self.assertIn(("b", "replaced"), self.bridge.states())
         self.assertFalse(s.gen.calls[-1][4])          # pas au repos : depuis la posture mesurée
+
+    def test_playback_adaptation_plugged_in(self):
+        calls = []
+        real = eg.gesture_playback._make_playable
+
+        def spy(guardian, joints, t, q, **kw):
+            calls.append(kw.get("mode"))
+            return t, q, {"changed": True, "time_scale": 1.2, "notes": ["ralenti"]}
+        eg.gesture_playback._make_playable = spy
+        try:
+            s = self.service()
+            s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5})
+            s.step()
+        finally:
+            eg.gesture_playback._make_playable = real
+        self.assertEqual(calls[-1], "local")
+        sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"]
+        self.assertEqual(sent[-1]["adaptation"]["time_scale"], 1.2)
+
+    def test_retry_without_event(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse_with_event=["joie"])).encode()
+        s = self.service()
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "event": {"azimuth_deg": 20}})
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
+        self.assertIsNone(s.gen.calls[-1][2])
+        sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"]
+        self.assertEqual(sent[-1]["retry"], "sans événement")
 
     def test_guardian_refusal_sends_nothing(self):
         self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["peur"])).encode()
