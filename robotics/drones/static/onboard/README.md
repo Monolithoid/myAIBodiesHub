@@ -76,9 +76,11 @@ depuis la pose de départ), l'ancienne reste en service.
 alors que l'interface de nao-emotion-motion le rend d'abord jouable
 (`playable.py` : points de contrôle ramenés dans la zone, saturation douce,
 ralentissement local là où une vitesse ou une accélération dépasse la limite).
-`gesture_playback.py` refait cette étape sur le drone, sans modifier
-nao-emotion-motion ; le guardian du générateur juge ensuite le mouvement
-complet. Sans elle, presque tous les gestes sont refusés. Un geste refusé est
+Depuis nao-emotion-motion#62, le générateur exporté fait cette étape lui-même.
+Pour une version plus ancienne du dataset, `gesture_playback.py` la refait sur
+le drone (il se désactive tout seul avec un générateur récent) ; le guardian
+du générateur juge ensuite le mouvement complet. Sans elle, presque tous les
+gestes sont refusés. Un geste refusé est
 réessayé sans l'événement, puis avec une petite variation ; sinon rien n'est
 joué. `GESTURE_PLAYBACK=off` revient au geste brut. Si `playable.py` évolue
 dans nao-emotion-motion, reporter le changement dans `gesture_playback.py`.
