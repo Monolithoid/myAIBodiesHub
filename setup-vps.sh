@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# setup-vps.sh — Préparation du VPS avant déploiement via Coolify
+# setup-vps.sh — VPS preparation before deploying with Coolify
 #
-# Ce script couvre uniquement ce que Coolify ne gère pas :
-#   - Arborescence des volumes host (/opt/ia/)
+# This script only covers what Coolify does not handle:
+#   - Host volume tree (/opt/ia/)
 #   - Firewall UFW
-#   - Configuration bitterbot.json (token gateway)
-#   - rclone + services systemd (sync cloud)
+#   - bitterbot.json configuration (gateway token)
+#   - rclone + systemd services (cloud sync)
 #
-# Ce que Coolify gère (ne pas dupliquer ici) :
-#   - Installation Docker
-#   - docker compose pull + up -d (bouton Deploy)
-#   - Variables d'environnement (UI Coolify)
-#   - Mises à jour (bouton Redeploy)
+# What Coolify handles (do not duplicate here):
+#   - Docker installation
+#   - docker compose pull + up -d (Deploy button)
+#   - Environment variables (Coolify UI)
+#   - Updates (Redeploy button)
 #
-# Usage : sudo bash setup-vps.sh
-# Prérequis : Ubuntu 22.04+ avec accès root, Coolify déjà installé
+# Usage: sudo bash setup-vps.sh
+# Requirements: Ubuntu 22.04+ with root access, Coolify already installed
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ error()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 section(){ echo -e "\n${CYAN}══ $* ══${NC}"; }
 
 require_root() {
-    [[ $EUID -eq 0 ]] || error "Ce script doit être exécuté en root : sudo bash $0"
+    [[ $EUID -eq 0 ]] || error "This script must be run as root: sudo bash $0"
 }
 
 ask() {
@@ -59,11 +59,11 @@ ask() {
 }
 
 # ============================================================
-# ÉTAPE 1 — Arborescence des données
+# STEP 1 — Data tree
 # ============================================================
 
 create_directories() {
-    section "Arborescence /opt/ia"
+    section "Directory tree /opt/ia"
     local dirs=(
         "${DATA_DIR}/ollama"
         "${DATA_DIR}/webui"
@@ -78,15 +78,15 @@ create_directories() {
     )
     for d in "${dirs[@]}"; do
         mkdir -p "$d"
-        log "Créé : $d"
+        log "Created: $d"
     done
-    # uid 1000 = utilisateur node dans le container Bitterbot
+    # uid 1000 = node user in the Bitterbot container
     chown -R 1000:1000 "${DATA_DIR}/bitterbot"
     log "Permissions bitterbot : 1000:1000"
 }
 
 # ============================================================
-# ÉTAPE 2 — Firewall UFW
+# STEP 2 — UFW firewall
 # ============================================================
 
 configure_firewall() {
@@ -100,43 +100,43 @@ configure_firewall() {
     ufw allow 443   comment "HTTPS (Coolify / Traefik)"
     ufw allow 8000  comment "Coolify UI"
 
-    # body-gateway : autorisé depuis le subnet Docker bridge (chat-relay → host:8095)
-    # Docker crée typiquement des bridges en 172.16-31.x.x ou 10.x.x.x selon le daemon
+    # body-gateway: allowed from the Docker bridge subnet (chat-relay → host:8095)
+    # Docker typically creates bridges in 172.16-31.x.x or 10.x.x.x depending on the daemon
     ufw allow from 172.16.0.0/12 to any port 8095 comment "body-gateway depuis Docker bridge (ai-network)"
     ufw allow from 10.0.0.0/8    to any port 8095 comment "body-gateway depuis Docker bridge (ai-network, alt)"
 
-    # rosbridge : uniquement depuis rosbridge-proxy (Docker bridge), qui vérifie le jeton.
-    # Le NAO passe par le relais du drone statique (ADR 006), puis Traefik en wss://.
+    # rosbridge: only from rosbridge-proxy (Docker bridge), which checks the token.
+    # The NAO goes through the static drone's relay (ADR 006), then Traefik over wss://.
     ufw allow from 172.16.0.0/12 to any port 9090 comment "rosbridge depuis rosbridge-proxy (Docker bridge)"
     ufw allow from 10.0.0.0/8    to any port 9090 comment "rosbridge depuis rosbridge-proxy (Docker bridge, alt)"
 
-    # Ports internes — non exposés publiquement
+    # Internal ports — not exposed publicly
     ufw deny 11434  comment "Ollama (reverse proxy uniquement)"
     ufw deny 3000   comment "Open WebUI (reverse proxy uniquement)"
     ufw deny 5678   comment "n8n (SSH tunnel uniquement)"
     ufw deny 9090   comment "rosbridge (via rosbridge-proxy + jeton uniquement)"
-    ufw deny 8095   comment "body-gateway (Docker bridge uniquement, voir règles allow ci-dessus)"
+    ufw deny 8095   comment "body-gateway (Docker bridge only, see allow rules above)"
 
     ufw --force enable
-    log "UFW activé."
+    log "UFW enabled."
     ufw status verbose
 }
 
 # ============================================================
-# ÉTAPE 3 — Configuration Bitterbot
+# STEP 3 — Bitterbot configuration
 # ============================================================
 
 configure_bitterbot() {
     section "Configuration Bitterbot"
 
     if [[ -f "$BITTERBOT_CONFIG_DST" ]]; then
-        warn "bitterbot.json déjà présent — conservé sans modification."
+        warn "bitterbot.json already present — kept unchanged."
         return
     fi
 
     [[ -f "$BITTERBOT_CONFIG_SRC" ]] || error "Template introuvable : ${BITTERBOT_CONFIG_SRC}"
 
-    # Générer le token gateway et l'afficher pour le saisir dans Coolify
+    # Generate the gateway token and print it to enter it in Coolify
     local token
     token=$(openssl rand -hex 32)
 
@@ -144,62 +144,62 @@ configure_bitterbot() {
     sed -i "s/CHANGE_THIS_BITTERBOT_TOKEN/${token}/g" "$BITTERBOT_CONFIG_DST"
     chown 1000:1000 "$BITTERBOT_CONFIG_DST"
 
-    log "bitterbot.json configuré."
+    log "bitterbot.json configured."
     echo ""
-    echo -e "${YELLOW}══ ACTION REQUISE DANS COOLIFY ══${NC}"
+    echo -e "${YELLOW}══ ACTION REQUIRED IN COOLIFY ══${NC}"
     echo -e "  Variable : ${CYAN}BITTERBOT_GATEWAY_TOKEN${NC}"
     echo -e "  Valeur   : ${GREEN}${token}${NC}"
     echo ""
-    warn "Copie cette valeur dans Coolify → Environment Variables avant de déployer."
+    warn "Copy this value into Coolify → Environment Variables before deploying."
     echo ""
-    echo -e "  Variable : ${CYAN}ROSBRIDGE_TOKEN${NC} (à donner aussi au NAO : --token)"
+    echo -e "  Variable : ${CYAN}ROSBRIDGE_TOKEN${NC} (also to give to the NAO: --token)"
     echo -e "  Valeur   : ${GREEN}$(openssl rand -hex 32)${NC}"
     echo ""
-    echo -e "  Variable : ${CYAN}OBS_TOKEN${NC} (secret de l'overlay OBS : https://obs.DOMAIN/overlay?token=…)"
+    echo -e "  Variable : ${CYAN}OBS_TOKEN${NC} (OBS overlay secret: https://obs.DOMAIN/overlay?token=…)"
     echo -e "  Valeur   : ${GREEN}$(openssl rand -hex 32)${NC}"
     echo ""
-    echo -e "  Variable : ${CYAN}REGIE_TOKEN${NC} (secret de la régie : https://regie.DOMAIN/?token=…)"
+    echo -e "  Variable : ${CYAN}REGIE_TOKEN${NC} (control room secret: https://regie.DOMAIN/?token=…)"
     echo -e "  Valeur   : ${GREEN}$(openssl rand -hex 32)${NC}"
     echo ""
-    echo -e "  Variable : ${CYAN}TWITCH_CHANNEL${NC} (chaîne Twitch dont NAO lit le tchat)"
+    echo -e "  Variable : ${CYAN}TWITCH_CHANNEL${NC} (Twitch channel whose chat NAO reads)"
 }
 
 # ============================================================
-# ÉTAPE 4 — rclone + services systemd (sync cloud optionnel)
+# STEP 4 — rclone + systemd services (optional cloud sync)
 # ============================================================
 
 setup_rclone() {
     section "rclone — synchronisation cloud (optionnel)"
 
     local install_rclone
-    install_rclone=$(ask "Installer rclone pour la sync OneDrive/GDrive ? (o/n)" "o")
-    [[ "$install_rclone" =~ ^[Oo]$ ]] || { info "rclone ignoré."; return; }
+    install_rclone=$(ask "Install rclone for OneDrive/GDrive sync? (y/n)" "y")
+    [[ "$install_rclone" =~ ^[YyOo]$ ]] || { info "rclone skipped."; return; }
 
     if ! command -v rclone &>/dev/null; then
-        info "Installation de rclone…"
+        info "Installing rclone…"
         curl -fsSL https://rclone.org/install.sh | bash
-        log "rclone installé."
+        log "rclone installed."
     else
-        log "rclone déjà installé : $(rclone --version | head -1)"
+        log "rclone already installed: $(rclone --version | head -1)"
     fi
 
     echo ""
-    warn "La configuration OAuth de rclone nécessite un navigateur."
-    warn "Effectue la config DEPUIS TON POSTE LOCAL, puis copie le fichier :"
-    warn "  rclone config   # sur ta machine locale"
+    warn "rclone's OAuth configuration needs a browser."
+    warn "Do the configuration FROM YOUR LOCAL MACHINE, then copy the file:"
+    warn "  rclone config   # on your local machine"
     warn "  scp ~/.config/rclone/rclone.conf root@VPS_IP:/root/.config/rclone/rclone.conf"
     echo ""
 
     local setup_timers
-    setup_timers=$(ask "Créer les services systemd de sync (rclone.conf déjà copié ?) (o/n)" "n")
-    [[ "$setup_timers" =~ ^[Oo]$ ]] || return
+    setup_timers=$(ask "Create the systemd sync services (rclone.conf already copied?) (y/n)" "n")
+    [[ "$setup_timers" =~ ^[YyOo]$ ]] || return
 
     _create_rclone_service "onedrive" "onedrive:" "${DATA_DIR}/sync/onedrive"
     _create_rclone_service "gdrive"   "gdrive:"   "${DATA_DIR}/sync/gdrive"
 
     systemctl daemon-reload
     systemctl enable --now rclone-onedrive.timer rclone-gdrive.timer
-    log "Timers rclone activés (sync toutes les 15 min)."
+    log "rclone timers enabled (sync every 15 min)."
     systemctl list-timers --all | grep rclone
 }
 
@@ -221,7 +221,7 @@ EOF
 
     cat > "/etc/systemd/system/rclone-${name}.timer" <<EOF
 [Unit]
-Description=Sync ${name} toutes les 15 minutes
+Description=Sync ${name} every 15 minutes
 
 [Timer]
 OnBootSec=2min
@@ -232,7 +232,7 @@ Unit=rclone-${name}.service
 WantedBy=timers.target
 EOF
 
-    log "Service systemd créé : rclone-${name}"
+    log "systemd service created: rclone-${name}"
 }
 
 # ============================================================
@@ -244,7 +244,7 @@ main() {
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   Stack IA — Préparation VPS             ║${NC}"
+    echo -e "${CYAN}║   AI stack — VPS preparation             ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
     echo ""
 
@@ -254,21 +254,21 @@ main() {
     setup_rclone
 
     echo ""
-    echo -e "${GREEN}Préparation VPS terminée.${NC}"
+    echo -e "${GREEN}VPS preparation complete.${NC}"
     echo ""
-    echo -e "${CYAN}Prochaines étapes dans Coolify :${NC}"
-    echo "  1. Créer le projet "IA" → New Resource → Docker Compose → ce dépôt"
-    echo "  2. Saisir toutes les variables d'environnement (voir docs/coolify-vps.md § 5)"
-    echo "  3. Cliquer Deploy"
+    echo -e "${CYAN}Next steps in Coolify:${NC}"
+    echo "  1. Create the "IA" project → New Resource → Docker Compose → this repository"
+    echo "  2. Enter all the environment variables (see docs/coolify-vps.md § 5)"
+    echo "  3. Click Deploy"
     echo ""
-    echo -e "${CYAN}Après le premier déploiement Coolify :${NC}"
-    echo "  → Télécharger un modèle Ollama :"
+    echo -e "${CYAN}After the first Coolify deployment:${NC}"
+    echo "  → Download an Ollama model:"
     echo "    docker exec -it ollama ollama pull qwen3:1.7b"
     echo ""
-    echo "  → Déployer le bridge NAO (si robot présent) :"
+    echo "  → Deploy the NAO bridge (if a robot is present):"
     echo "    scp robotics/drones/nao/onboard/nao_ws_bridge.py nao@NAO_IP:/home/nao/"
-    echo "    puis sur le NAO : python nao_ws_bridge.py --vps ws://IP_DU_DRONE:9090/"
-    echo "    (relais du drone statique : robotics/drones/static/onboard/nao-relay/)"
+    echo "    then on the NAO: python nao_ws_bridge.py --vps ws://DRONE_IP:9090/"
+    echo "    (static drone relay: robotics/drones/static/onboard/nao-relay/)"
 }
 
 main "$@"
