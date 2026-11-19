@@ -33,6 +33,8 @@ and plays or reloads the learned gestures (ADR 009):
                                          the NAO driver (heat, chains reserved)
   /nao/emotion_gesture_control (String JSON) → {"op": "reload"}: the static drone
                                          re-reads emotion_gesture.env
+                                       → {"op": "speech_offset", "ms": 150}: start offset
+                                         between a sentence and its gesture, live
 
 Environment variables:
   ROSBRIDGE_URL     default ws://rosbridge-proxy:80

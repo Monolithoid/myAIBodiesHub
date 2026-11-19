@@ -344,6 +344,10 @@ class MotionPolicy:
         self._gesture_pending = order
         return True, ""
 
+    def pending_gesture(self) -> dict | None:
+        """Le geste accepté qui attend encore que les chaînes finissent leur étape."""
+        return self._gesture_pending
+
     def take_gesture(self, now: float) -> dict | None:
         """Le geste à publier sur /nao/emotion_gesture, une fois les chaînes immobiles."""
         if self._gesture_pending is None:

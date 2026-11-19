@@ -28,6 +28,7 @@ aucun port à ouvrir côté maison.
 | `emotion_gesture.env.example` | Version du générateur à utiliser, à copier en `emotion_gesture.env` |
 | `emotion-gesture-user.service` | Service systemd utilisateur du générateur de gestes |
 | `tests/test_emotion_gesture.py` | Tests du service de gestes (sans réseau ni robot) |
+| `tests/test_speech_sync.py` | Tests de la phrase retenue jusqu'au départ du geste |
 
 ## Topics
 
@@ -38,7 +39,8 @@ aucun port à ouvrir côté maison.
 | `/drones/{id}/status` | → VPS | `std_msgs/String` | JSON toutes les 30 s : `capabilities`, `mics`, `respeaker`, `aec`, `direction_mode`, `wake_mode`, `camera_hfov_deg`, `speaking`, `uptime_s` |
 | `/drones/{id}/audio` | → VPS | `std_msgs/String` | JSON `{"wav": base64, "azimuth_deg": angle ou null, "direction_source": "respeaker\|loudest_mic\|image\|none"}`, plus `"wake": "local"` et `"wake_score"` pour la phrase qui suit un mot de réveil détecté sur le drone |
 | `/drones/{id}/wake` | → VPS | `std_msgs/String` | `WAKE_MODE=local` : JSON `{"model", "score", "threshold"}` dès que « ok nao » est entendu |
-| `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | MP3 en base64 (comme `/nao/audio_out`) |
+| `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | MP3 en base64 (comme `/nao/audio_out`), ou JSON `{"mp3", "sync", "speech_s"}` pour une phrase qui attend un geste du NAO ([synchronisation](#synchronisation-parole--geste)) |
+| `/speech_gesture_sync` | ← drone, VPS | `std_msgs/String` | `{"kind": "go", "sync", "at"}` : heure de départ de la phrase `sync` (0 = tout de suite) |
 | `/drones/{id}/speaking` | → VPS | `std_msgs/Bool` | `true` au début de la lecture, `false` à la fin |
 | `/drones/{id}/image` | → VPS | `std_msgs/String` | JSON `{"jpeg": base64, "width", "height", "reason": "periodic\|request"}` |
 | `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Demande une image tout de suite |
@@ -95,8 +97,9 @@ nécessaire (déjà dans `requirements.txt`).
 
 | Topic | Sens | Contenu |
 |---|---|---|
-| `/nao/emotion_gesture` | ← driver, régie | `{"id", "emotion", "intensity", "event"}` ; `event` = `null` ou `{"azimuth_deg", "elevation_deg", "distance_m"}` dans le repère du torse du robot (azimut positif = à gauche, l'inverse du drone) |
-| `/nao/emotion_gesture_control` | ← régie | `{"op": "reload"}` : relit `emotion_gesture.env` |
+| `/nao/emotion_gesture` | ← driver, régie | `{"id", "emotion", "intensity", "event", "sync"}` ; `sync` = `{"id", "speech_s", "speech_s_first"}` quand une phrase va avec le geste ; `event` = `null` ou `{"azimuth_deg", "elevation_deg", "distance_m"}` dans le repère du torse du robot (azimut positif = à gauche, l'inverse du drone) |
+| `/nao/emotion_gesture_control` | ← régie | `{"op": "reload"}` : relit `emotion_gesture.env` ; `{"op": "speech_offset", "ms": 150}` : décalage parole / geste, à chaud |
+| `/speech_gesture_sync` | ↔ | `{"kind": "speech", "sync", "speech_s"}` ← VPS (durée mesurée de la phrase) ; `{"kind": "go", "sync", "at"}` → haut-parleur du drone |
 | `/nao/read_angles` | → robot | `{"id"}` : demande la posture mesurée |
 | `/nao/joint_angles` | ← robot | `{"id", "angles": {joint: rad}}` |
 | `/nao/trajectory` | → robot | `{"id", "names", "angles", "times", "start", "relax_end"}` |
@@ -108,6 +111,50 @@ pendant `GESTURE_REST_DELAY` secondes (3 par défaut), le drone envoie le
 retour au repos, validé lui aussi par le guardian, et le robot se relâche à la
 fin. Une demande qui arrive pendant un geste attend la fin de celui-ci ; une
 demande plus récente remplace celle qui attendait.
+
+### Synchronisation parole / geste
+
+Avant, la phrase partait dès que la synthèse vocale était prête, alors que le
+geste devait encore passer par le driver NAO, la mesure de la posture, la
+génération et surtout le passage du robot à sa pose de départ (plus de 5 s
+depuis le repos) : la parole partait bien avant le geste, qui durait aussi
+autre chose qu'elle.
+
+Quand une réponse du LLM contient une phrase dite par le drone et un geste,
+`body_gateway` leur donne un même id (`sync`) :
+
+```
+body_gateway ── say {"text", "sync"} ──► static_driver_node : edge-tts, durée mesurée du MP3
+             │                              ├─ /speech_gesture_sync {"kind": "speech", "speech_s"}
+             │                              └─ /drones/{id}/audio_out {"mp3", "sync"} ─► static_drone.py
+             │                                                                (phrase retenue)
+             └─ gesture {"…", "sync"} ──► driver NAO ──► emotion_gesture.py
+                                          1. génère le geste, attend la durée mesurée de la phrase
+                                          2. cale la partie expressive sur cette durée
+                                          3. /nao/trajectory → robot
+                                             /speech_gesture_sync {"kind": "go", "at"} ─► la phrase part
+```
+
+1. **Durée** : la partie expressive du geste (pose de départ → geste → retour
+   à la pose de départ) est étirée pour durer autant que la parole, jusqu'à x3
+   (`GESTURE_SPEECH_SCALE_MAX`). Plus longue que la parole, elle n'est
+   accélérée que si le guardian l'accepte encore (`GESTURE_SPEECH_SCALE_MIN`) ;
+   avec les modèles actuels, déjà ralentis jusqu'aux limites d'accélération,
+   c'est rarement le cas. `GESTURE_MATCH_SPEECH=0` garde la vitesse apprise.
+2. **Départ** : la phrase part au début de la partie expressive, plus
+   `GESTURE_SPEECH_OFFSET_MS` (`emotion_gesture.env`) : **positif = la parole
+   après le geste, négatif = avant**. Il rattrape ce que le drone ne voit pas
+   (réseau jusqu'au robot, démarrage de `angleInterpolation`, latence du
+   haut-parleur) : à régler à l'œil et à l'oreille, à chaud depuis la régie
+   (page Robot, « décalage parole / geste »), puis à recopier dans
+   `emotion_gesture.env` pour le garder.
+3. **Sans geste** (refusé par le driver ou le guardian, remplacé, service
+   arrêté) : la phrase part tout de suite, ou au bout de
+   `SPEECH_SYNC_MAX_WAIT_S` secondes (`.env` du drone, 4 par défaut).
+
+Seul le haut-parleur de la pièce attend le geste ; la voix du stream (OBS)
+part comme avant. `SPEECH_GESTURE_SYNC=0` dans l'environnement de
+`body_gateway` coupe tout le mécanisme.
 
 ## Direction du son
 
