@@ -303,7 +303,7 @@ sur le VPS (affiché dans le journal de static-driver : `STT [static_01] (1.8 s)
 ### 8. Démarrage automatique (plus tard)
 
 Sur un PC Ubuntu de bureau, utiliser plutôt le service utilisateur
-([pc-portable-ubuntu.md, étape 9](pc-portable-ubuntu.md#9-démarrage-automatique)).
+([pc-portable-ubuntu.md, étape 9](pc-portable-ubuntu.md#9-automatic-start)).
 
 Sur le Pi, adapter `User` et les chemins de `static-drone.service`, puis :
 

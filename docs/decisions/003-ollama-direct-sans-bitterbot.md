@@ -1,62 +1,58 @@
-# ADR 003 — Ollama direct sans Bitterbot pour body-gateway
+# ADR 003 — Direct Ollama without Bitterbot for body-gateway
 
-## Statut
+## Status
 
-Adopté
+Adopted
 
-## Contexte
+## Context
 
-`body-gateway` appelait Bitterbot (`/v1/chat/completions` sur port 19001) pour
-générer les actions JSON envoyées aux corps robotiques. En pratique, Bitterbot
-retournait une 404 sur cet endpoint — son API n'était pas compatible avec le
-format OpenAI attendu.
+`body-gateway` called Bitterbot (`/v1/chat/completions` on port 19001) to generate
+the JSON actions sent to the robotic bodies. In practice, Bitterbot returned a 404
+on that endpoint — its API was not compatible with the expected OpenAI format.
 
-Bitterbot est une dépendance tierce (image Docker Hub upstream) dont on ne
-maîtrise pas le cycle de release ni la surface d'API interne. Le faire pivoter
-de la couche "cerveau" au rôle de simple relais vers Ollama introduisait une
-brique instable sans valeur ajoutée immédiate.
+Bitterbot is a third-party dependency (upstream Docker Hub image) whose release
+cycle and internal API surface we do not control. Moving it from the "brain" layer
+to the role of a simple relay to Ollama added an unstable building block with no
+immediate added value.
 
-## Décision
+## Decision
 
-`body-gateway` appelle **Ollama directement** via son API OpenAI-compatible
-(`/v1/chat/completions` sur port 11434). Le service `bitterbot-gateway` est
-commenté dans `docker-compose.yml` et peut être réactivé à tout moment.
+`body-gateway` calls **Ollama directly** through its OpenAI-compatible API
+(`/v1/chat/completions` on port 11434). The `bitterbot-gateway` service is
+commented out in `docker-compose.yml` and can be re-enabled at any time.
 
 ```
-Avant : body-gateway → Bitterbot :19001 → Ollama :11434
-Après : body-gateway → Ollama :11434
+Before: body-gateway → Bitterbot :19001 → Ollama :11434
+After:  body-gateway → Ollama :11434
 ```
 
-Le modèle est configurable via `BRAIN_MODEL` (défaut `qwen3:1.7b`).
-L'authentification utilise `BRAIN_API_KEY` (même valeur que `OLLAMA_API_KEYS`).
+The model is configurable through `BRAIN_MODEL` (default `qwen3:1.7b`).
+Authentication uses `BRAIN_API_KEY` (same value as `OLLAMA_API_KEYS`).
 
-## Ce qu'on perd
+## What is lost
 
-- **Mémoire long-terme** : Bitterbot persiste les conversations en SQLite et
-  construit un contexte sur la durée. Sans lui, chaque inférence repart d'un
-  contexte vide.
-- **Dream Engine** : consolidation mémorielle autonome toutes les 2h. Les ticks
-  oniriques (`_dream_loop`) continuent de s'exécuter mais sans mémoire
-  persistante entre les cycles.
+- **Long-term memory**: Bitterbot persists conversations in SQLite and builds a
+  context over time. Without it, each inference starts again from an empty context.
+- **Dream Engine**: autonomous memory consolidation every 2 hours. The dream ticks
+  (`_dream_loop`) keep running but without persistent memory between cycles.
 
-## Ce qu'on garde
+## What is kept
 
-- Le **pipeline complet** de contrôle physique (ROS 2 → NAO / drones).
-- Le **chat WebUI** avec le mot de réveil "ok nao".
-- La **cohérence du system prompt** JSON — Ollama reçoit exactement le même
-  prompt structuré que Bitterbot recevait.
-- La possibilité de **réintégrer Bitterbot** ultérieurement quand son API sera
-  stabilisée : décommenter `bitterbot-gateway` dans `docker-compose.yml` et
-  changer `BRAIN_URL=http://localhost:19001`.
+- The **full pipeline** of physical control (ROS 2 → NAO / drones).
+- The **WebUI chat** with the wake word "ok nao".
+- The **consistency of the JSON system prompt** — Ollama receives exactly the same
+  structured prompt that Bitterbot received.
+- The possibility of **bringing Bitterbot back** later once its API is stable:
+  uncomment `bitterbot-gateway` in `docker-compose.yml` and set
+  `BRAIN_URL=http://localhost:19001`.
 
-## Conséquences
+## Consequences
 
-- `bitterbot-net` reste déclaré dans `docker-compose.yml` mais aucun service
-  ne l'utilise activement. Il peut être supprimé si Bitterbot est retiré
-  définitivement.
-- La variable `BITTERBOT_GATEWAY_TOKEN` n'est plus nécessaire en production
-  mais est conservée dans les commentaires pour faciliter la réactivation.
+- `bitterbot-net` stays declared in `docker-compose.yml` but no service actively
+  uses it. It can be removed if Bitterbot is dropped for good.
+- The `BITTERBOT_GATEWAY_TOKEN` variable is no longer needed in production but is
+  kept in the comments to make re-enabling easier.
 
 ---
 
-← [Toutes les décisions](../../README.md#décisions-darchitecture-adr) · [Stack IA](../ia-stack.md) · [Test de la chaîne](../test-chain.md)
+← [All decisions](../../README.md#architecture-decisions-adr) · [AI stack](../ia-stack.md) · [Chain test](../test-chain.md)

@@ -14,7 +14,7 @@ NAO (Wi-Fi, local network)
         └─► Outbound WebSocket ws://DRONE_IP:9090 (local network, no token)
               └─► static drone relay (Caddy): wss://rosbridge.$DOMAIN + token
                     └─► rosbridge-proxy → ros2-bridge (ROS 2 Humble, VPS)
-                    └─► nao-core (naoqi_driver + cognitive_renderer [+ motion_engine si MOTION_ENGINE=1])
+                    └─► nao-core (naoqi_driver + cognitive_renderer [+ motion_engine if MOTION_ENGINE=1])
                           └─► body_gateway → Ollama (LLM)
 ```
 

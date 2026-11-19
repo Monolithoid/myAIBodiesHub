@@ -1,112 +1,110 @@
-# ADR 004 — Drone statique Raspberry Pi pour les sens, NAO réduit au rendu émotif
+# ADR 004 — Raspberry Pi static drone for the senses, NAO reduced to emotional rendering
 
-**Date :** 2026-10-08  
-**Statut :** Accepté
+**Date:** 2026-10-08  
+**Status:** Accepted
 
-## Contexte
+## Context
 
-Le NAO est limité comme organe sensoriel : la capture vidéo, la capture audio
-et la sortie audio sont de mauvaise qualité. Ses moteurs inférieurs (jambes)
-sont déjà désactivés. Il reste en revanche expressif : tête, bras et LEDs
-suffisent à transmettre un état émotionnel.
+The NAO is limited as a sensory organ: video capture, audio capture and audio
+output are of poor quality. Its lower motors (legs) are already disabled. It
+remains expressive, however: head, arms and LEDs are enough to convey an emotional
+state.
 
-Il faut donc une autre source pour entendre, voir et parler dans la pièce, sans
-alourdir l'architecture.
+Another source is therefore needed to hear, see and speak in the room, without
+making the architecture heavier.
 
-**Principe directeur : des solutions simples, même imparfaites.** Une brique qui
-marche tout de suite vaut mieux qu'une brique précise qu'il faudra calibrer.
+**Guiding principle: simple solutions, even imperfect ones.** A building block that
+works right away is worth more than a precise one that will need calibrating.
 
-## Décision
+## Decision
 
-### 1. Répartition des rôles
+### 1. Split of roles
 
-- **NAO** ne garde **que le rendu émotif moteur** : tête, bras, LEDs.
-- **Nouveau type de drone `static`** : un **Raspberry Pi 5** placé dans la même
-  pièce assure la **capture audio**, la **capture vidéo** et la **sortie audio**.
-- Le Pi se connecte **en sortant** au VPS via rosbridge, sur le même principe
-  que le NAO ([ADR 002](002-nao-websocket-bridge.md)), avec le jeton
-  `ROSBRIDGE_TOKEN` (en-tête `Authorization: Bearer`, vérifié par
-  `rosbridge-proxy`, PR #102).
+- **NAO** keeps **only the motor emotional rendering**: head, arms, LEDs.
+- **New drone type `static`**: a **Raspberry Pi 5** placed in the same room handles
+  **audio capture**, **video capture** and **audio output**.
+- The Pi connects **outbound** to the VPS through rosbridge, on the same principle
+  as the NAO ([ADR 002](002-nao-websocket-bridge.md)), with the `ROSBRIDGE_TOKEN`
+  token (`Authorization: Bearer` header, checked by `rosbridge-proxy`, PR #102).
 
-### 2. Arborescence
+### 2. Tree
 
 ```
 robotics/
-├── brain/            → commun à tous les drones (body_gateway, ros2_bridge, webui)
+├── brain/            → shared by all drones (body_gateway, ros2_bridge, webui)
 └── drones/
-    ├── nao/          → rendu émotif moteur
-    ├── static/       → Raspberry Pi 5 : micros, caméra, haut-parleur
-    └── quadcopter/   → réservé
+    ├── nao/          → motor emotional rendering
+    ├── static/       → Raspberry Pi 5: microphones, camera, speaker
+    └── quadcopter/   → reserved
 ```
 
-### 3. Partage du travail Pi / VPS
+### 3. Pi / VPS work split
 
-| Raspberry Pi (léger) | VPS (lourd) |
+| Raspberry Pi (light) | VPS (heavy) |
 |---|---|
-| Capture audio et vidéo | Transcription (Whisper STT) |
-| Détection de parole | Synthèse vocale (edge-tts) |
-| Direction du son | LLM |
-| Lecture audio | Analyse d'image |
+| Audio and video capture | Transcription (Whisper STT) |
+| Speech detection | Speech synthesis (edge-tts) |
+| Sound direction | LLM |
+| Audio playback | Image analysis |
 
-### 4. Direction du son
+### 4. Sound direction
 
-Origine commune : **l'axe de la caméra = angle 0**. La méthode est une règle
-fixe, choisie selon le matériel branché :
+Common origin: **the camera axis = angle 0**. The method is a fixed rule, chosen
+according to the connected hardware:
 
 ```
-si ReSpeaker USB 4 micros  → angle DOAANGLE lu sur l'appareil
-                             (360°, précision ~10-20°, annulation d'écho si le
-                              haut-parleur est branché sur la sortie jack du ReSpeaker)
-sinon si n ≥ 2 micros      → angle du micro le plus fort
-                             (angles déclarés en config, ex. MICS="gauche:-60,droite:60")
-sinon (1 micro)            → angle du mouvement dans l'image
-                             (différence avec l'image précédente, x moyen des pixels changés :
-                              angle = (x / largeur − 0.5) × champ_de_vision)
+if ReSpeaker USB 4 mics    → DOAANGLE angle read from the device
+                             (360°, ~10-20° accuracy, echo cancellation if the
+                              speaker is plugged into the ReSpeaker's jack output)
+else if n ≥ 2 mics         → angle of the loudest microphone
+                             (angles declared in the config, e.g. MICS="gauche:-60,droite:60")
+else (1 mic)               → angle of the motion in the image
+                             (difference with the previous image, mean x of the changed pixels:
+                              angle = (x / width − 0.5) × field_of_view)
 ```
 
-Un décalage optionnel `DOA_OFFSET` corrige l'orientation réelle du capteur par
-rapport à la caméra.
+An optional `DOA_OFFSET` corrects the sensor's real orientation relative to the
+camera.
 
-## Alternatives écartées
+## Alternatives rejected
 
-| Option | Pourquoi |
+| Option | Why |
 |---|---|
-| Calcul GCC-PHAT / SRP-PHAT maison | Trop complexe pour le gain : le ReSpeaker fournit déjà un angle, et le cas « micro le plus fort » suffit sinon |
-| Fusion audio-vision avec calibration apprise | Calibration à maintenir, gain marginal pour une seule pièce |
-| Détection de locuteur actif par les lèvres | Modèle lourd, dépend de l'éclairage et du cadrage, trop complexe pour le gain |
+| Home-made GCC-PHAT / SRP-PHAT computation | Too complex for the gain: the ReSpeaker already provides an angle, and the "loudest mic" case is enough otherwise |
+| Audio-vision fusion with learned calibration | Calibration to maintain, marginal gain for a single room |
+| Active speaker detection from the lips | Heavy model, depends on lighting and framing, too complex for the gain |
 
-## Ce qu'on perd
+## What is lost
 
-- **Capteurs du NAO** : ses micros, sa caméra et son haut-parleur ne sont plus
-  utilisés. Les topics `/nao/audio` et `/nao/audio_out` deviennent obsolètes à
-  terme au profit des topics du drone `static`.
-- **Précision de la direction** : avec un seul micro, on suit le **mouvement**,
-  pas le locuteur. Le champ de la caméra (~70°) borne l'angle mesurable, et une
-  seule source est suivie à la fois.
-- **Autonomie physique** : la perception dépend d'un second appareil dans la
-  pièce, plus d'un seul robot.
+- **NAO sensors**: its microphones, camera and speaker are no longer used. The
+  `/nao/audio` and `/nao/audio_out` topics eventually become obsolete in favour of
+  the `static` drone's topics.
+- **Direction accuracy**: with a single microphone, **motion** is followed, not the
+  speaker. The camera's field (~70°) bounds the measurable angle, and only one
+  source is followed at a time.
+- **Physical autonomy**: perception depends on a second device in the room, no
+  longer a single robot.
 
-## Ce qu'on garde
+## What is kept
 
-- Le **NAO comme corps expressif** : tête, bras, LEDs (`cognitive_renderer`,
+- The **NAO as an expressive body**: head, arms, LEDs (`cognitive_renderer`,
   `motion_engine`).
-- Le **pattern de connexion sortante** de l'ADR 002 : aucune règle firewall
-  entrante côté robot ou Pi.
-- Le **cerveau commun** (`robotics/brain/`) indépendant du type de drone.
-- Les **traitements lourds sur le VPS** : le Pi reste remplaçable par n'importe
-  quel petit ordinateur.
+- The **outbound connection pattern** of ADR 002: no inbound firewall rule on the
+  robot or the Pi.
+- The **shared brain** (`robotics/brain/`), independent of the drone type.
+- **Heavy processing on the VPS**: the Pi can be replaced by any small computer.
 
-## Conséquences
+## Consequences
 
-- Un nouvel identifiant de corps `static` est à ajouter dans `BODY_REGISTRY` de
-  `body-gateway`, avec ses propres topics (audio entrant, image, angle de
-  direction, audio sortant).
-- Le Pi a besoin de `ROSBRIDGE_TOKEN` dans sa configuration, comme le NAO.
-- La configuration du Pi déclare le matériel : présence d'un ReSpeaker, liste
-  `MICS`, champ de vision de la caméra, `DOA_OFFSET`.
-- Aucun code n'est livré avec cet ADR ; `robotics/drones/static/` sera rempli
-  dans un chantier suivant.
+- A new body identifier `static` is to be added to `body-gateway`'s
+  `BODY_REGISTRY`, with its own topics (incoming audio, image, direction angle,
+  outgoing audio).
+- The Pi needs `ROSBRIDGE_TOKEN` in its configuration, like the NAO.
+- The Pi configuration declares the hardware: presence of a ReSpeaker, `MICS` list,
+  camera field of view, `DOA_OFFSET`.
+- No code ships with this ADR; `robotics/drones/static/` will be filled in a later
+  piece of work.
 
 ---
 
-← [Toutes les décisions](../../README.md#décisions-darchitecture-adr) · [Architecture](../architecture.md) · [Robot NAO](../nao.md)
+← [All decisions](../../README.md#architecture-decisions-adr) · [Architecture](../architecture.md) · [NAO robot](../nao.md)

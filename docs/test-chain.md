@@ -1,149 +1,149 @@
-# Test de la chaîne de déploiement
+# Deployment chain test
 
-Script de diagnostic maillon par maillon pour valider la chaîne complète **WebUI → NAO**. Chaque test peut être exécuté avec le robot éteint : `naoqi-bridge` fonctionne en mode mock quand NAO n'est pas connecté.
+Link-by-link diagnostic script to validate the full **WebUI → NAO** chain. Every test can run with the robot switched off: `naoqi-bridge` works in mock mode when NAO is not connected.
 
 ---
 
-## Lancer les tests
+## Running the tests
 
 ```bash
-# Depuis la racine du dépôt, sur le VPS
+# From the repository root, on the VPS
 bash tests/test-chain.sh
 ```
 
-La sortie indique `✓ PASS`, `✗ FAIL` ou `⊘ SKIP` pour chaque vérification. Le script termine avec un code de sortie non nul si au moins un maillon est en échec.
+The output shows `✓ PASS`, `✗ FAIL` or `⊘ SKIP` for each check. The script exits with a non-zero code if at least one link fails.
 
 ---
 
-## Chaîne testée
+## Tested chain
 
 ```
 open-webui (nao_pipe.py)
-  │  POST http://chat-relay:8095/chat     ← Maillon 1 (ai-network)
+  │  POST http://chat-relay:8095/chat     ← Link 1 (ai-network)
   ▼
 chat-relay (Caddy)
-  │  reverse-proxy → <passerelle hôte>:8095   ← Maillon 2
+  │  reverse-proxy → <host gateway>:8095   ← Link 2
   ▼
 body-gateway  (host network, :8095)
-  │  POST http://localhost:11434/v1/chat/completions   ← Maillon 3
+  │  POST http://localhost:11434/v1/chat/completions   ← Link 3
   ▼
-ollama  (:11434, port exposé sur le host)
-  │  → réponse JSON { thoughts, emotion, actions }     ← Maillon 3b
+ollama  (:11434, port exposed on the host)
+  │  → JSON response { thoughts, emotion, actions }     ← Link 3b
   ▼
-body-gateway  (publie sur ROS 2 DDS domain 42)
-  │  /bodies/nao_01/actuators/*          ← Maillon 4
+body-gateway  (publishes on ROS 2 DDS domain 42)
+  │  /bodies/nao_01/actuators/*          ← Link 4
   ▼
 nao-core/naoqi_driver  (host network, DDS 42)
-  │  POST http://localhost:8090/say|motion|leds|…     ← Maillon 5
+  │  POST http://localhost:8090/say|motion|leds|…     ← Link 5
   ▼
-naoqi-bridge  (:8090, exposé sur 127.0.0.1)
-  │  qi SDK → tcp://NAO_IP:9559          ← Maillon 6
+naoqi-bridge  (:8090, exposed on 127.0.0.1)
+  │  qi SDK → tcp://NAO_IP:9559          ← Link 6
   ▼
-NAO  (éteint → réponse mock)
+NAO  (off → mock response)
 ```
 
-Maillon 9, drone statique simulé ([ADR 004](decisions/004-drone-statique.md)) :
+Link 9, simulated static drone ([ADR 004](decisions/004-drone-statique.md)):
 
 ```
-tests/fake-static-drone.py  (faux drone, WebSocket ws://localhost:9090)
+tests/fake-static-drone.py  (fake drone, WebSocket ws://localhost:9090)
   │  /drones/static_01/status, image, speaking, audio
   ▼
 ros2-bridge → nao-core/static_driver → whisper-asr
   ▼
-body-gateway  (mot de réveil, direction, tête du NAO, routage de la parole)
+body-gateway  (wake word, direction, NAO head, speech routing)
   ▼
 nao-core/static_driver → edge-tts → /drones/static_01/audio_out
 ```
 
-> **n8n** est dans `ai-network` et peut appeler `body-gateway` directement, mais il n'est **pas** dans la chaîne de chat décrite ici — voir [Maillon 7](#maillon-7--n8n-hors-chaîne-directe).
+> **n8n** is in `ai-network` and can call `body-gateway` directly, but it is **not** part of the chat chain described here — see [Link 7](#link-7--n8n-outside-the-direct-chain).
 
 ---
 
-## Prérequis
+## Requirements
 
-- `docker` disponible sur le VPS
-- Les services cibles démarrés (Deploy dans Coolify ; `docker ps` pour vérifier)
-- `curl` et `python3` installés (présents par défaut sur Ubuntu)
-- NAO peut être éteint pour tous les maillons sauf le 6 (mock attendu)
+- `docker` available on the VPS
+- The target services started (Deploy in Coolify; `docker ps` to check)
+- `curl` and `python3` installed (present by default on Ubuntu)
+- NAO can be off for every link except 6 (mock expected)
 
 ---
 
-## Maillons
+## Links
 
-### Maillon 0 — Conteneurs Docker
+### Link 0 — Docker containers
 
-Vérifie que les conteneurs requis sont dans l'état `running`.
+Checks that the required containers are in the `running` state.
 
-| Conteneur | Rôle | Obligatoire |
+| Container | Role | Required |
 |---|---|---|
-| `open-webui` | Interface de chat | Oui |
-| `chat-relay` | Proxy Caddy WebUI ↔ body-gateway | Oui |
-| `body-gateway` | Cerveau ROS 2 + endpoint HTTP | Oui |
-| `naoqi-bridge` | Bridge HTTP ↔ SDK NAOqi | Oui |
-| `nao-core` | naoqi_driver + cognitive_renderer + motion_engine | Oui |
-| `ollama` | Moteur LLM | Recommandé |
-| `chromadb` | Mémoire vectorielle | Facultatif |
-| `n8n` | Orchestration workflows | Facultatif |
-| `whisper-asr` | Transcription vocale | Facultatif |
-| `ros2-bridge` | WebSocket rosbridge | Facultatif |
+| `open-webui` | Chat interface | Yes |
+| `chat-relay` | Caddy proxy WebUI ↔ body-gateway | Yes |
+| `body-gateway` | ROS 2 brain + HTTP endpoint | Yes |
+| `naoqi-bridge` | HTTP bridge ↔ NAOqi SDK | Yes |
+| `nao-core` | naoqi_driver + cognitive_renderer + motion_engine | Yes |
+| `ollama` | LLM engine | Recommended |
+| `chromadb` | Vector memory | Optional |
+| `n8n` | Workflow orchestration | Optional |
+| `whisper-asr` | Speech transcription | Optional |
+| `ros2-bridge` | rosbridge WebSocket | Optional |
 
-> Voir [ia-stack.md](ia-stack.md) pour la description complète de chaque service IA et [bridge-ia-ros2-nao.md](bridge-ia-ros2-nao.md) pour les services robotiques.
+> See [ia-stack.md](ia-stack.md) for the full description of each AI service and [bridge-ia-ros2-nao.md](bridge-ia-ros2-nao.md) for the robotics services.
 
 ---
 
-### Maillon 1 — open-webui → chat-relay (ai-network)
+### Link 1 — open-webui → chat-relay (ai-network)
 
-**Ce qui est testé :** le Pipe `nao_pipe.py` installé dans Open WebUI appelle `POST http://chat-relay:8095/chat`. Ce test vérifie que la résolution DNS fonctionne et que le port TCP est accessible depuis le conteneur `open-webui` sur le réseau `ai-network`.
+**What is tested:** the `nao_pipe.py` Pipe installed in Open WebUI calls `POST http://chat-relay:8095/chat`. This test checks that DNS resolution works and that the TCP port is reachable from the `open-webui` container on the `ai-network` network.
 
-**Succès :** `chat-relay` répond HTTP 400 (`{"error":"missing text"}`) — body-gateway reçoit la requête et rejette un body vide. C'est la preuve que le proxy est traversé correctement.
+**Success:** `chat-relay` answers HTTP 400 (`{"error":"missing text"}`) — body-gateway receives the request and rejects an empty body. This proves the proxy is crossed correctly.
 
-**Référence :** [ia-stack.md — NAO Brain](ia-stack.md#nao-brain--chat-webui-comme-interface-du-cerveau-robotique)
+**Reference:** [ia-stack.md — NAO Brain](ia-stack.md#nao-brain--webui-chat-as-the-robotic-brains-interface)
 
 ```bash
-# Test manuel équivalent (depuis le conteneur open-webui)
+# Equivalent manual test (from the open-webui container)
 docker exec open-webui curl -sf -X POST http://chat-relay:8095/chat \
   -H "Content-Type: application/json" \
   -d '{"text":"","robot_id":"nao_01"}'
-# Attendu : {"error":"missing text"} ou code 400
+# Expected: {"error":"missing text"} or code 400
 ```
 
 ---
 
-### Maillon 2 — chat-relay → body-gateway (passerelle hôte :8095)
+### Link 2 — chat-relay → body-gateway (host gateway :8095)
 
-**Ce qui est testé :** le Caddy de `chat-relay` proxifie les requêtes vers le port 8095 de la passerelle hôte (IP lue au démarrage dans `/proc/net/route`), où `body-gateway` écoute en `network_mode: host`. C'est aussi le chemin de `twitch-input`. Ce maillon valide que le passage `ai-network → host network` fonctionne.
+**What is tested:** the `chat-relay` Caddy proxies requests to port 8095 of the host gateway (IP read at startup from `/proc/net/route`), where `body-gateway` listens in `network_mode: host`. This is also the path used by `twitch-input`. This link validates that the `ai-network → host network` crossing works.
 
-**Succès :** `POST http://localhost:8095/chat` répond depuis le host, et la même requête depuis `open-webui` via `chat-relay` donne le même résultat.
+**Success:** `POST http://localhost:8095/chat` answers from the host, and the same request from `open-webui` through `chat-relay` gives the same result.
 
-**Référence :** [ia-stack.md — Réseaux Docker](ia-stack.md#réseaux-docker)
+**Reference:** [ia-stack.md — Docker networks](ia-stack.md#docker-networks)
 
 ```bash
-# Test manuel depuis le host (body-gateway en network_mode: host)
+# Manual test from the host (body-gateway in network_mode: host)
 curl -sf -X POST http://localhost:8095/chat \
   -H "Content-Type: application/json" \
   -d '{"text":"","robot_id":"nao_01"}'
-# Attendu : {"error":"missing text"}
+# Expected: {"error":"missing text"}
 ```
 
 ---
 
-### Maillon 3 — body-gateway → Ollama (localhost:11434)
+### Link 3 — body-gateway → Ollama (localhost:11434)
 
-**Ce qui est testé :** `body-gateway` tourne en `network_mode: host` et appelle Ollama sur `http://localhost:11434` (Ollama expose son port 11434 sur l'hôte). Deux sous-tests :
+**What is tested:** `body-gateway` runs in `network_mode: host` and calls Ollama on `http://localhost:11434` (Ollama exposes its port 11434 on the host). Two sub-tests:
 
-1. `GET /api/tags` — Ollama répond et le modèle configuré dans `BRAIN_MODEL` est présent
-2. `POST /v1/chat/completions` — l'endpoint OpenAI-compatible répond avec un champ `choices`
+1. `GET /api/tags` — Ollama answers and the model configured in `BRAIN_MODEL` is present
+2. `POST /v1/chat/completions` — the OpenAI-compatible endpoint answers with a `choices` field
 
-**Succès :** Ollama répond, le modèle est listé, et `/v1/chat/completions` retourne une réponse valide.
+**Success:** Ollama answers, the model is listed, and `/v1/chat/completions` returns a valid response.
 
-**Référence :** [ia-stack.md — Ollama](ia-stack.md#ollama--moteur-llm) · [ADR 003](decisions/003-ollama-direct-sans-bitterbot.md)
+**Reference:** [ia-stack.md — Ollama](ia-stack.md#ollama--llm-engine) · [ADR 003](decisions/003-ollama-direct-sans-bitterbot.md)
 
 ```bash
-# Vérifier les modèles disponibles
+# Check the available models
 curl -sf http://localhost:11434/api/tags | python3 -c \
   "import json,sys; [print(m['name']) for m in json.load(sys.stdin)['models']]"
 
-# Test inférence directe (adapter le modèle si besoin)
+# Direct inference test (adjust the model if needed)
 curl -sf -X POST http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"qwen3:1.7b","messages":[{"role":"user","content":"ok"}],"stream":false}'
@@ -151,13 +151,13 @@ curl -sf -X POST http://localhost:11434/v1/chat/completions \
 
 ---
 
-### Maillon 3b — Inférence complète via body-gateway
+### Link 3b — Full inference through body-gateway
 
-**Ce qui est testé :** un vrai texte traversant `body-gateway` jusqu'à Ollama et retour — le même chemin qu'un message "ok nao" depuis le chat. La réponse doit contenir les champs `speech`, `emotion`, `thoughts` et `actions`.
+**What is tested:** a real text going through `body-gateway` to Ollama and back — the same path as an "ok nao" message from the chat. The response must contain the `speech`, `emotion`, `thoughts` and `actions` fields.
 
-**Succès :** `{"speech":"...","emotion":"...","thoughts":"...","actions":[...]}` — Ollama a généré un JSON structuré et body-gateway l'a parsé correctement.
+**Success:** `{"speech":"...","emotion":"...","thoughts":"...","actions":[...]}` — Ollama generated structured JSON and body-gateway parsed it correctly.
 
-**Durée :** jusqu'à 60 s (inférence LLM sur CPU).
+**Duration:** up to 60 s (LLM inference on CPU).
 
 ```bash
 curl -sf --max-time 60 -X POST http://localhost:8095/chat \
@@ -167,44 +167,44 @@ curl -sf --max-time 60 -X POST http://localhost:8095/chat \
 
 ---
 
-### Maillon 4 — body-gateway → ROS 2 (DDS domain 42)
+### Link 4 — body-gateway → ROS 2 (DDS domain 42)
 
-**Ce qui est testé :** après une inférence, `body-gateway` publie sur les topics ROS 2 `/cognitive_state`, `/emotion_state` et `/bodies/nao_01/actuators/*`. Ce test vérifie que le bus DDS est actif et que les topics sont visibles depuis `naoqi-driver`.
+**What is tested:** after an inference, `body-gateway` publishes on the ROS 2 topics `/cognitive_state`, `/emotion_state` and `/bodies/nao_01/actuators/*`. This test checks that the DDS bus is active and that the topics are visible from `naoqi-driver`.
 
-**Succès :** `ros2 topic list` retourne `/cognitive_state` et au moins un topic `/bodies/…`.
+**Success:** `ros2 topic list` returns `/cognitive_state` and at least one `/bodies/…` topic.
 
-**Référence :** [bridge-ia-ros2-nao.md — Topics ROS 2](bridge-ia-ros2-nao.md#topics-ros-2)
+**Reference:** [bridge-ia-ros2-nao.md — ROS 2 topics](bridge-ia-ros2-nao.md#ros-2-topics--complete-reference)
 
 ```bash
-# Lister les topics actifs (DDS domain 42)
+# List the active topics (DDS domain 42)
 docker exec nao-core bash -c \
   "source /opt/ros/humble/setup.bash && ROS_DOMAIN_ID=42 ros2 topic list"
 
-# Vérifier qu'il y a bien un publisher sur /cognitive_state
+# Check that there is a publisher on /cognitive_state
 docker exec nao-core bash -c \
   "source /opt/ros/humble/setup.bash && ROS_DOMAIN_ID=42 ros2 topic info /cognitive_state"
 ```
 
 ---
 
-### Maillon 5 — nao-core → naoqi-bridge (localhost:8090)
+### Link 5 — nao-core → naoqi-bridge (localhost:8090)
 
-**Ce qui est testé :** `nao-core/naoqi_driver` reçoit les topics ROS 2 et les traduit en appels HTTP vers `naoqi-bridge` sur `localhost:8090`. Ce maillon valide que le bridge Flask est démarré, accessible, et répond aux commandes.
+**What is tested:** `nao-core/naoqi_driver` receives the ROS 2 topics and translates them into HTTP calls to `naoqi-bridge` on `localhost:8090`. This link validates that the Flask bridge is started, reachable, and answers commands.
 
-**Succès :** `/health` retourne `{"ok": true}`, `/say` et `/leds` retournent `{"ok": true}` (en mode mock ou réel).
+**Success:** `/health` returns `{"ok": true}`, `/say` and `/leds` return `{"ok": true}` (in mock or real mode).
 
-**Référence :** [nao.md — Deux scripts, deux rôles](nao.md#deux-scripts-deux-rôles)
+**Reference:** [nao.md — Scripts overview](nao.md#scripts-overview)
 
 ```bash
-# Santé du bridge
+# Bridge health
 curl -sf http://localhost:8090/health
 
-# Test say (mock si NAO éteint)
+# say test (mock if NAO is off)
 curl -sf -X POST http://localhost:8090/say \
   -H "Content-Type: application/json" \
   -d '{"text":"test"}'
 
-# Test LEDs (mock si NAO éteint)
+# LEDs test (mock if NAO is off)
 curl -sf -X POST http://localhost:8090/leds \
   -H "Content-Type: application/json" \
   -d '{"group":"AllLeds","r":0.0,"g":1.0,"b":0.0,"duration":0.5}'
@@ -212,102 +212,101 @@ curl -sf -X POST http://localhost:8090/leds \
 
 ---
 
-### Maillon 6 — naoqi-bridge en mode mock (NAO éteint)
+### Link 6 — naoqi-bridge in mock mode (NAO off)
 
-**Ce qui est testé :** avec NAO éteint, `naoqi-bridge` doit tourner en **mode mock** : il répond `{"ok": true}` à toutes les commandes mais les imprime dans ses logs plutôt que de les envoyer au robot. Le champ `connected` dans `/health` doit être `false`.
+**What is tested:** with NAO off, `naoqi-bridge` must run in **mock mode**: it answers `{"ok": true}` to every command but prints them in its logs instead of sending them to the robot. The `connected` field in `/health` must be `false`.
 
-**Succès :** `{"ok": true, "connected": false}` et les logs contiennent la mention `MOCK`.
+**Success:** `{"ok": true, "connected": false}` and the logs contain the word `MOCK`.
 
-**Référence :** [nao.md — Dépannage](nao.md#dépannage)
+**Reference:** [nao.md — Troubleshooting](nao.md#troubleshooting)
 
 ```bash
-# Vérifier l'état de connexion
+# Check the connection state
 curl -sf http://localhost:8090/health
-# Attendu : {"ok": true, "nao_ip": "...", "connected": false}
+# Expected: {"ok": true, "nao_ip": "...", "connected": false}
 
-# Vérifier le mode mock dans les logs
+# Check mock mode in the logs
 docker logs --tail=50 naoqi-bridge 2>&1 | grep -i mock
-# Attendu : "[naoqi_bridge] MOCK mode active — no NAO connection."
+# Expected: "[naoqi_bridge] MOCK mode active — no NAO connection."
 ```
 
-Quand NAO est rallumé et reconnecté, relancer ce maillon : `connected` passera à `true`.
+When NAO is switched back on and reconnected, rerun this link: `connected` will become `true`.
 
 ---
 
-### Maillon 7 — n8n (hors chaîne directe)
+### Link 7 — n8n (outside the direct chain)
 
-**Ce qui est testé :** n8n est dans `ai-network` et son port 5678 est lié à `127.0.0.1`. Ce maillon vérifie simplement qu'il est démarré.
+**What is tested:** n8n is in `ai-network` and its port 5678 is bound to `127.0.0.1`. This link simply checks that it is started.
 
-> **Important :** n8n n'est **pas** dans la chaîne de chat directe. La route `nao_pipe.py → chat-relay → body-gateway` ne passe pas par n8n. N8N est un outil d'orchestration **parallèle** : il peut déclencher des actions sur `body-gateway` via ses propres workflows, indépendamment du chat WebUI.
+> **Important:** n8n is **not** in the direct chat chain. The route `nao_pipe.py → chat-relay → body-gateway` does not go through n8n. n8n is a **parallel** orchestration tool: it can trigger actions on `body-gateway` through its own workflows, independently of the WebUI chat.
 
-**Référence :** [ia-stack.md — n8n](ia-stack.md#n8n--orchestrateur-de-workflows)
+**Reference:** [ia-stack.md — n8n](ia-stack.md#n8n--workflow-orchestrator)
 
 ```bash
-# Accès via tunnel SSH uniquement
+# Access through an SSH tunnel only
 ssh -L 5678:localhost:5678 $VPS_USER@$DOMAIN
-# puis ouvrir http://localhost:5678
+# then open http://localhost:5678
 ```
 
-### Maillon 9 — Drone statique simulé (faux messages rosbridge)
+### Link 9 — Simulated static drone (fake rosbridge messages)
 
-Lance `tests/fake-static-drone.py`, qui joue le rôle du Raspberry Pi : il se
-connecte à rosbridge comme `static_drone.py` et vérifie chaque relais. Aucun
-matériel n'est nécessaire, mais il faut `whisper-asr`, Ollama et l'accès
-internet d'edge-tts.
+Runs `tests/fake-static-drone.py`, which plays the role of the Raspberry Pi: it
+connects to rosbridge like `static_drone.py` and checks each relay. No hardware is
+needed, but `whisper-asr`, Ollama and edge-tts internet access are required.
 
-| Étape | Envoyé par le faux drone | Attendu |
+| Step | Sent by the fake drone | Expected |
 |---|---|---|
 | 1 | `/drones/static_01/status` | `/bodies/static_01/connected` = `true` |
-| 2 | `/drones/static_01/speaking` = `true` puis `false` | `/bodies/static_01/sensors/speaking` = `true`, yeux du NAO animés (`/naoqi/leds` `FaceLeds`), puis retour au profil (`AllLeds`) |
-| 3 | `/drones/static_01/image` | `/bodies/static_01/sensors/image` (même JSON) |
-| 4 | `/bodies/static_01/actuators/say` « OK Nao, bonjour… » | MP3 sur `/drones/static_01/audio_out` |
-| 5 | `/drones/static_01/audio` (ce MP3, angle -30°) | `sound_direction`, `HeadYaw` sur `/bodies/nao_01/actuators/motion`, texte sur `/bodies/static_01/sensors/speech` |
-| 6 | — | réponse du LLM prononcée sur `/drones/static_01/audio_out` |
+| 2 | `/drones/static_01/speaking` = `true` then `false` | `/bodies/static_01/sensors/speaking` = `true`, NAO eyes animated (`/naoqi/leds` `FaceLeds`), then back to the profile (`AllLeds`) |
+| 3 | `/drones/static_01/image` | `/bodies/static_01/sensors/image` (same JSON) |
+| 4 | `/bodies/static_01/actuators/say` « OK Nao, bonjour… » | MP3 on `/drones/static_01/audio_out` |
+| 5 | `/drones/static_01/audio` (that MP3, angle -30°) | `sound_direction`, `HeadYaw` on `/bodies/nao_01/actuators/motion`, text on `/bodies/static_01/sensors/speech` |
+| 6 | — | LLM answer spoken on `/drones/static_01/audio_out` |
 
 ```bash
-# Seul, sans le reste de test-chain.sh
+# On its own, without the rest of test-chain.sh
 python3 tests/fake-static-drone.py
-# Par le chemin public (Traefik + rosbridge-proxy), avec le jeton
+# Through the public path (Traefik + rosbridge-proxy), with the token
 python3 tests/fake-static-drone.py --url wss://rosbridge.$DOMAIN --token "$ROSBRIDGE_TOKEN"
 ```
 
-Si un vrai drone `static_01` est branché pendant le test, il prononce les
-phrases du test et le NAO tourne la tête.
+If a real `static_01` drone is plugged in during the test, it speaks the test
+sentences and the NAO turns its head.
 
 ---
 
-## Résultats attendus (tout NAO éteint)
+## Expected results (NAO off)
 
-| Maillon | Résultat attendu |
+| Link | Expected result |
 |---|---|
-| 0 | Tous les conteneurs requis en `running` |
-| 1 | HTTP 400 `missing text` depuis open-webui vers chat-relay |
-| 2 | HTTP 400 `missing text` depuis le host sur :8095 |
-| 3 | Ollama répond, modèle `BRAIN_MODEL` listé, `/v1/chat/completions` OK |
-| 3b | JSON `{speech, emotion, thoughts, actions}` retourné |
-| 4 | `/cognitive_state` et `/bodies/nao_01/…` visibles sur DDS 42 |
-| 5 | `naoqi-bridge /health` et `/say` retournent `{"ok": true}` |
-| 6 | `connected: false` dans `/health`, logs `MOCK` présents |
-| 7 | n8n accessible sur localhost:5678 (si démarré) |
-| 9 | Toutes les étapes du faux drone statique en `PASS` (si edge-tts est injoignable, l'étape 4 échoue et les étapes 5 et 6 sont sautées) |
+| 0 | All required containers `running` |
+| 1 | HTTP 400 `missing text` from open-webui to chat-relay |
+| 2 | HTTP 400 `missing text` from the host on :8095 |
+| 3 | Ollama answers, `BRAIN_MODEL` model listed, `/v1/chat/completions` OK |
+| 3b | JSON `{speech, emotion, thoughts, actions}` returned |
+| 4 | `/cognitive_state` and `/bodies/nao_01/…` visible on DDS 42 |
+| 5 | `naoqi-bridge /health` and `/say` return `{"ok": true}` |
+| 6 | `connected: false` in `/health`, `MOCK` lines in the logs |
+| 7 | n8n reachable on localhost:5678 (if started) |
+| 9 | All fake static drone steps `PASS` (if edge-tts is unreachable, step 4 fails and steps 5 and 6 are skipped) |
 
 ---
 
-## Dépannage
+## Troubleshooting
 
-| Symptôme | Maillon | Cause probable | Solution |
+| Symptom | Link | Likely cause | Fix |
 |---|---|---|---|
-| `container X: NOT running` | 0 | Service non démarré | `docker start <service>` (ou Redeploy dans Coolify) |
-| `Could not resolve host: chat-relay` | 1 | open-webui hors de `ai-network` | Vérifier `networks:` dans `docker-compose.yml` |
-| `Connection refused` sur :8095 depuis open-webui | 1–2 | chat-relay non démarré | `docker start chat-relay` (ou Redeploy dans Coolify) |
-| `Connection refused` sur localhost:8095 | 2 | body-gateway crashé | `docker logs body-gateway` |
-| `model not found` dans Ollama | 3 | Modèle non téléchargé | `docker exec -it ollama ollama pull qwen3:1.7b` |
-| Timeout sur `/v1/chat/completions` | 3 | Modèle non chargé ou CPU saturé | Attendre le chargement initial (~30 s) |
-| JSON parse error dans body-gateway | 3b | Ollama ne retourne pas du JSON strict | Vérifier le system prompt `_AWAKE_SYSTEM` dans `body_gateway.py` |
-| Topics ROS 2 absents | 4 | DDS domain incorrect ou body-gateway/nao-core crashé | `docker logs body-gateway` ; `docker logs nao-core` ; vérifier `ROS_DOMAIN_ID=42` |
-| `Connection refused` sur localhost:8090 | 5 | naoqi-bridge non démarré | `docker start naoqi-bridge` (ou Redeploy dans Coolify) |
-| `connected: true` avec NAO éteint | 6 | Ancienne connexion TCP non fermée | Redémarrer `naoqi-bridge` |
-| `/bodies/static_01/connected` jamais vu | 9 | static-driver non démarré | `docker logs nao-core` : ligne `static-driver(…) pour static_01` ? `STATIC_DRONE_ID` vide ? |
-| Pas de `HeadYaw` | 9 | `static_01` absent de `BODY_REGISTRY` | Vérifier l'environnement de body-gateway |
-| Pas de réponse prononcée | 9 | Mot de réveil absent de la transcription, ou LLM lent | `docker logs body-gateway` (`Sans mot de réveil, ignoré`) |
-| Pas de ligne `MOCK` dans les logs | 6 | Le SDK qi a été trouvé et NAO_IP est défini | Normal si NAO était allumé lors du démarrage |
+| `container X: NOT running` | 0 | Service not started | `docker start <service>` (or Redeploy in Coolify) |
+| `Could not resolve host: chat-relay` | 1 | open-webui outside `ai-network` | Check `networks:` in `docker-compose.yml` |
+| `Connection refused` on :8095 from open-webui | 1–2 | chat-relay not started | `docker start chat-relay` (or Redeploy in Coolify) |
+| `Connection refused` on localhost:8095 | 2 | body-gateway crashed | `docker logs body-gateway` |
+| `model not found` in Ollama | 3 | Model not downloaded | `docker exec -it ollama ollama pull qwen3:1.7b` |
+| Timeout on `/v1/chat/completions` | 3 | Model not loaded or CPU saturated | Wait for the initial load (~30 s) |
+| JSON parse error in body-gateway | 3b | Ollama does not return strict JSON | Check the `_AWAKE_SYSTEM` system prompt in `body_gateway.py` |
+| ROS 2 topics missing | 4 | Wrong DDS domain or body-gateway/nao-core crashed | `docker logs body-gateway`; `docker logs nao-core`; check `ROS_DOMAIN_ID=42` |
+| `Connection refused` on localhost:8090 | 5 | naoqi-bridge not started | `docker start naoqi-bridge` (or Redeploy in Coolify) |
+| `connected: true` with NAO off | 6 | Old TCP connection not closed | Restart `naoqi-bridge` |
+| `/bodies/static_01/connected` never seen | 9 | static-driver not started | `docker logs nao-core`: is there a `static-driver(…)` line for static_01? Is `STATIC_DRONE_ID` empty? |
+| No `HeadYaw` | 9 | `static_01` missing from `BODY_REGISTRY` | Check body-gateway's environment |
+| No spoken answer | 9 | Wake word missing from the transcription, or slow LLM | `docker logs body-gateway` (wake-word-missing message) |
+| No `MOCK` line in the logs | 6 | The qi SDK was found and NAO_IP is set | Normal if NAO was on at startup |

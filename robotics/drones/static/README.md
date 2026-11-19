@@ -11,4 +11,4 @@ drones, via rosbridge.
   `nao-core`) : `/drones/{id}/*` ↔ `/bodies/{id}/*`, Whisper et edge-tts
   ([détails](../../../docs/bridge-ia-ros2-nao.md#static_driver)).
 - Test sans matériel : `python3 tests/fake-static-drone.py` depuis la racine
-  du dépôt, sur le VPS ([maillon 9](../../../docs/test-chain.md#maillon-9--drone-statique-simulé-faux-messages-rosbridge)).
+  du dépôt, sur le VPS ([maillon 9](../../../docs/test-chain.md#link-9--simulated-static-drone-fake-rosbridge-messages)).

@@ -1,49 +1,49 @@
-# ADR 002 — Bridge WebSocket embarqué sur NAO (sans VPN ni Raspberry Pi)
+# ADR 002 — WebSocket bridge embedded on NAO (no VPN, no Raspberry Pi)
 
-**Date :** 2026-04-18  
-**Statut :** Accepté
+**Date:** 2026-04-18  
+**Status:** Accepted
 
-## Contexte
+## Context
 
-Le protocole NAOqi (port 9559, binaire propriétaire) ne traverse pas Internet nativement.
-Il faut un moyen de piloter NAO depuis le VPS.
+The NAOqi protocol (port 9559, proprietary binary) does not cross the Internet natively.
+A way to drive NAO from the VPS is needed.
 
-Trois approches étudiées :
+Three approaches were considered:
 
-| Option | Description | Rejet |
+| Option | Description | Rejection |
 |--------|-------------|-------|
-| VPN (WireGuard/OpenVPN) | Tunnel L3 entre NAO et VPS | NAO v5/v6 : configuration réseau limitée, OpenVPN instable sur Gentoo embarqué |
-| Raspberry Pi intermédiaire | RPi en bordure, fait le bridge | Matériel supplémentaire, SPOF physique, latence +50 ms |
-| **Script WebSocket sur NAO** | Python 2.7 embarqué, connexion sortante vers VPS | ✅ Retenu |
+| VPN (WireGuard/OpenVPN) | L3 tunnel between NAO and VPS | NAO v5/v6: limited network configuration, OpenVPN unstable on embedded Gentoo |
+| Intermediate Raspberry Pi | RPi at the edge, does the bridging | Extra hardware, physical SPOF, +50 ms latency |
+| **WebSocket script on NAO** | Embedded Python 2.7, outbound connection to the VPS | ✅ Chosen |
 
-## Décision
+## Decision
 
-Embarquer **`nao_ws_bridge.py`** directement sur NAO.
+Embed **`nao_ws_bridge.py`** directly on NAO.
 
-Le script :
-1. Se connecte au démon NAOqi local (`localhost:9559`) via le SDK `qi`
-2. Ouvre une connexion WebSocket **sortante** vers `rosbridge_suite` sur le VPS (port 9090)
-3. Souscrit aux topics `/nao/*` et traduit les messages JSON en appels NAOqi
+The script:
+1. Connects to the local NAOqi daemon (`localhost:9559`) through the `qi` SDK
+2. Opens an **outbound** WebSocket connection to `rosbridge_suite` on the VPS (port 9090)
+3. Subscribes to the `/nao/*` topics and translates the JSON messages into NAOqi calls
 
-## Raisons
+## Reasons
 
-- **Connexion sortante** : NAO initie la connexion — aucune règle firewall entrante requise sur le robot.
-- **Zéro matériel** : Pas de RPi, pas de routeur intermédiaire.
-- **Protocole standard** : rosbridge WebSocket + JSON est simple, débogable avec `wscat`, pas de dépendance binaire côté VPS.
-- **Résilience** : Le script implémente une reconnexion automatique avec backoff exponentiel.
+- **Outbound connection**: NAO initiates the connection — no inbound firewall rule needed on the robot.
+- **Zero hardware**: no RPi, no intermediate router.
+- **Standard protocol**: rosbridge WebSocket + JSON is simple, debuggable with `wscat`, no binary dependency on the VPS side.
+- **Resilience**: the script implements automatic reconnection with exponential backoff.
 
-## Contraintes
+## Constraints
 
-- NAO v5/v6 tourne Python 2.7 — le script est écrit en Python 2.7 compatible.
-- `websocket-client==0.59.0` est la dernière version supportant Python 2.7.
-- Le port 9090 du VPS doit être accessible publiquement (règle `ufw allow 9090`).
+- NAO v5/v6 runs Python 2.7 — the script is written to be Python 2.7 compatible.
+- `websocket-client==0.59.0` is the last version supporting Python 2.7.
+- The VPS port 9090 must be publicly reachable (`ufw allow 9090` rule).
 
-## Conséquences
+## Consequences
 
-- Le VPS n'a pas besoin de connaître l'IP de NAO — c'est NAO qui se connecte.
-- Si NAO est hors réseau, les commandes s'accumulent dans la file rosbridge et sont livrées à la reconnexion (selon la config QoS).
-- Extensible aux drones : même pattern, script différent côté drone.
+- The VPS does not need to know NAO's IP — NAO is the one connecting.
+- If NAO is off the network, commands pile up in the rosbridge queue and are delivered on reconnection (depending on the QoS config).
+- Extensible to drones: same pattern, a different script on the drone side.
 
 ---
 
-← [Toutes les décisions](../../README.md#décisions-darchitecture-adr) · [Robot NAO](../nao.md)
+← [All decisions](../../README.md#architecture-decisions-adr) · [NAO robot](../nao.md)
