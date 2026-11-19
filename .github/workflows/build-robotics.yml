@@ -1,16 +1,16 @@
-name: Build & Push — Images robotiques
+name: Build & Push — Robotics images
 
-# Publie sept images sur Docker Hub :
-#   monolithoid/naoqi-bridge  → Python 3.12 Alpine, HTTP bridge Flask vers NAO
+# Publishes seven images to Docker Hub:
+#   monolithoid/naoqi-bridge  → Python 3.12 Alpine, Flask HTTP bridge to NAO
 #   monolithoid/nao-core      → ROS2 Humble, naoqi-driver + cognitive-renderer + motion-engine
-#                               + static-driver (drone statique, ADR 004)
-#   monolithoid/body-gateway  → ROS2 Humble, pont LLM ↔ bus ROS2
+#                               + static-driver (static drone, ADR 004)
+#   monolithoid/body-gateway  → ROS2 Humble, LLM ↔ ROS2 bus bridge
 #   monolithoid/ros2-bridge   → ROS2 Humble + rosbridge_server WebSocket :9090
-#   monolithoid/twitch-input  → Python 3.12, entrée tchat Twitch « !nao » → body-gateway
-#   monolithoid/obs-agent     → Python 3.12, voix de NAO dans OBS (corps « voix » via rosbridge)
-#   monolithoid/regie         → Python 3.12, page de régie : flux /events en direct (via rosbridge)
+#   monolithoid/twitch-input  → Python 3.12, Twitch chat input "!nao" → body-gateway
+#   monolithoid/obs-agent     → Python 3.12, NAO's voice in OBS ("voice" body through rosbridge)
+#   monolithoid/regie         → Python 3.12, control room page: live /events stream (through rosbridge)
 #
-# Secrets requis :
+# Required secrets:
 #   DOCKERHUB_USERNAME : monolithoid
 #   DOCKERHUB_TOKEN    : Docker Hub → Account Settings → Security → New Access Token
 
@@ -118,9 +118,9 @@ jobs:
 
       - name: Build summary
         run: |
-          echo "## ${{ matrix.name }} publié" >> $GITHUB_STEP_SUMMARY
+          echo "## ${{ matrix.name }} published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag | Commande |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | Command |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| latest | \`docker pull ${{ matrix.image }}:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| build  | \`docker pull ${{ matrix.image }}:build-${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY

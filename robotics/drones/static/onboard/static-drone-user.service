@@ -1,19 +1,19 @@
-# Service systemd « utilisateur » du drone statique, pour un PC Ubuntu de
-# bureau (PC portable…) : il tourne dans la session de l'utilisateur et
-# accède donc au son PipeWire/PulseAudio (micro et haut-parleur choisis dans
-# Paramètres > Son). Voir pc-portable-ubuntu.md. Installation :
+# systemd "user" service for the static drone, for a desktop Ubuntu PC
+# (laptop…): it runs in the user's session and therefore
+# has access to PipeWire/PulseAudio sound (microphone and speaker chosen in
+# Settings > Sound). See pc-portable-ubuntu.md. Installation:
 #   mkdir -p ~/.config/systemd/user
 #   cp static-drone-user.service ~/.config/systemd/user/static-drone.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now static-drone
-#   sudo loginctl enable-linger $USER     # démarre sans ouvrir de session
+#   sudo loginctl enable-linger $USER     # starts without opening a session
 #   journalctl --user -u static-drone -f
 #
-# %h = dossier personnel. Adapter le chemin si le dépôt n'est pas dans ~/ia-agent.
-# Le fichier .env à côté de static_drone.py est lu par le programme lui-même.
+# %h = home folder. Adapt the path if the repository is not in ~/ia-agent.
+# The .env file next to static_drone.py is read by the program itself.
 
 [Unit]
-Description=Drone statique ia-agent (micros, caméra, haut-parleur)
+Description=ia-agent static drone (microphones, camera, speaker)
 Wants=pipewire.service pipewire-pulse.service
 After=pipewire.service pipewire-pulse.service
 

@@ -1,13 +1,13 @@
-# Dockerfile maintenu par monolithoid/ia-agent
-# Remplace le Dockerfile upstream de Bitterbot-AI/bitterbot-desktop
-# qui référence des chemins absents du repo (ui/, patches/, pnpm ui:build).
+# Dockerfile maintained by monolithoid/ia-agent
+# Replaces the upstream Dockerfile of Bitterbot-AI/bitterbot-desktop
+# which references paths missing from the repo (ui/, patches/, pnpm ui:build).
 #
-# Différences avec l'upstream :
-#   + RUN apt-get : dépendances système pour les addons natifs
-#                   (absentes de node:22-bookworm par défaut)
-#   - COPY ui/package.json  (ui/ n'existe pas dans le repo)
-#   - COPY patches          (pas de patchedDependencies → mkdir vide suffit)
-#   - RUN pnpm ui:build     (script absent du package.json)
+# Differences from upstream:
+#   + RUN apt-get: system dependencies for the native addons
+#                   (missing from node:22-bookworm by default)
+#   - COPY ui/package.json  (ui/ does not exist in the repo)
+#   - COPY patches          (no patchedDependencies → an empty mkdir is enough)
+#   - RUN pnpm ui:build     (script missing from package.json)
 
 FROM node:22-slim
 
@@ -20,22 +20,22 @@ RUN corepack enable
 WORKDIR /app
 
 # ----------------------------------------------------------------
-# Dépendances système pour les addons natifs (onlyBuiltDependencies)
+# System dependencies for the native addons (onlyBuiltDependencies)
 #
-# authenticate-pam → node-gyp compile depuis les sources, PAM headers obligatoires
-#   Pas de binaire précompilé npm → libpam0g-dev indispensable
+# authenticate-pam → node-gyp builds from source, PAM headers required
+#   No prebuilt npm binary → libpam0g-dev required
 #
-# @napi-rs/canvas → binaire précompilé NAPI-RS pour linux-x64,
-#   mais le postinstall vérifie les headers Cairo — on les installe
-#   pour le cas où le fallback de compilation est déclenché
+# @napi-rs/canvas → prebuilt NAPI-RS binary for linux-x64,
+#   but the postinstall checks the Cairo headers — they are installed
+#   in case the build fallback is triggered
 #
-# @lydell/node-pty → node-gyp, build-essential + python3 nécessaires
+# @lydell/node-pty → node-gyp, build-essential + python3 required
 #
-# node-llama-cpp → binaire précompilé CPU disponible pour linux-x64,
-#   cmake en fallback si le prebuilt ne correspond pas à l'environnement
+# node-llama-cpp → prebuilt CPU binary available for linux-x64,
+#   cmake as a fallback if the prebuilt does not match the environment
 # ----------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Outils de compilation node-gyp
+    # node-gyp build tools
     build-essential \
     python3 \
     # authenticate-pam (compile from source, no prebuilt)
@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Packages APT supplémentaires via build arg (optionnel, hérité de l'upstream)
+# Extra APT packages through a build arg (optional, inherited from upstream)
 ARG BITTERBOT_DOCKER_APT_PACKAGES=""
 RUN if [ -n "$BITTERBOT_DOCKER_APT_PACKAGES" ]; then \
       apt-get update && \
@@ -60,29 +60,29 @@ RUN if [ -n "$BITTERBOT_DOCKER_APT_PACKAGES" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
-# Copie des manifestes pour optimiser le cache de la couche pnpm install.
-# Note : ui/package.json n'existe pas dans ce repo — COPY supprimé.
+# Copy the manifests to optimise the pnpm install layer cache.
+# Note: ui/package.json does not exist in this repo — COPY removed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY scripts ./scripts
 
-# patches/ absent du repo (aucun patchedDependencies dans package.json)
+# patches/ missing from the repo (no patchedDependencies in package.json)
 RUN mkdir -p patches
 
-# --no-frozen-lockfile : précaution pour les déphasages lockfile/package.json
-# fréquents en upstream actif ; pnpm résout sans erreur.
+# --no-frozen-lockfile: precaution for lockfile/package.json mismatches,
+# frequent in an active upstream; pnpm resolves without error.
 RUN pnpm install --no-frozen-lockfile
 
 COPY . .
 RUN pnpm build
-# Note : `pnpm ui:build` est dans le Dockerfile upstream mais le script
-# n'existe pas dans package.json à ce commit — supprimé intentionnellement.
+# Note: `pnpm ui:build` is in the upstream Dockerfile but the script
+# does not exist in package.json at this commit — removed on purpose.
 
 ENV NODE_ENV=production
 
-# Autorise l'écriture de fichiers temporaires en runtime.
+# Allows writing temporary files at runtime.
 RUN chown -R node:node /app
 
-# Sécurité : exécution en tant que non-root (uid 1000 = node)
+# Security: run as non-root (uid 1000 = node)
 USER node
 
 CMD ["node", "bitterbot.mjs", "gateway", "--allow-unconfigured"]

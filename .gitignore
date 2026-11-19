@@ -1,6 +1,6 @@
-# Credentials et configuration locale (ne jamais commiter)
+# Credentials and local configuration (never commit)
 nao_provision.json
-# Fichiers propres au robot, écrits par nao_ws_bridge.py (calibrage, composants NAOqi)
+# Robot-specific files, written by nao_ws_bridge.py (calibration, NAOqi components)
 nao_motor_profile.json*
 nao_components.json
 
@@ -28,7 +28,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# Secrets et certificats (ne jamais commiter)
+# Secrets and certificates (never commit)
 .env
 .env.*
 !.env.example

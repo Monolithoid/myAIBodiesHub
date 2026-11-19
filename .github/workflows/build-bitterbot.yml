@@ -3,44 +3,44 @@ name: Build & Push — Bitterbot image
 # Rebuilds the Bitterbot image from the official source repo and
 # pushes it to Docker Hub so the VPS can simply `docker pull`.
 #
-# Secrets requis dans GitHub → Settings → Secrets → Actions :
+# Secrets required in GitHub → Settings → Secrets → Actions:
 #   DOCKERHUB_USERNAME : monolithoid
 #   DOCKERHUB_TOKEN    : Docker Hub → Account Settings → Security → New Access Token
 #
-# Pourquoi on épingle un SHA et pas `main` :
-#   main évolue vite ; on épingle le dernier commit vérifié stable pour éviter
-#   qu'un rebuild hebdomadaire automatique embarque une régression TypeScript.
-#   Pour avancer vers un nouveau commit : changer BITTERBOT_DEFAULT_REF ci-dessous
-#   ou utiliser l'input "bitterbot_ref" du déclenchement manuel.
+# Why a SHA is pinned and not `main`:
+#   main moves fast; the last commit verified as stable is pinned so that
+#   an automatic weekly rebuild does not pick up a TypeScript regression.
+#   To move to a new commit: change BITTERBOT_DEFAULT_REF below
+#   or use the "bitterbot_ref" input of the manual trigger.
 #
-#   Historique des pins :
-#     be7b696 (8 avr. 2026) → e0d7d12 cassait la compilation TypeScript (Dream Engine types)
-#     95907c2 (18 avr. 2026) → CI upstream verte, erreurs TS corrigées depuis 050008d
+#   Pin history:
+#     be7b696 (8 Apr 2026) → e0d7d12 broke the TypeScript build (Dream Engine types)
+#     95907c2 (18 Apr 2026) → upstream CI green, TS errors fixed since 050008d
 #     85b5095 (19 avr. 2026) → fix wizard timeout uniquement, CI verte
 
 env:
-  # Dernier commit vérifié comme compilable.
-  # Accepte : SHA court (95907c2), SHA long, nom de branche, tag.
+  # Last commit verified to build.
+  # Accepts: short SHA (95907c2), long SHA, branch name, tag.
   BITTERBOT_DEFAULT_REF: 85b5095
 
-# ⚠️ DÉSACTIVÉ TEMPORAIREMENT : le build Bitterbot plante trop souvent,
-# le projet n'est pas encore assez stable. Seul le déclenchement manuel reste.
-# Pour réactiver : décommenter les blocs `schedule` et `push` ci-dessous.
+# ⚠️ TEMPORARILY DISABLED: the Bitterbot build fails too often,
+# the project is not stable enough yet. Only the manual trigger remains.
+# To re-enable: uncomment the `schedule` and `push` blocks below.
 on:
   # Rebuild hebdomadaire automatique (lundi 03h00 UTC)
   # schedule:
   #   - cron: '0 3 * * 1'
 
-  # Déclenchement manuel avec ref optionnel
+  # Manual trigger with an optional ref
   # → GitHub Actions → "Run workflow" → champ "Bitterbot commit SHA or branch"
   workflow_dispatch:
     inputs:
       bitterbot_ref:
-        description: 'Bitterbot commit SHA ou branche (laisser vide = BITTERBOT_DEFAULT_REF)'
+        description: 'Bitterbot commit SHA or branch (leave empty = BITTERBOT_DEFAULT_REF)'
         required: false
         default: ''
 
-  # Rebuild si ce fichier de workflow est modifié (ex: changement de SHA)
+  # Rebuild if this workflow file changes (e.g. SHA change)
   # push:
   #   paths:
   #     - '.github/workflows/build-bitterbot.yml'
@@ -56,14 +56,14 @@ jobs:
 
     steps:
       # ----------------------------------------------------------------
-      # 1. Checkout de notre repo (nécessaire pour accéder à bitterbot/Dockerfile)
+      # 1. Checkout of our repo (needed to access bitterbot/Dockerfile)
       # ----------------------------------------------------------------
       - name: Checkout ia-agent
         uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
-      # 2. Résoudre le ref à utiliser
-      #    Priorité : input manuel > BITTERBOT_DEFAULT_REF
+      # 2. Resolve the ref to use
+      #    Priority: manual input > BITTERBOT_DEFAULT_REF
       # ----------------------------------------------------------------
       - name: Resolve Bitterbot ref
         id: ref
@@ -79,10 +79,10 @@ jobs:
           fi
 
       # ----------------------------------------------------------------
-      # 3. Cloner Bitterbot au ref épinglé
-      #    On clone ici (et non dans le contexte Docker) pour :
-      #    - supporter les SHA courts, longs, branches et tags
-      #    - avoir un message d'erreur clair si le ref n'existe pas
+      # 3. Clone Bitterbot at the pinned ref
+      #    Cloned here (and not in the Docker context) to:
+      #    - support short and long SHAs, branches and tags
+      #    - get a clear error message if the ref does not exist
       # ----------------------------------------------------------------
       - name: Clone Bitterbot at pinned ref
         env:
@@ -97,7 +97,7 @@ jobs:
           echo "Source            : ${{ steps.ref.outputs.source }}"
 
       # ----------------------------------------------------------------
-      # 4. Authentification Docker Hub
+      # 4. Docker Hub authentication
       # ----------------------------------------------------------------
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -115,7 +115,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ----------------------------------------------------------------
-      # 6. Métadonnées — tags OCI
+      # 6. Metadata — OCI tags
       # ----------------------------------------------------------------
       - name: Docker metadata
         id: meta
@@ -128,12 +128,12 @@ jobs:
             type=raw,value=sha-${{ env.HEAD }}
 
       # ----------------------------------------------------------------
-      # 7. Build depuis le clone local + push Docker Hub
+      # 7. Build from the local clone + push to Docker Hub
       #
-      # context : source Bitterbot cloné (./bitterbot-src)
-      # file    : notre Dockerfile corrigé (./bitterbot/Dockerfile)
-      #           → remplace l'upstream qui référence ui/ et patches/
-      #             absents du repo, et pnpm ui:build inexistant.
+      # context: cloned Bitterbot source (./bitterbot-src)
+      # file   : our fixed Dockerfile (./bitterbot/Dockerfile)
+      #          → replaces the upstream one, which references ui/ and patches/
+      #            missing from the repo, and a nonexistent pnpm ui:build.
       # ----------------------------------------------------------------
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -148,23 +148,23 @@ jobs:
           platforms: linux/amd64
 
       # ----------------------------------------------------------------
-      # 8. Résumé dans l'onglet Actions
+      # 8. Summary in the Actions tab
       # ----------------------------------------------------------------
       - name: Build summary
         env:
           BITTERBOT_REF: ${{ steps.ref.outputs.ref }}
         run: |
-          echo "## Image publiée" >> $GITHUB_STEP_SUMMARY
+          echo "## Image published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Ref Bitterbot :** \`$BITTERBOT_REF\` → SHA \`${{ env.HEAD }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag | Commande |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | Command |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| latest | \`docker pull monolithoid/bitterbot:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| versionné | \`docker pull monolithoid/bitterbot:build-${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| par SHA | \`docker pull monolithoid/bitterbot:sha-${{ env.HEAD }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| versioned | \`docker pull monolithoid/bitterbot:build-${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| by SHA | \`docker pull monolithoid/bitterbot:sha-${{ env.HEAD }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Pour mettre à jour le VPS :" >> $GITHUB_STEP_SUMMARY
+          echo "To update the VPS:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "docker compose pull bitterbot-gateway && docker compose up -d bitterbot-gateway" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

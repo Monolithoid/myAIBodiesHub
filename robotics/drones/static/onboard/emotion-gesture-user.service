@@ -1,17 +1,17 @@
-# Service systemd « utilisateur » des gestes appris du NAO (ADR 009), à côté
-# de static-drone. Installation :
+# systemd "user" service for the NAO's learned gestures (ADR 009), next to
+# static-drone. Installation:
 #   mkdir -p ~/.config/systemd/user
 #   cp emotion-gesture-user.service ~/.config/systemd/user/emotion-gesture.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now emotion-gesture
 #   journalctl --user -u emotion-gesture -f
 #
-# %h = dossier personnel. Adapter le chemin si le dépôt n'est pas dans ~/ia-agent.
-# emotion_gesture.env (version du générateur) et .env (rosbridge) sont lus par
-# le programme lui-même.
+# %h = home folder. Adapt the path if the repository is not in ~/ia-agent.
+# emotion_gesture.env (generator version) and .env (rosbridge) are read by
+# the program itself.
 
 [Unit]
-Description=Gestes appris du NAO (générateur nao-emotion-motion)
+Description=NAO learned gestures (nao-emotion-motion generator)
 Wants=network-online.target
 After=network-online.target
 
