@@ -1098,8 +1098,8 @@ class BodyGatewayNode(Node):
         if kind == "speech":
             msg = String()
             msg.data = action.get("text", "")
-            if sync and body_rules.body_type(body_id) == "static":
-                # The static drone holds this sentence until the gesture starts.
+            if sync and body_rules.is_voice(body_id):
+                # The room speaker and the OBS voice hold this sentence until the gesture starts.
                 msg.data = json.dumps({"text": msg.data, "sync": sync["id"]})
             self._pub_say[body_id].publish(msg)
             time.sleep(0.3)

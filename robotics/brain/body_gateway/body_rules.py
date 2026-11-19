@@ -355,9 +355,9 @@ def speech_gesture_sync(actions: list, registry: list[str], connected: dict[str,
                         chars_per_s: float = SPEECH_CHARS_PER_S) -> dict | None:
     """Lien entre la parole et le geste appris d'une même réponse du LLM.
 
-    Seulement quand la première phrase est dite par un drone statique (le
-    haut-parleur de la pièce, qui sait attendre le geste) et qu'un geste utilisable
-    part au NAO.  {"id", "speech_s", "speech_s_first"} : durée estimée de toute la
+    Seulement quand la première phrase est dite par une voix qui sait attendre le
+    geste (haut-parleur du drone statique, voix OBS du stream) et qu'un geste
+    utilisable part au NAO.  {"id", "speech_s", "speech_s_first"} : durée estimée de toute la
     parole et de la première phrase (celle que le drone retient et mesure).
     """
     speeches = [a for a in actions if a.get("type") == "speech" and str(a.get("text", "")).strip()]
@@ -365,7 +365,7 @@ def speech_gesture_sync(actions: list, registry: list[str], connected: dict[str,
                 if a.get("type") == "gesture" and gesture_order(a, emotions, energy) is not None]
     if not speeches or not gestures:
         return None
-    if not any(body_type(b) == "static" for b in route_targets(speeches[0], registry, connected)):
+    if not any(body_type(b) in VOICE_TYPES for b in route_targets(speeches[0], registry, connected)):
         return None
     first = speech_seconds(speeches[0]["text"], chars_per_s)
     total = first + sum(speech_seconds(a["text"], chars_per_s) for a in speeches[1:])

@@ -179,6 +179,13 @@ class TestSpeechGestureSync(unittest.TestCase):
         sync = body_rules.speech_gesture_sync(actions, REGISTRY, self.CONNECTED, ["joie"], "s-1")
         self.assertGreater(sync["speech_s"], sync["speech_s_first"])
 
+    def test_sync_with_obs_voice_only(self):
+        registry = ["nao_01", "obs_01"]
+        actions = [dict(self.ACTIONS[0], body="obs_01"), self.ACTIONS[1]]
+        sync = body_rules.speech_gesture_sync(actions, registry, {"nao_01": True, "obs_01": True},
+                                              ["joie"], "s-1")
+        self.assertEqual(sync["id"], "s-1")
+
     def test_no_sync_without_gesture_or_static_voice(self):
         self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS[:1], REGISTRY, self.CONNECTED, [], "s"))
         self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["peur"], "s"))

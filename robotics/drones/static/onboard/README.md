@@ -40,7 +40,7 @@ at home.
 | `/drones/{id}/audio` | → VPS | `std_msgs/String` | JSON `{"wav": base64, "azimuth_deg": angle or null, "direction_source": "respeaker\|loudest_mic\|image\|none"}`, plus `"wake": "local"` and `"wake_score"` for the sentence following a wake word detected on the drone |
 | `/drones/{id}/wake` | → VPS | `std_msgs/String` | `WAKE_MODE=local`: JSON `{"model", "score", "threshold"}` as soon as "ok nao" is heard |
 | `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | base64 MP3 (like `/nao/audio_out`), or JSON `{"mp3", "sync", "speech_s"}` for a sentence waiting for a NAO gesture ([synchronisation](#speech--gesture-synchronisation)) |
-| `/speech_gesture_sync` | ← drone, VPS | `std_msgs/String` | `{"kind": "go", "sync", "at"}`: start time of sentence `sync` (0 = right away) |
+| `/speech_gesture_sync` | ← drone, VPS | `std_msgs/String` | `{"kind": "go", "sync", "at", "in_s"}`: start time of sentence `sync` (0 = right away); `in_s` = the same as a delay, for the OBS voice |
 | `/drones/{id}/speaking` | → VPS | `std_msgs/Bool` | `true` at the start of playback, `false` at the end |
 | `/drones/{id}/image` | → VPS | `std_msgs/String` | JSON `{"jpeg": base64, "width", "height", "reason": "periodic\|request"}` |
 | `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Requests an image right away |
@@ -98,7 +98,7 @@ The rosbridge connection is read from the drone's `.env`. Only numpy is needed
 |---|---|---|
 | `/nao/emotion_gesture` | ← driver, control room | `{"id", "emotion", "intensity", "event", "sync"}`; `sync` = `{"id", "speech_s", "speech_s_first"}` when a sentence goes with the gesture; `event` = `null` or `{"azimuth_deg", "elevation_deg", "distance_m"}` in the robot's torso frame (azimuth positive = to the left, the opposite of the drone) |
 | `/nao/emotion_gesture_control` | ← control room | `{"op": "reload"}`: rereads `emotion_gesture.env`; `{"op": "speech_offset", "ms": 150}`: speech / gesture offset, live |
-| `/speech_gesture_sync` | ↔ | `{"kind": "speech", "sync", "speech_s"}` ← VPS (measured sentence duration); `{"kind": "go", "sync", "at"}` → drone speaker |
+| `/speech_gesture_sync` | ↔ | `{"kind": "speech", "sync", "speech_s"}` ← VPS (measured sentence duration); `{"kind": "go", "sync", "at", "in_s"}` → drone speaker and OBS voice |
 | `/nao/read_angles` | → robot | `{"id"}`: asks for the measured posture |
 | `/nao/joint_angles` | ← robot | `{"id", "angles": {joint: rad}}` |
 | `/nao/trajectory` | → robot | `{"id", "names", "angles", "times", "start", "relax_end"}` |
@@ -149,7 +149,10 @@ body_gateway ── say {"text", "sync"} ──► static_driver_node: edge-tts,
    stopped): the sentence starts right away, or after `SPEECH_SYNC_MAX_WAIT_S` seconds
    (drone `.env`, 4 by default).
 
-Only the room speaker waits for the gesture; the stream voice (OBS) starts as before.
+The stream voice (OBS overlay: voice and caption) waits for the gesture the same
+way: `obs_agent` holds the sentence until the same start, plus `OBS_SPEECH_OFFSET_MS`
+(its own environment, 0 by default) to match the camera latency on the stream. As its
+clock is not the drone's, it uses `in_s` (delay from the moment the message is sent).
 `SPEECH_GESTURE_SYNC=0` in `body_gateway`'s environment turns the whole mechanism off.
 
 ## Sound direction

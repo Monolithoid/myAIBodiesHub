@@ -522,6 +522,9 @@ services:
       - ROSBRIDGE_URL=ws://rosbridge-proxy:80
       - ROSBRIDGE_TOKEN=${ROSBRIDGE_TOKEN:-}
       - OBS_TOKEN=${OBS_TOKEN:-}
+      # Speech ↔ gesture sync: extra offset of the stream voice (ms) and longest wait
+      - OBS_SPEECH_OFFSET_MS=${OBS_SPEECH_OFFSET_MS:-0}
+      - SPEECH_SYNC_MAX_WAIT_S=${SPEECH_SYNC_MAX_WAIT_S:-4}
     networks:
       - robotics-net
     depends_on:

@@ -37,8 +37,10 @@ by body_gateway with a "sync" id):
     2. the expressive part (start → gesture → back to start) is stretched or
        tightened to last as long as the speech (GESTURE_SPEECH_SCALE_MIN/MAX;
        tightened only if the guardian still accepts it);
-    3. /speech_gesture_sync → {"kind": "go", "sync", "at"}: the drone's speaker
-       (static_drone.py) says the sentence at `at` = start of the expressive part
+    3. /speech_gesture_sync → {"kind": "go", "sync", "at", "in_s"}: the drone's speaker
+       (static_drone.py) and the OBS voice (obs_agent.py, which uses `in_s`, the
+       delay from now, since its clock is not the drone's) say the sentence at
+       `at` = start of the expressive part
        + GESTURE_SPEECH_OFFSET_MS. Negative offset: speech starts before, the
        gesture is sent that much later if needed.
 
@@ -554,8 +556,11 @@ class GestureService:
             lead = expressive_window(g)[0] - float(g.times[0])
             offset = float(self.settings.get("speech_offset_ms", 0.0)) / 1000.0
             hold = max(0.0, -(lead + offset))
+            # `at`: this machine's clock (static_drone.py, same machine);
+            # `in_s`: delay from now, for the OBS voice on the VPS (another clock).
             self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"],
-                                      "at": round(self.wall() + hold + lead + offset, 3)})
+                                      "at": round(self.wall() + hold + lead + offset, 3),
+                                      "in_s": round(hold + lead + offset, 3)})
             if hold > 0:
                 self.sleep(hold)          # la parole part tout de suite, le geste un peu après
             info = dict(info, **(timing or {}))
@@ -612,7 +617,8 @@ class GestureService:
         """Le geste ne partira pas : la phrase qui l'attend est dite tout de suite."""
         sync = self._sync(req or {})
         if sync:
-            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"], "at": 0, "reason": reason})
+            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"], "at": 0, "in_s": 0,
+                                      "reason": reason})
 
     def _joints(self, gen):
         return gen.groups["arms"] + gen.groups["head"] + [j for j in gen.groups.get("hands", [])

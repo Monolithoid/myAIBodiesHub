@@ -308,7 +308,8 @@ class TestSpeechSync(Base):
         self.assertAlmostEqual(traj["times"][0][-1], 3.0)          # 1 s appris → 3 s de parole
         (go,) = self.go()
         self.assertEqual(go["sync"], "s-1")
-        self.assertAlmostEqual(go["at"], 1000.2)                    # départ du geste + 200 ms
+        self.assertAlmostEqual(go["at"], 1000.2)
+        self.assertAlmostEqual(go["in_s"], 0.2)                     # same, as a delay (OBS voice)                    # départ du geste + 200 ms
         sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"][-1]
         self.assertEqual(sent["time_scale"], 3.0)
         self.assertEqual(sent["speech_s"], 3.0)
@@ -358,7 +359,8 @@ class TestSpeechSync(Base):
         s = self.service(speech_wait_s=0.0)
         s.on_request({"id": "a", "emotion": "peur", "intensity": 0.5, "sync": self.SYNC})
         s.step()
-        self.assertEqual(self.go(), [{"kind": "go", "sync": "s-1", "at": 0, "reason": "geste refusé"}])
+        self.assertEqual(self.go(), [{"kind": "go", "sync": "s-1", "at": 0, "in_s": 0,
+                                      "reason": "geste refusé"}])
 
     def test_replaced_gesture_releases_its_speech(self):
         s = self.service(speech_wait_s=0.0)
