@@ -24,6 +24,23 @@ gesture for GESTURE_REST_DELAY seconds, the drone sends the return to rest
 (validated by the guardian) and the robot relaxes at the end.
 
     /nao/emotion_gesture_control ← {"op": "reload"}: rereads emotion_gesture.env
+                                 ← {"op": "speech_offset", "ms": 150}: speech /
+                                   gesture offset, live (until the next reload)
+
+Synchronisation with speech (gesture and sentence of the same LLM answer, linked
+by body_gateway with a "sync" id):
+
+    /nao/emotion_gesture   ← {..., "sync": {"id", "speech_s", "speech_s_first"}}
+    /speech_gesture_sync   ← {"kind": "speech", "sync", "speech_s"}  (measured MP3 duration)
+    1. the gesture is generated, then the service waits for the measured sentence
+       duration (GESTURE_SPEECH_WAIT_S at most, otherwise body_gateway's estimate);
+    2. the expressive part (start → gesture → back to start) is stretched or
+       tightened to last as long as the speech (GESTURE_SPEECH_SCALE_MIN/MAX;
+       tightened only if the guardian still accepts it);
+    3. /speech_gesture_sync → {"kind": "go", "sync", "at"}: the drone's speaker
+       (static_drone.py) says the sentence at `at` = start of the expressive part
+       + GESTURE_SPEECH_OFFSET_MS. Negative offset: speech starts before, the
+       gesture is sent that much later if needed.
 
 Run:
     python3 emotion_gesture.py
@@ -54,6 +71,8 @@ STRING = "std_msgs/String"
 POSE_TIMEOUT_S = 2.0      # wait for /nao/joint_angles
 END_MARGIN_S = 1.0        # margin after a gesture's planned end before considering it finished
 CHECK_EMOTIONS_INTENSITY = 0.5
+SYNC_TOPIC = "/speech_gesture_sync"
+MAX_OFFSET_S = 10.0       # décalage parole / geste accepté, dans un sens ou dans l'autre
 
 
 class GestureError(RuntimeError):
@@ -67,7 +86,9 @@ class GestureError(RuntimeError):
 def read_settings():
     """Rereads emotion_gesture.env (pinned by hand), then .env (rosbridge connection)."""
     for key in ("GESTURE_DATASET_REPO", "GESTURE_DATASET_REF", "GESTURE_CACHE_DIR",
-                "GESTURE_REST_DELAY", "GESTURE_RATE_HZ"):
+                "GESTURE_REST_DELAY", "GESTURE_RATE_HZ", "GESTURE_SPEECH_OFFSET_MS",
+                "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_SCALE_MIN", "GESTURE_SPEECH_SCALE_MAX",
+                "GESTURE_SPEECH_WAIT_S"):
         os.environ.pop(key, None)   # a reload rereads the file, not the old value
     load_dotenv(os.environ.get("GESTURE_ENV_FILE") or os.path.join(HERE, "emotion_gesture.env"))
     load_dotenv(os.path.join(HERE, ".env"))
@@ -82,7 +103,93 @@ def read_settings():
         "cache_dir": os.path.expanduser(_env("GESTURE_CACHE_DIR", "~/.cache/nao-gesture")),
         "rest_delay": _env_float("GESTURE_REST_DELAY", 3.0),
         "rate_hz": _env_float("GESTURE_RATE_HZ", 25.0),
+        # Synchronisation avec la parole
+        "speech_offset_ms": _clamp_offset_ms(_env_float("GESTURE_SPEECH_OFFSET_MS", 0.0)),
+        "match_speech": _env("GESTURE_MATCH_SPEECH", "1").lower() not in ("0", "false", "no", "non", "off"),
+        "scale_min": _env_float("GESTURE_SPEECH_SCALE_MIN", 0.7),
+        "scale_max": _env_float("GESTURE_SPEECH_SCALE_MAX", 3.0),
+        "speech_wait_s": _env_float("GESTURE_SPEECH_WAIT_S", 3.0),
     }
+
+
+def _clamp_offset_ms(ms):
+    return max(-MAX_OFFSET_S * 1000.0, min(MAX_OFFSET_S * 1000.0, float(ms)))
+
+
+# ======================================================================
+# Durée du geste calée sur la parole
+# ======================================================================
+
+EXPRESSIVE = ("start_to_gesture", "gesture_to_start")
+
+
+def expressive_window(g):
+    """(début, fin) en s de la partie expressive : départ → geste → retour au départ.
+
+    Sans segments (ancien générateur), tout le mouvement."""
+    segs = dict((name, (float(a), float(b))) for name, a, b in (getattr(g, "segments", None) or []))
+    if all(n in segs for n in EXPRESSIVE):
+        return segs[EXPRESSIVE[0]][0], segs[EXPRESSIVE[1]][1]
+    if "gesture" in segs:
+        return segs["gesture"]
+    return float(g.times[0]), float(g.times[-1])
+
+
+def warp_times(times, a, b, scale):
+    """Étire (scale > 1) ou resserre l'intervalle [a, b] ; ce qui suit est décalé d'autant."""
+    out = []
+    for t in times:
+        if t <= a:
+            out.append(t)
+        elif t <= b:
+            out.append(a + (t - a) * scale)
+        else:
+            out.append(t + (b - a) * (scale - 1.0))
+    return out
+
+
+def fit_to_speech(gen, g, speech_s, scale_min=0.7, scale_max=3.0):
+    """Cale la partie expressive du geste `g` sur `speech_s` secondes de parole.
+
+    Étirer ne fait que baisser vitesses et accélérations : toujours accepté.
+    Resserrer les augmente : on garde le resserrement le plus fort que le guardian
+    accepte encore sur la partie expressive (souvent aucun : le générateur a déjà
+    ralenti le geste jusqu'aux limites).  Renvoie le facteur appliqué (1.0 =
+    inchangé) et modifie `g` (times, segments)."""
+    a, b = expressive_window(g)
+    if not speech_s or speech_s <= 0 or b - a <= 0:
+        return 1.0
+    scale = max(float(scale_min), min(float(scale_max), float(speech_s) / (b - a)))
+    if abs(scale - 1.0) < 0.02:
+        return 1.0
+    if scale < 1.0:
+        check = getattr(gen.guardian, "check_trajectory", None)
+        if check is None:
+            return 1.0
+        idx = [i for i, t in enumerate(g.times) if a - 1e-9 <= t <= b + 1e-9]
+        rows = [list(g.positions[i]) for i in idx]
+
+        def accepted(sc):
+            tw = warp_times([float(g.times[i]) for i in idx], a, b, sc)
+            return check([t - tw[0] for t in tw], list(g.joints), rows, check_duration=False).ok
+
+        if not accepted(scale):
+            ok, bad = 1.0, scale            # recherche du resserrement accepté le plus fort
+            for _ in range(6):
+                mid = (ok + bad) / 2.0
+                if accepted(mid):
+                    ok = mid
+                else:
+                    bad = mid
+            if ok > 0.98:
+                return 1.0
+            scale = ok
+    times = warp_times([float(t) for t in g.times], a, b, scale)
+    g.times = times
+    if getattr(g, "segments", None):
+        g.segments = [(name, round(warp_times([x], a, b, scale)[0], 4),
+                       round(warp_times([y], a, b, scale)[0], 4)) for name, x, y in g.segments]
+    return round(scale, 3)
 
 
 
@@ -183,10 +290,14 @@ def check_generator(lib, gen, profile=None, tolerance=0.05):
 class GestureService:
     """Receives the requested gestures, generates them from the measured posture, sends them."""
 
-    def __init__(self, bridge, settings, clock=time.monotonic):
+    def __init__(self, bridge, settings, clock=time.monotonic, wall=time.time, sleep=time.sleep):
         self.bridge = bridge
         self.settings = settings
         self.clock = clock
+        self.wall = wall                # heure partagée avec static_drone.py (même machine)
+        self.sleep = sleep
+        self._speech = {}               # sync -> (durée mesurée de la phrase ou None, reçue à)
+        self._speech_cv = threading.Condition()
         self.lib = self.gen = None
         self.version = None
         self.profile = None
@@ -205,8 +316,9 @@ class GestureService:
 
     def setup(self):
         b = self.bridge
-        for topic in ("/nao/read_angles", "/nao/trajectory", "/nao/emotion_gesture_state"):
+        for topic in ("/nao/read_angles", "/nao/trajectory", "/nao/emotion_gesture_state", SYNC_TOPIC):
             b.advertise(topic, STRING)
+        b.subscribe(SYNC_TOPIC, STRING, lambda m: self.on_sync(_data(m)))
         b.subscribe("/nao/emotion_gesture", STRING, lambda m: self.on_request(_data(m)))
         b.subscribe("/nao/emotion_gesture_control", STRING, lambda m: self.on_control(_data(m)))
         b.subscribe("/nao/joint_angles", STRING, lambda m: self.on_angles(_data(m)))
@@ -227,7 +339,8 @@ class GestureService:
         # stiff in the start pose while waiting for the return to rest). The NAO driver
         # sends them nothing while this is true.
         msg = dict(fields, id=gid, state=state, version=self.version if full else short,
-                   owns_body=self._playing is not None or self._at_start, at_rest=self._rested)
+                   owns_body=self._playing is not None or self._at_start, at_rest=self._rested,
+                   speech_offset_ms=self.settings.get("speech_offset_ms", 0.0))
         log.info("Gesture %s: %s %s", gid, state, fields.get("reason", ""))
         self.publish("/nao/emotion_gesture_state", msg)
 
@@ -262,6 +375,14 @@ class GestureService:
         return True
 
     def on_control(self, payload):
+        if payload.get("op") == "speech_offset":
+            try:
+                ms = _clamp_offset_ms(payload.get("ms"))
+            except (TypeError, ValueError):
+                return
+            self.settings = dict(self.settings, speech_offset_ms=ms)
+            self.state(None, "speech_offset", speech_offset_ms=ms)
+            return
         if payload.get("op") == "reload":
             try:
                 self.settings = read_settings()
@@ -280,9 +401,10 @@ class GestureService:
         gid = str(payload.get("id") or uuid.uuid4().hex[:8])
         req = dict(payload, id=gid)
         with self._lock:
-            if self._pending is not None:
-                self.state(self._pending["id"], "replaced")
-            self._pending = req
+            old, self._pending = self._pending, req
+        if old is not None:
+            self.state(old["id"], "replaced")
+            self.release_speech(old, "geste remplacé")
         self._wake.set()
 
     def on_angles(self, payload):
@@ -347,6 +469,7 @@ class GestureService:
         gen = self.gen
         if gen is None:
             self.state(gid, "refused", reason="aucun générateur en service")
+            self.release_speech(req, "aucun générateur")
             return
         try:
             pose = self.measure()
@@ -368,11 +491,23 @@ class GestureService:
                     break
         except Exception as exc:
             self.state(gid, "refused", reason=str(exc))
+            self.release_speech(req, "geste refusé")
             return
         if not g.ok:
             self.state(gid, "refused", reason=g.report.summary())
+            self.release_speech(req, "geste refusé")
             return
-        self._send(gid, g, pose, relax_end=False, to_rest=False,
+        sync = self._sync(req)
+        timing = {}
+        if sync:
+            speech_s = self.speech_seconds(sync)
+            scale = 1.0
+            if self.settings.get("match_speech", True):
+                scale = fit_to_speech(gen, g, speech_s, self.settings.get("scale_min", 0.7),
+                                      self.settings.get("scale_max", 3.0))
+            timing = {"sync": sync["id"], "speech_s": speech_s, "time_scale": scale,
+                      "speech_offset_ms": self.settings.get("speech_offset_ms", 0.0)}
+        self._send(gid, g, pose, relax_end=False, to_rest=False, sync=sync, timing=timing,
                    info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
                          "event": req.get("event"), "notes": g.notes,
                          "adaptation": getattr(g, "adaptation", None),
@@ -410,8 +545,21 @@ class GestureService:
                            {}, [], {})
         self._send(gid, traj, dict(zip(joints, q0)), relax_end=True, to_rest=True, info={"rest": True})
 
-    def _send(self, gid, g, pose, relax_end, to_rest, info):
+    def _send(self, gid, g, pose, relax_end, to_rest, info, sync=None, timing=None):
         names, angles, times = g.angle_interpolation(rate_hz=self.settings["rate_hz"])
+        if sync:
+            # Début de la partie expressive (après le passage à la pose de départ),
+            # plus le décalage réglé : c'est là que la phrase doit partir.  Décalage
+            # négatif plus grand que ce passage : le geste attend un peu.
+            lead = expressive_window(g)[0] - float(g.times[0])
+            offset = float(self.settings.get("speech_offset_ms", 0.0)) / 1000.0
+            hold = max(0.0, -(lead + offset))
+            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"],
+                                      "at": round(self.wall() + hold + lead + offset, 3)})
+            if hold > 0:
+                self.sleep(hold)          # la parole part tout de suite, le geste un peu après
+            info = dict(info, **(timing or {}))
+            info["speech_after_s"] = round(lead + offset, 3)   # par rapport à l'envoi du geste
         with self._lock:
             self._playing = {"id": gid, "until": self.clock() + g.duration + 10 * END_MARGIN_S,
                              "to_rest": to_rest}
@@ -420,6 +568,51 @@ class GestureService:
             "start": dict((j, round(v, 5)) for j, v in pose.items() if j in names),
             "relax_end": relax_end})
         self.state(gid, "sent", duration_s=round(g.duration, 2), **info)
+
+    # -- synchronisation avec la parole ---------------------------------------
+
+    @staticmethod
+    def _sync(req):
+        sync = req.get("sync")
+        return sync if isinstance(sync, dict) and sync.get("id") else None
+
+    def on_sync(self, payload):
+        """Durée mesurée de la phrase liée à un geste (static_driver_node, sur le VPS)."""
+        if payload.get("kind") != "speech" or not payload.get("sync"):
+            return
+        try:
+            seconds = float(payload["speech_s"]) if payload.get("speech_s") is not None else None
+        except (TypeError, ValueError):
+            seconds = None
+        now = self.clock()
+        with self._speech_cv:
+            self._speech[str(payload["sync"])] = (seconds, now)
+            for k in [k for k, (_, t) in self._speech.items() if now - t > 120.0]:
+                del self._speech[k]
+            self._speech_cv.notify_all()
+
+    def speech_seconds(self, sync):
+        """Durée de toute la parole liée : la première phrase mesurée (attendue au plus
+        GESTURE_SPEECH_WAIT_S), les suivantes estimées par body_gateway."""
+        estimate = float(sync.get("speech_s") or 0.0)
+        first_est = float(sync.get("speech_s_first") or estimate)
+        deadline = time.monotonic() + float(self.settings.get("speech_wait_s", 3.0))
+        with self._speech_cv:
+            while sync["id"] not in self._speech:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return round(estimate, 3)
+                self._speech_cv.wait(left)
+            measured, _ = self._speech.pop(sync["id"])
+        if measured is None:
+            return round(estimate, 3)
+        return round(measured + max(0.0, estimate - first_est), 3)
+
+    def release_speech(self, req, reason):
+        """Le geste ne partira pas : la phrase qui l'attend est dite tout de suite."""
+        sync = self._sync(req or {})
+        if sync:
+            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"], "at": 0, "reason": reason})
 
     def _joints(self, gen):
         return gen.groups["arms"] + gen.groups["head"] + [j for j in gen.groups.get("hands", [])

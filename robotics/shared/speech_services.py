@@ -9,6 +9,7 @@ block the rclpy loop.
     text = transcribe(WHISPER_URL, audio_bytes)     # raises WhisperError
     if is_meaningful(text): ...
     mp3 = synthesize_mp3(text, "fr-FR-DeniseNeural") # raises ImportError if edge-tts is missing
+    seconds = mp3_duration(mp3)                      # sentence duration, None if unreadable
 """
 
 import asyncio
@@ -76,3 +77,51 @@ def synthesize_mp3(text: str, voice: str) -> bytes:
         return loop.run_until_complete(_gen())
     finally:
         loop.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Durée d'un MP3 (pour caler les gestes du NAO sur la parole)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# MPEG Layer III : débits (kbit/s) par version, fréquences d'échantillonnage.
+_L3_BITRATES = {
+    "1": (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+    "2": (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+}
+_SAMPLE_RATES = {"1": (44100, 48000, 32000), "2": (22050, 24000, 16000), "2.5": (11025, 12000, 8000)}
+
+
+def mp3_duration(mp3: bytes) -> float | None:
+    """Durée en secondes d'un MP3 (Layer III, celui d'edge-tts), en comptant ses trames.
+
+    Python standard, sans décodage.  None si le fichier n'est pas lisible ainsi :
+    l'appelant garde alors son estimation.
+    """
+    data = memoryview(mp3)
+    i, n = 0, len(data)
+    if n >= 10 and bytes(data[:3]) == b"ID3":           # étiquette ID3v2 au début
+        size = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) | ((data[8] & 0x7F) << 7) | (data[9] & 0x7F)
+        i = 10 + size
+    seconds, frames = 0.0, 0
+    while i + 4 <= n:
+        h = int.from_bytes(data[i:i + 4], "big")
+        if (h >> 21) & 0x7FF != 0x7FF:
+            i += 1                                       # pas une trame : on cherche la suivante
+            continue
+        version = {0: "2.5", 2: "2", 3: "1"}.get((h >> 19) & 3)
+        layer = (h >> 17) & 3
+        br_idx, sr_idx, pad = (h >> 12) & 0xF, (h >> 10) & 3, (h >> 9) & 1
+        if version is None or layer != 1 or br_idx in (0, 15) or sr_idx == 3:
+            i += 1
+            continue
+        bitrate = _L3_BITRATES["1" if version == "1" else "2"][br_idx] * 1000
+        rate = _SAMPLE_RATES[version][sr_idx]
+        samples = 1152 if version == "1" else 576
+        length = (samples // 8) * bitrate // rate + pad
+        if length < 4:
+            i += 1
+            continue
+        seconds += samples / float(rate)
+        frames += 1
+        i += length
+    return round(seconds, 3) if frames else None

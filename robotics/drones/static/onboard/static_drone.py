@@ -9,8 +9,12 @@ principle as the NAO, ADR 002) and handles:
     - heartbeat            → /drones/{id}/status        (every 30 s)
     - listening            → /drones/{id}/audio         (base64 WAV + angle)
     - local wake word      → /drones/{id}/wake          (WAKE_MODE=local)
-    - speech               ← /drones/{id}/audio_out     (base64 MP3)
+    - speech               ← /drones/{id}/audio_out     (base64 MP3, or JSON
+                                                         {"mp3", "sync", "speech_s"})
                            → /drones/{id}/speaking      (true / false)
+                           ← /speech_gesture_sync       ({"kind": "go", "sync", "at"}:
+                                                         a sentence tied to a NAO
+                                                         gesture waits for its start)
     - image                → /drones/{id}/image         (base64 JPEG)
                            ← /drones/{id}/image_request
 
@@ -129,6 +133,8 @@ class Config:
         # Haut-parleur
         self.player_cmd = _env("PLAYER_CMD", "mpg123 -q -")
         self.playback_tail_s = _env_float("PLAYBACK_TAIL_S", 0.3)
+        # Phrase liée à un geste du NAO : attente maximale du départ du geste (s).
+        self.speech_sync_max_wait_s = _env_float("SPEECH_SYNC_MAX_WAIT_S", 4.0)
 
         # Camera
         self.camera_index = _env("CAMERA_INDEX", "0")
@@ -478,6 +484,77 @@ def choose_sample_rate(sd, device, channels, wanted, info):
 
 
 # ======================================================================
+# Synchronisation parole ↔ geste du NAO
+# ======================================================================
+
+SYNC_TOPIC = "/speech_gesture_sync"
+
+
+def parse_audio_out(data):
+    """(MP3, id de synchro) : base64 seul, ou JSON {"mp3", "sync", "speech_s"}."""
+    data = (data or "").strip()
+    sync = ""
+    if data.startswith("{"):
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            return b"", ""
+        data, sync = str(obj.get("mp3") or ""), str(obj.get("sync") or "")
+    try:
+        return (base64.b64decode(data) if data else b""), sync
+    except (ValueError, TypeError):
+        return b"", ""
+
+
+class SpeechSync:
+    """Phrases retenues jusqu'au départ du geste qui va avec.
+
+    Le service des gestes (emotion_gesture.py) publie {"kind": "go", "sync", "at"}
+    sur /speech_gesture_sync : `at` = heure (time.time() de cette machine) où la
+    phrase doit partir, 0 = tout de suite (geste refusé, driver NAO compris).
+    """
+
+    KEEP_S = 120.0
+    MAX_LEAD_S = 20.0
+
+    def __init__(self, max_wait_s, clock=time.time, sleep=time.sleep):
+        self.max_wait_s = max(0.0, float(max_wait_s))
+        self.clock, self.sleep = clock, sleep
+        self._go = {}
+        self._cv = threading.Condition()
+
+    def on_message(self, payload):
+        if payload.get("kind") != "go" or not payload.get("sync"):
+            return
+        try:
+            at = float(payload.get("at") or 0.0)
+        except (TypeError, ValueError):
+            at = 0.0
+        now = self.clock()
+        with self._cv:
+            self._go[str(payload["sync"])] = (at, now)
+            for k in [k for k, (_, t) in self._go.items() if now - t > self.KEEP_S]:
+                del self._go[k]
+            self._cv.notify_all()
+
+    def wait(self, sync):
+        """Attend le départ du geste ; renvoie ce qui a décidé ("go …", "attente dépassée")."""
+        deadline = self.clock() + self.max_wait_s
+        with self._cv:
+            while sync not in self._go:
+                left = deadline - self.clock()
+                if left <= 0:
+                    return "attente dépassée ({:.1f} s), dite sans le geste".format(self.max_wait_s)
+                self._cv.wait(left)
+            at, _ = self._go.pop(sync)
+        left = at - self.clock() if at else 0.0
+        if left > 0:
+            # Le geste peut d'abord passer plusieurs secondes à rejoindre sa pose de départ.
+            self.sleep(min(left, self.MAX_LEAD_S))
+        return "dite {:+.0f} ms après le signal du geste".format(max(0.0, left) * 1000)
+
+
+# ======================================================================
 # Drone statique
 # ======================================================================
 
@@ -496,6 +573,7 @@ class StaticDrone:
         self.wake = None            # wakeword.WakeWordDetector if WAKE_MODE=local
         self._audio_q = queue.Queue(maxsize=200)
         self._play_lock = threading.Lock()
+        self.speech_sync = SpeechSync(cfg.speech_sync_max_wait_s)
         self._rms_peak = 0.0
         self._rms_logged = 0.0
 
@@ -768,13 +846,26 @@ class StaticDrone:
     # ------------------------------------------------------------------
 
     def on_audio_out(self, msg):
-        b64 = msg.get("data", "")
-        if b64:
-            threading.Thread(target=self.play_mp3, args=(base64.b64decode(b64),),
-                             daemon=True).start()
+        mp3, sync = parse_audio_out(msg.get("data", ""))
+        if mp3:
+            threading.Thread(target=self.play_mp3, args=(mp3, sync), daemon=True).start()
 
-    def play_mp3(self, mp3):
+    def on_speech_sync(self, msg):
+        try:
+            payload = json.loads(msg.get("data") or "{}")
+        except ValueError:
+            return
+        if isinstance(payload, dict):
+            self.speech_sync.on_message(payload)
+
+    def play_mp3(self, mp3, sync=""):
         with self._play_lock:   # a single playback at a time, in arrival order
+            if sync:
+                # Sentence tied to a NAO gesture: it starts when the gesture starts
+                # (plus the offset set in emotion_gesture.env), at the latest
+                # after SPEECH_SYNC_MAX_WAIT_S.
+                how = self.speech_sync.wait(sync)
+                log.info("Sentence %s: %s", sync, how)
             self.speaking.set()
             self.bridge.publish(self.cfg.topic("speaking"), {"data": True})
             try:
@@ -857,6 +948,7 @@ class StaticDrone:
         b.advertise(self.cfg.topic("wake"), "std_msgs/String")
         b.advertise(self.cfg.topic("image"), "std_msgs/String")
         b.subscribe(self.cfg.topic("audio_out"), "std_msgs/String", self.on_audio_out)
+        b.subscribe(SYNC_TOPIC, "std_msgs/String", self.on_speech_sync)
         b.subscribe(self.cfg.topic("image_request"), "std_msgs/Empty", self.on_image_request)
 
         threads = [threading.Thread(target=b.run_forever, name="rosbridge"),

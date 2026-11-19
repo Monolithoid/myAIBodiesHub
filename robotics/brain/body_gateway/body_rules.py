@@ -328,3 +328,45 @@ def gesture_event(azimuth_deg: float | None, offset_deg: float = 0.0) -> dict | 
     az = -float(azimuth_deg) + float(offset_deg)
     az = max(-90.0, min(90.0, az))
     return {"azimuth_deg": round(az, 1), "elevation_deg": 0.0}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speech ↔ learned gesture synchronisation
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Débit moyen d'edge-tts en français (fr-FR-DeniseNeural, vitesse normale) :
+# sert d'estimation avant que la durée mesurée du MP3 n'arrive au drone.
+SPEECH_CHARS_PER_S = 14.0
+SPEECH_PAUSE_S = {".": 0.35, "!": 0.35, "?": 0.35, "…": 0.35, ";": 0.25, ":": 0.2, ",": 0.15}
+
+
+def speech_seconds(text: str, chars_per_s: float = SPEECH_CHARS_PER_S) -> float:
+    """Durée estimée d'une phrase dite par la synthèse vocale (s)."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return 0.0
+    letters = sum(1 for c in text if c.isalnum() or c == " ")
+    pauses = sum(SPEECH_PAUSE_S.get(c, 0.0) for c in text.rstrip(".!?… "))
+    return round(letters / float(chars_per_s) + pauses, 2)
+
+
+def speech_gesture_sync(actions: list, registry: list[str], connected: dict[str, bool],
+                        emotions: list, sync_id: str, energy: str = "",
+                        chars_per_s: float = SPEECH_CHARS_PER_S) -> dict | None:
+    """Lien entre la parole et le geste appris d'une même réponse du LLM.
+
+    Seulement quand la première phrase est dite par un drone statique (le
+    haut-parleur de la pièce, qui sait attendre le geste) et qu'un geste utilisable
+    part au NAO.  {"id", "speech_s", "speech_s_first"} : durée estimée de toute la
+    parole et de la première phrase (celle que le drone retient et mesure).
+    """
+    speeches = [a for a in actions if a.get("type") == "speech" and str(a.get("text", "")).strip()]
+    gestures = [a for a in actions
+                if a.get("type") == "gesture" and gesture_order(a, emotions, energy) is not None]
+    if not speeches or not gestures:
+        return None
+    if not any(body_type(b) == "static" for b in route_targets(speeches[0], registry, connected)):
+        return None
+    first = speech_seconds(speeches[0]["text"], chars_per_s)
+    total = first + sum(speech_seconds(a["text"], chars_per_s) for a in speeches[1:])
+    return {"id": sync_id, "speech_s": round(total, 2), "speech_s_first": first}

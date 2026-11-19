@@ -153,12 +153,14 @@ class Base(unittest.TestCase):
             return json.dumps({"files": dict((p, _sha(b)) for p, b in self.files.items())}).encode()
         return self.files[path]
 
-    def service(self, rest_delay=3.0):
+    def service(self, rest_delay=3.0, **settings):
         self.now = [100.0]
+        self.slept = []
         self.bridge = FakeBridge()
-        s = eg.GestureService(self.bridge, {"repo": "o/r", "ref": "v1", "cache_dir": self.dir,
-                                            "rest_delay": rest_delay, "rate_hz": 25.0},
-                              clock=lambda: self.now[0])
+        s = eg.GestureService(self.bridge, dict({"repo": "o/r", "ref": "v1", "cache_dir": self.dir,
+                                                 "rest_delay": rest_delay, "rate_hz": 25.0}, **settings),
+                              clock=lambda: self.now[0], wall=lambda: 1000.0,
+                              sleep=self.slept.append)
         s.setup()
         self.assertTrue(s.load(fetch=lambda repo, ref, cache: eg.fetch_generator(repo, ref, cache, get=self.get)))
         return s
@@ -287,6 +289,136 @@ class TestService(Base):
         self.assertFalse(s.load(fetch=lambda repo, ref, cache: eg.fetch_generator(repo, ref, cache, get=self.get)))
         self.assertIs(s.gen, old)
         self.assertEqual(self.bridge.states()[-1], (None, "version_refused"))
+
+
+class TestSpeechSync(Base):
+    """Geste et phrase d'une même réponse : durée calée, départ commun, décalage réglable."""
+
+    SYNC = {"id": "s-1", "speech_s": 2.0, "speech_s_first": 2.0}
+
+    def go(self):
+        return [d for t, d in self.bridge.out if t == eg.SYNC_TOPIC and d.get("kind") == "go"]
+
+    def test_gesture_fitted_to_measured_speech_and_speech_released_at_start(self):
+        s = self.service(speech_offset_ms=200.0, speech_wait_s=0.5)
+        self.bridge.subs[eg.SYNC_TOPIC]({"data": json.dumps({"kind": "speech", "sync": "s-1", "speech_s": 3.0})})
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        (traj,) = self.bridge.trajectories()
+        self.assertAlmostEqual(traj["times"][0][-1], 3.0)          # 1 s appris → 3 s de parole
+        (go,) = self.go()
+        self.assertEqual(go["sync"], "s-1")
+        self.assertAlmostEqual(go["at"], 1000.2)                    # départ du geste + 200 ms
+        sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"][-1]
+        self.assertEqual(sent["time_scale"], 3.0)
+        self.assertEqual(sent["speech_s"], 3.0)
+        self.assertEqual(self.slept, [])
+
+    def test_estimate_used_when_measure_missing(self):
+        s = self.service(speech_wait_s=0.0)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 2.0)
+
+    def test_measured_first_sentence_plus_estimated_rest(self):
+        s = self.service(speech_wait_s=0.5, scale_max=10.0)
+        s.on_sync({"kind": "speech", "sync": "s-1", "speech_s": 2.5})
+        self.assertEqual(s.speech_seconds({"id": "s-1", "speech_s": 5.0, "speech_s_first": 2.0}), 5.5)
+
+    def test_scale_clamped(self):
+        s = self.service(speech_wait_s=0.0, scale_max=1.5)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5,
+                      "sync": {"id": "s-1", "speech_s": 9.0}})
+        s.step()
+        self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.5)
+
+    def test_match_speech_off_keeps_learned_speed(self):
+        s = self.service(speech_wait_s=0.0, match_speech=False)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.0)
+        self.assertEqual(len(self.go()), 1)
+
+    def test_negative_offset_delays_the_gesture(self):
+        s = self.service(speech_wait_s=0.0, speech_offset_ms=-300.0)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        self.assertEqual(self.slept, [0.3])     # pas de passage à la pose de départ ici
+        self.assertAlmostEqual(self.go()[0]["at"], 1000.0)   # parole tout de suite, geste 0,3 s après
+
+    def test_offset_set_live(self):
+        s = self.service()
+        s.on_control({"op": "speech_offset", "ms": 120})
+        self.assertEqual(s.settings["speech_offset_ms"], 120.0)
+        s.on_control({"op": "speech_offset", "ms": 99999})
+        self.assertEqual(s.settings["speech_offset_ms"], 10000.0)
+
+    def test_refused_gesture_releases_the_speech(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["peur"])).encode()
+        s = self.service(speech_wait_s=0.0)
+        s.on_request({"id": "a", "emotion": "peur", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        self.assertEqual(self.go(), [{"kind": "go", "sync": "s-1", "at": 0, "reason": "geste refusé"}])
+
+    def test_replaced_gesture_releases_its_speech(self):
+        s = self.service(speech_wait_s=0.0)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "b", "emotion": "joie", "intensity": 0.5})
+        self.assertEqual(self.go()[0]["sync"], "s-1")
+        self.assertEqual(self.go()[0]["at"], 0)
+
+
+class _G(object):
+    def __init__(self, times, segments):
+        self.times, self.segments = times, segments
+        self.joints, self.positions = ["J"], [[0.0] for _ in times]
+
+
+class _Gen(object):
+    class guardian(object):
+        ok = True
+        min_window = 0.0     # plus court que ça : accélérations trop fortes
+
+        @classmethod
+        def check_trajectory(cls, t, joints, q, check_duration=True):
+            class R(object):
+                pass
+            r = R()
+            r.ok = cls.ok and t[-1] - t[0] >= cls.min_window - 1e-9
+            return r
+
+
+class TestFitToSpeech(unittest.TestCase):
+    SEGS = [("rest_to_start", 0.0, 1.0), ("start_to_gesture", 1.0, 1.5), ("gesture", 1.5, 2.5),
+            ("gesture_to_start", 2.5, 3.0)]
+
+    def test_only_the_expressive_part_is_stretched(self):
+        g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
+        self.assertEqual(eg.fit_to_speech(_Gen, g, 4.0), 2.0)
+        self.assertEqual(g.times, [0.0, 1.0, 3.0, 5.0])            # passage au départ inchangé
+        self.assertEqual(g.segments[2], ("gesture", 2.0, 4.0))
+        self.assertEqual(eg.expressive_window(g), (1.0, 5.0))
+
+    def test_faster_only_if_guardian_accepts(self):
+        _Gen.guardian.ok = False
+        try:
+            g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
+            self.assertEqual(eg.fit_to_speech(_Gen, g, 1.0), 1.0)
+            self.assertEqual(g.times, [0.0, 1.0, 2.0, 3.0])
+        finally:
+            _Gen.guardian.ok = True
+        g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
+        self.assertEqual(eg.fit_to_speech(_Gen, g, 1.6), 0.8)
+        self.assertEqual(g.times, [0.0, 1.0, 1.8, 2.6])
+
+    def test_strongest_accepted_compression(self):
+        _Gen.guardian.min_window = 1.8       # fenêtre de 2 s : au mieux x0.9
+        try:
+            g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
+            scale = eg.fit_to_speech(_Gen, g, 1.4)
+            self.assertTrue(0.9 <= scale < 0.92, scale)
+        finally:
+            _Gen.guardian.min_window = 0.0
 
 
 if __name__ == "__main__":

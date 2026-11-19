@@ -70,6 +70,12 @@ Environment variables:
   WAKE_ALIASES               comma-separated spellings also accepted as the wake word
                              (Whisper mishearings), default DEFAULT_WAKE_ALIASES for "ok nao"
   NAO_HEAD_YAW_OFFSET        degrees added to turn the NAO head toward a voice, default 0
+  SPEECH_GESTURE_SYNC        1 (default) = a learned gesture and the sentence of the same answer
+                             start together: the static drone holds the sentence until the
+                             gesture starts, the gesture is fitted to the sentence length
+                             (the start offset is set on the drone, emotion_gesture.env)
+  SPEECH_CHARS_PER_S         speech rate used to estimate a sentence length before the
+                             measured one arrives, default 14 characters per second
   DREAMING_HOUR_START/END    default 2 / 6
   DREAMING_BATTERY_THRESHOLD default 80.0
   DREAM_TICK_INTERVAL        seconds between dream ticks, default 300
@@ -87,6 +93,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
@@ -124,6 +131,8 @@ WAKE_WINDOW_S = float(os.environ.get("WAKE_WINDOW_S", "10"))
 DEFAULT_WAKE_ALIASES = "ok now,ok no,ok nau,ok naho,ok nawo,ok naos,o nao" if WAKE_WORD == "ok nao" else ""
 WAKE_ALIASES  = [a for a in (os.environ.get("WAKE_ALIASES") or DEFAULT_WAKE_ALIASES).split(",") if a.strip()]
 NAO_HEAD_YAW_OFFSET = float(os.environ.get("NAO_HEAD_YAW_OFFSET", "0"))
+SPEECH_GESTURE_SYNC = os.environ.get("SPEECH_GESTURE_SYNC", "1").lower() not in ("0", "false", "no", "non", "off")
+SPEECH_CHARS_PER_S  = float(os.environ.get("SPEECH_CHARS_PER_S", str(body_rules.SPEECH_CHARS_PER_S)))
 # A voice direction older than this is not added to the LLM context.
 VOICE_DIRECTION_MAX_AGE = 30.0
 
@@ -1043,6 +1052,15 @@ class BodyGatewayNode(Node):
         are skipped.  Disconnected bodies get a warning but still receive the
         action — the driver will queue it for when the robot reconnects.
         """
+        # Speech ↔ gesture sync: the first sentence and the learned gesture share an id.
+        sync = None
+        if SPEECH_GESTURE_SYNC:
+            nao = next((b for b in BODY_REGISTRY if not body_rules.is_voice(b)), "")
+            sync = body_rules.speech_gesture_sync(
+                actions, BODY_REGISTRY, self._body_connected, self._gesture_emotions.get(nao, []),
+                "s-" + uuid.uuid4().hex[:8], self._energy, SPEECH_CHARS_PER_S)
+        synced_speech = next((a for a in actions if a.get("type") == "speech"
+                              and str(a.get("text", "")).strip()), None) if sync else None
         for action in actions:
             requested = action.get("body", BODY_REGISTRY[0])
             # Routing table: speech → every connected voice (room, stream), gestures → NAO.
@@ -1070,14 +1088,19 @@ class BodyGatewayNode(Node):
                         f"action '{action.get('type','')}' envoyée quand même"
                     )
                 try:
-                    self._execute_action(body_id, action.get("type", ""), action)
+                    self._execute_action(body_id, action.get("type", ""), action,
+                                         sync if (action is synced_speech or
+                                                  action.get("type") == "gesture") else None)
                 except Exception as e:
                     self.get_logger().error(f"[{body_id}] Action error: {e}")
 
-    def _execute_action(self, body_id: str, kind: str, action: dict):
+    def _execute_action(self, body_id: str, kind: str, action: dict, sync: dict | None = None):
         if kind == "speech":
             msg = String()
             msg.data = action.get("text", "")
+            if sync and body_rules.body_type(body_id) == "static":
+                # The static drone holds this sentence until the gesture starts.
+                msg.data = json.dumps({"text": msg.data, "sync": sync["id"]})
             self._pub_say[body_id].publish(msg)
             time.sleep(0.3)
 
@@ -1125,6 +1148,8 @@ class BodyGatewayNode(Node):
             event = body_rules.gesture_event(self._recent_voice_azimuth(), NAO_HEAD_YAW_OFFSET)
             if event:
                 order["event"] = event
+            if sync:
+                order["sync"] = sync
             self._pub_gesture[body_id].publish(String(data=json.dumps(order)))
 
         elif kind == "look":

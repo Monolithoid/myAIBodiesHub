@@ -161,6 +161,8 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `WAKE_WORD` | Wake word required in the static drone's speech, default `ok nao` |
 | `WAKE_WINDOW_S` | Seconds during which a lone wake word stays valid for the next sentence, default 10 |
 | `NAO_HEAD_YAW_OFFSET` | Degrees added when turning the NAO head toward a voice (manual calibration), default 0 |
+| `SPEECH_GESTURE_SYNC` | `1` (default): a sentence said by the static drone and the learned gesture of the same answer start together, and the gesture lasts as long as the sentence ([details](../robotics/drones/static/onboard/README.md#synchronisation-parole--geste)); the start offset is set on the drone (`GESTURE_SPEECH_OFFSET_MS`) |
+| `SPEECH_CHARS_PER_S` | Speech rate used to estimate a sentence length until the measured one arrives, default 14 |
 | `DREAMING_HOUR_START/END` | Dream window, default 2 / 6 |
 | `DREAMING_BATTERY_THRESHOLD` | Minimum battery % to dream, default 80.0 |
 | `DREAM_TICK_INTERVAL` | Seconds between dream ticks, default 300 |

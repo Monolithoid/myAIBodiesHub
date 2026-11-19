@@ -150,6 +150,14 @@
       <button id="gPlay" class="primary" disabled>Jouer</button>
       <button id="gReload">Recharger la version</button>
     </div>
+    <div class="row" style="margin-top:10px">
+      <label class="muted" title="Positif : la parole part après le début du geste. Négatif : avant.">décalage parole / geste (ms)
+        <input id="gOffset" type="number" min="-10000" max="10000" step="50" value="0"></label>
+      <button id="gOffsetApply">Appliquer</button>
+      <span id="gOffsetNow" class="muted"></span>
+    </div>
+    <div class="muted" style="margin-top:4px">Gardé jusqu'au prochain « Recharger » ; pour le garder, l'écrire
+      dans <code>GESTURE_SPEECH_OFFSET_MS</code> (<code>emotion_gesture.env</code>).</div>
     <div id="gLast" class="status muted">—</div>
   </section>
 </main>
@@ -303,7 +311,7 @@ const G_STATE = { sent: "envoyé au robot", refused: "refusé", replaced: "rempl
                   robot_playing: "en cours", robot_done: "fini", robot_stopped: "arrêté",
                   robot_refused: "refusé par le robot", robot_error: "erreur du robot",
                   version_loaded: "version en service", version_refused: "version refusée",
-                  no_version: "aucune version en service" };
+                  no_version: "aucune version en service", speech_offset: "décalage parole / geste changé" };
 
 function renderGestures(st) {
   const v = st.version || {};
@@ -327,6 +335,11 @@ function renderGestures(st) {
   last.textContent = "";
   last.append(h("span", "", (st.id ? st.id + " · " : "") + (G_STATE[st.state] || st.state)));
   if (st.emotion) last.append(h("span", "muted", ` · ${st.emotion} ${st.intensity ?? ""}`));
+  if (st.sync) last.append(h("div", "muted", `parole ${st.speech_s ?? "?"} s · geste ×${st.time_scale ?? 1}` +
+                                           ` · parole à ${st.speech_after_s ?? "?"} s de l'envoi du geste`));
+  if (st.speech_offset_ms !== undefined) {
+    document.getElementById("gOffsetNow").textContent = `en service : ${Math.round(st.speech_offset_ms)} ms`;
+  }
   if (st.reason) last.append(h("div", "err", st.reason));
   if (st.state === "version_refused" && st.candidate) last.append(h("div", "err", "Candidate : " + (st.candidate.ref || "?")));
 }
@@ -335,6 +348,8 @@ document.getElementById("gPlay").onclick = () => send("gesture", {
   emotion: document.getElementById("gEmotion").value,
   intensity: Math.max(0, Math.min(1, parseFloat(document.getElementById("gIntensity").value) || 0.5)) });
 document.getElementById("gReload").onclick = () => send("gesture_control", { op: "reload" });
+document.getElementById("gOffsetApply").onclick = () => send("gesture_control", {
+  op: "speech_offset", ms: parseFloat(document.getElementById("gOffset").value) || 0 });
 
 // ── Events ─────────────────────────────────────────────────────────────────
 

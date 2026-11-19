@@ -156,5 +156,35 @@ class TestLearnedGestures(unittest.TestCase):
                          ["nao_01"])
 
 
+class TestSpeechGestureSync(unittest.TestCase):
+    CONNECTED = {"nao_01": True, "static_01": True}
+    ACTIONS = [{"body": "static_01", "type": "speech", "text": "Bonjour, je suis content de te voir."},
+               {"body": "nao_01", "type": "gesture", "emotion": "joie", "intensity": 0.6}]
+
+    def test_speech_seconds(self):
+        self.assertEqual(body_rules.speech_seconds(""), 0.0)
+        short = body_rules.speech_seconds("Oui.")
+        long = body_rules.speech_seconds("Bonjour, je suis vraiment très content de te voir aujourd'hui.")
+        self.assertLess(short, 1.0)
+        self.assertTrue(3.0 < long < 6.0, long)
+
+    def test_sync_when_room_speaker_and_gesture(self):
+        sync = body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["joie"], "s-1")
+        self.assertEqual(sync["id"], "s-1")
+        self.assertEqual(sync["speech_s"], sync["speech_s_first"])
+        self.assertGreater(sync["speech_s"], 1.0)
+
+    def test_several_sentences(self):
+        actions = self.ACTIONS + [{"body": "static_01", "type": "speech", "text": "Et toi ?"}]
+        sync = body_rules.speech_gesture_sync(actions, REGISTRY, self.CONNECTED, ["joie"], "s-1")
+        self.assertGreater(sync["speech_s"], sync["speech_s_first"])
+
+    def test_no_sync_without_gesture_or_static_voice(self):
+        self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS[:1], REGISTRY, self.CONNECTED, [], "s"))
+        self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["peur"], "s"))
+        self.assertIsNone(body_rules.speech_gesture_sync(
+            self.ACTIONS, REGISTRY, {"nao_01": True, "static_01": False}, ["joie"], "s"))
+
+
 if __name__ == "__main__":
     unittest.main()
