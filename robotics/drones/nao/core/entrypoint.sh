@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Démarre les nœuds ROS2 en parallèle : naoqi-driver, cognitive-renderer,
-# motion-engine (si MOTION_ENGINE=1), static-driver (drone statique) sauf si DRONE_ID est vide, et
-# un second static-driver pour la voix OBS si OBS_DRONE_ID est défini (ADR 005).
-# Si l'un s'arrête, le conteneur s'arrête → Docker le redémarre entier.
-# docker stop (SIGTERM) est relayé à tous les nœuds, puis on attend leur fin.
+# Starts the ROS2 nodes in parallel: naoqi-driver, cognitive-renderer,
+# motion-engine (if MOTION_ENGINE=1), static-driver (static drone) unless DRONE_ID is empty, and
+# a second static-driver for the OBS voice if OBS_DRONE_ID is set (ADR 005).
+# If one stops, the container stops → Docker restarts it whole.
+# docker stop (SIGTERM) is relayed to all nodes, then we wait for them to end.
 set -euo pipefail
 
-# setup.bash lit des variables non définies (AMENT_TRACE_SETUP_FILES…) :
-# incompatible avec « set -u » sur l'image ros:humble-ros-base actuelle.
+# setup.bash reads undefined variables (AMENT_TRACE_SETUP_FILES…):
+# incompatible with "set -u" on the current ros:humble-ros-base image.
 set +u
 source /opt/ros/humble/setup.bash
 set -u
 
-echo "[nao-core] démarrage des nœuds…"
+echo "[nao-core] starting the nodes…"
 
 PIDS=()
 
@@ -20,39 +20,39 @@ python3 -u /ros2_ws/naoqi_driver_node.py      &  PID_DRIVER=$!;   PIDS+=($!)
 python3 -u /ros2_ws/cognitive_renderer_node.py &  PID_RENDERER=$!; PIDS+=($!)
 echo "[nao-core] naoqi-driver(${PID_DRIVER})  cognitive-renderer(${PID_RENDERER})"
 
-# motion-engine envoie des angles libres à 20 Hz : coupé dans l'univers moteur
-# contraint (profil calibré depuis la régie).  MOTION_ENGINE=1 le relance.
+# motion-engine sends free angles at 20 Hz: off in the constrained motor
+# universe (profile calibrated from the control room). MOTION_ENGINE=1 brings it back.
 if [ "${MOTION_ENGINE:-0}" = "1" ]; then
     python3 -u -m motion_engine.node           &  PID_MOTION=$!; PIDS+=($!)
     echo "[nao-core] motion-engine(${PID_MOTION})"
 else
-    echo "[nao-core] motion-engine coupé (MOTION_ENGINE=1 pour le lancer)"
+    echo "[nao-core] motion-engine off (MOTION_ENGINE=1 to start it)"
 fi
 
 if [ -n "${DRONE_ID:-}" ]; then
     python3 -u /ros2_ws/static_driver_node.py  &  PID_STATIC=$!; PIDS+=($!)
-    echo "[nao-core] static-driver(${PID_STATIC}) pour ${DRONE_ID}"
+    echo "[nao-core] static-driver(${PID_STATIC}) for ${DRONE_ID}"
 else
-    echo "[nao-core] DRONE_ID vide — static-driver non démarré"
+    echo "[nao-core] DRONE_ID empty — static-driver not started"
 fi
 
-# Voix du stream (ADR 005) : même driver, autre corps (synthèse edge-tts → OBS).
+# Stream voice (ADR 005): same driver, another body (edge-tts synthesis → OBS).
 if [ -n "${OBS_DRONE_ID:-}" ]; then
     DRONE_ID="$OBS_DRONE_ID" python3 -u /ros2_ws/static_driver_node.py  &  PID_OBS=$!; PIDS+=($!)
-    echo "[nao-core] static-driver(${PID_OBS}) pour ${OBS_DRONE_ID} (voix OBS)"
+    echo "[nao-core] static-driver(${PID_OBS}) for ${OBS_DRONE_ID} (OBS voice)"
 fi
 
-# bash est le PID 1 du conteneur : sans trap, le noyau ignore SIGTERM et
-# docker stop attend son délai avant SIGKILL, sans que les nœuds soient prévenus.
+# bash is the container's PID 1: without a trap, the kernel ignores SIGTERM and
+# docker stop waits for its timeout before SIGKILL, without the nodes being told.
 stop() {
-    echo "[nao-core] arrêt demandé — SIGTERM aux nœuds (${PIDS[*]})"
+    echo "[nao-core] stop requested — SIGTERM to the nodes (${PIDS[*]})"
     kill -TERM "${PIDS[@]}" 2>/dev/null || true
     wait
     exit 0
 }
 trap stop TERM INT
 
-# Quitter dès qu'un nœud s'arrête (Docker redémarre le conteneur entier)
+# Exit as soon as a node stops (Docker restarts the whole container)
 wait -n
-echo "[nao-core] un nœud s'est arrêté — extinction du conteneur"
+echo "[nao-core] a node stopped — shutting the container down"
 exit 1

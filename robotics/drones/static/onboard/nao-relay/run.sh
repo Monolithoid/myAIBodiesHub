@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# run.sh — Lance le relais du NAO au premier plan, sans service systemd
-# (Ctrl+C pour l'arrêter). Lit sa configuration dans le .env du drone, comme
-# le ferait nao-relay.service.
+# run.sh — Runs the NAO relay in the foreground, without a systemd service
+# (Ctrl+C to stop it). Reads its configuration from the drone's .env, as
+# nao-relay.service would.
 #
 # Usage : bash robotics/drones/static/onboard/nao-relay/run.sh
 
@@ -16,7 +16,7 @@ ENV_FILE="${ONBOARD_DIR}/.env"
 [[ -f "$ENV_FILE" ]] || error "$ENV_FILE absent : lancer d'abord nao-relay/setup-ubuntu.sh"
 command -v caddy >/dev/null || error "Caddy absent : lancer d'abord nao-relay/setup-ubuntu.sh"
 
-# Seules les valeurs du .env comptent (une ligne NAO_IP= vide refuse tout)
+# Only the .env values count (an empty NAO_IP= line refuses everything)
 for key in NAO_RELAY_UPSTREAM ROSBRIDGE_TOKEN NAO_IP NAO_RELAY_PORT; do
     unset "$key"
     if env_has "$ENV_FILE" "$key"; then

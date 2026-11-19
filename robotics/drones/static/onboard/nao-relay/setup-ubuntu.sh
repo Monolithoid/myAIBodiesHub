@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# setup-ubuntu.sh — Installation du relais du NAO (ADR 006) sur le drone
-# statique Ubuntu : le NAO parle en ws:// au drone, Caddy relaie vers le VPS
-# en wss:// et ajoute le jeton. Automatise nao-relay/README.md, étapes 1 à 3.
+# setup-ubuntu.sh — Installs the NAO relay (ADR 006) on the Ubuntu static
+# drone: the NAO talks ws:// to the drone, Caddy relays to the VPS
+# over wss:// and adds the token. Automates nao-relay/README.md, steps 1 to 3.
 #
-# Par défaut, le relais ne démarre pas tout seul : on le lance à la main avec
-# nao-relay/run.sh quand on en a besoin (PC non dédié). --service installe le
-# service nao-relay, lancé au boot.
+# By default, the relay does not start on its own: it is started by hand with
+# nao-relay/run.sh when needed (non-dedicated PC). --service installs the
+# nao-relay service, started at boot.
 #
-# Idempotent : on peut le relancer autant de fois qu'on veut ; il ne refait que
-# ce qui manque et ne redémarre le service que si sa configuration a changé.
+# Idempotent: it can be rerun as often as you like; it only redoes what is
+# missing and only restarts the service if its configuration changed.
 #
-# Prérequis : le drone est installé (../setup-ubuntu.sh), son .env contient
-# ROSBRIDGE_TOKEN et ROSBRIDGE_URL (ou DOMAIN).
+# Requirements: the drone is installed (../setup-ubuntu.sh), its .env contains
+# ROSBRIDGE_TOKEN and ROSBRIDGE_URL (or DOMAIN).
 #
-# Usage (avec l'utilisateur du drone, pas en root) :
+# Usage (as the drone user, not as root):
 #   bash robotics/drones/static/onboard/nao-relay/setup-ubuntu.sh [--service]
 #
-# Sans terminal, NAO_RELAY_UPSTREAM, NAO_IP et NAO_RELAY_PORT peuvent être
-# passés par l'environnement ; ils sont alors écrits dans le .env du drone.
+# Without a terminal, NAO_RELAY_UPSTREAM, NAO_IP and NAO_RELAY_PORT can be
+# passed through the environment; they are then written to the drone's .env.
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ for arg in "$@"; do
     case "$arg" in
         --service) OPT_SERVICE=1 ;;
         -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)         error "Option inconnue : $arg (voir --help)" ;;
+        *)         error "Unknown option: $arg (see --help)" ;;
     esac
 done
 
@@ -50,10 +50,10 @@ is_placeholder() {
 }
 
 # ============================================================
-# Configuration (.env du drone)
+# Configuration (drone .env)
 # ============================================================
 
-# Déduit l'adresse https:// de rosbridge depuis ROSBRIDGE_URL ou DOMAIN
+# Derives rosbridge's https:// address from ROSBRIDGE_URL or DOMAIN
 guess_upstream() {
     local url domain
     url="$(env_get "$ENV_FILE" ROSBRIDGE_URL)"
@@ -61,7 +61,7 @@ guess_upstream() {
     if ! is_placeholder "$url"; then
         url="${url/#wss:\/\//https://}"
         url="${url/#ws:\/\//http://}"
-        # Caddy veut un hôte, pas de chemin
+        # Caddy wants a host, not a path
         echo "$url" | sed -E 's#^(https?://[^/]+).*#\1#'
     elif ! is_placeholder "$domain"; then
         echo "https://rosbridge.${domain}"
@@ -69,17 +69,17 @@ guess_upstream() {
 }
 
 setup_env() {
-    section "Configuration (.env du drone)"
+    section "Configuration (drone .env)"
     [[ -f "$ENV_FILE" ]] \
-        || error "$ENV_FILE absent : installer d'abord le drone (bash ${ONBOARD_DIR}/setup-ubuntu.sh)"
+        || error "$ENV_FILE missing: install the drone first (bash ${ONBOARD_DIR}/setup-ubuntu.sh)"
     is_placeholder "$(env_get "$ENV_FILE" ROSBRIDGE_TOKEN)" \
-        && error "ROSBRIDGE_TOKEN à renseigner dans $ENV_FILE (même valeur que sur le VPS)"
+        && error "ROSBRIDGE_TOKEN to set in $ENV_FILE (same value as on the VPS)"
 
     local key
     for key in NAO_RELAY_UPSTREAM NAO_IP NAO_RELAY_PORT; do
         if [[ -n "${!key:-}" ]]; then
             env_set "$ENV_FILE" "$key" "${!key}"
-            log "$key pris dans l'environnement"
+            log "$key taken from the environment"
         fi
     done
 
@@ -87,21 +87,21 @@ setup_env() {
     upstream="$(env_get "$ENV_FILE" NAO_RELAY_UPSTREAM)"
     if is_placeholder "$upstream"; then
         guess="$(guess_upstream)"
-        upstream="$(ask "rosbridge du VPS en https:// (même hôte que ROSBRIDGE_URL)" "$guess")"
-        [[ -n "$upstream" ]] || error "NAO_RELAY_UPSTREAM à renseigner dans $ENV_FILE"
+        upstream="$(ask "VPS rosbridge over https:// (same host as ROSBRIDGE_URL)" "$guess")"
+        [[ -n "$upstream" ]] || error "NAO_RELAY_UPSTREAM to set in $ENV_FILE"
         env_set "$ENV_FILE" NAO_RELAY_UPSTREAM "$upstream"
     fi
     [[ "$upstream" == https://* ]] \
-        || warn "NAO_RELAY_UPSTREAM=$upstream n'est pas en https:// : le jeton partirait en clair"
-    log "Relais vers : $upstream"
+        || warn "NAO_RELAY_UPSTREAM=$upstream is not https://: the token would be sent unencrypted"
+    log "Relaying to: $upstream"
 
     if env_has "$ENV_FILE" NAO_IP && [[ -z "$(env_get "$ENV_FILE" NAO_IP)" ]]; then
-        warn "NAO_IP= est vide dans $ENV_FILE : le relais refusera tout le monde."
-        warn "Le commenter (#NAO_IP=) pour accepter le réseau local, ou mettre l'adresse du NAO."
+        warn "NAO_IP= is empty in $ENV_FILE: the relay will refuse everyone."
+        warn "Comment it out (#NAO_IP=) to accept the local network, or set the NAO's address."
     elif env_has "$ENV_FILE" NAO_IP; then
-        log "Adresses acceptées : $(env_get "$ENV_FILE" NAO_IP)"
+        log "Accepted addresses: $(env_get "$ENV_FILE" NAO_IP)"
     else
-        log "Adresses acceptées : tout le réseau local"
+        log "Accepted addresses: the whole local network"
     fi
 }
 
@@ -118,13 +118,13 @@ relay_port() {
 install_caddy() {
     section "Caddy"
     if command -v caddy >/dev/null; then
-        log "Caddy présent : $(caddy version | cut -d' ' -f1)"
+        log "Caddy present: $(caddy version | cut -d' ' -f1)"
     else
         local candidate
         candidate="$(apt-cache policy caddy 2>/dev/null | awk '/Candidate:/ { print $2 }')"
         if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
-            # Ubuntu 22.04 : pas de caddy dans les dépôts, dépôt officiel
-            info "Ajout du dépôt officiel de Caddy"
+            # Ubuntu 22.04: no caddy in the repositories, official repository
+            info "Adding Caddy's official repository"
             sudo apt-get update -qq
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gpg
             if [[ ! -s "$CADDY_KEYRING" ]]; then
@@ -138,21 +138,21 @@ install_caddy() {
         fi
         sudo apt-get update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq caddy
-        log "Caddy installé : $(caddy version | cut -d' ' -f1)"
+        log "Caddy installed: $(caddy version | cut -d' ' -f1)"
     fi
 
-    # Le paquet lance un Caddy par défaut (port 80) : nao-relay le remplace
+    # The package starts a default Caddy (port 80): nao-relay replaces it
     if systemctl is-enabled -q caddy 2>/dev/null || systemctl is-active -q caddy 2>/dev/null; then
         sudo systemctl disable --now caddy
-        log "Service caddy par défaut arrêté et désactivé"
+        log "Default caddy service stopped and disabled"
     else
-        log "Service caddy par défaut déjà désactivé"
+        log "Default caddy service already disabled"
     fi
 
     command -v curl >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl
 }
 
-# Vérifie le Caddyfile avec les valeurs du .env, comme le fera systemd
+# Checks the Caddyfile with the .env values, as systemd will
 validate_caddyfile() {
     local vars=() key
     for key in NAO_RELAY_UPSTREAM ROSBRIDGE_TOKEN NAO_IP NAO_RELAY_PORT; do
@@ -164,7 +164,7 @@ validate_caddyfile() {
     else
         env -i HOME="$HOME" PATH="$PATH" "${vars[@]}" \
             caddy validate --adapter caddyfile --config "$CADDYFILE" || true
-        error "Caddyfile refusé avec les valeurs du .env (voir ci-dessus)"
+        error "Caddyfile refused with the .env values (see above)"
     fi
 }
 
@@ -173,9 +173,9 @@ validate_caddyfile() {
 # ============================================================
 
 setup_service() {
-    section "Service nao-relay"
+    section "nao-relay service"
 
-    # Le fichier du dépôt suppose User=pi et ~pi/ia-agent : on y met les vrais
+    # The repository file assumes User=pi and ~pi/ia-agent: put the real
     local tmp changed=0
     tmp="$(mktemp)"
     sed -e "s|^User=.*|User=${USER}|" \
@@ -184,29 +184,29 @@ setup_service() {
     if install_if_changed "$tmp" "$UNIT_DST" sudo; then
         sudo systemctl daemon-reload
         changed=1
-        log "Service installé : $UNIT_DST"
+        log "Service installed: $UNIT_DST"
     else
-        log "Service à jour : $UNIT_DST"
+        log "Service up to date: $UNIT_DST"
     fi
     rm -f "$tmp"
 
     sudo systemctl enable -q nao-relay
     if [[ $changed -eq 1 ]] || is_stale nao-relay "$ENV_FILE" "$CADDYFILE" "$UNIT_DST"; then
         sudo systemctl restart nao-relay
-        log "Relais (re)démarré"
+        log "Relay (re)started"
     else
-        log "Relais déjà lancé, rien de changé"
+        log "Relay already running, nothing changed"
     fi
 }
 
 # ============================================================
-# Pare-feu (seulement s'il est actif)
+# Firewall (only if active)
 # ============================================================
 
 setup_firewall() {
-    section "Pare-feu"
+    section "Firewall"
     if ! command -v ufw >/dev/null || ! sudo ufw status | grep -q "^Status: active"; then
-        log "ufw inactif : rien à ouvrir"
+        log "ufw inactive: nothing to open"
         return
     fi
     local port sources src
@@ -217,22 +217,22 @@ setup_firewall() {
         sources=("${LOCAL_NETS[@]}")
     fi
     for src in "${sources[@]}"; do
-        # ufw ignore une règle qui existe déjà
+        # ufw ignores a rule that already exists
         sudo ufw allow from "$src" to any port "$port" proto tcp >/dev/null
     done
-    log "Port $port ouvert à : ${sources[*]}"
+    log "Port $port open to: ${sources[*]}"
 }
 
 # ============================================================
-# Vérification
+# Check
 # ============================================================
 
 check_relay() {
-    section "Vérification"
+    section "Check"
     local port code temp_pid=""
     port="$(relay_port)"
     if ! systemctl is-active -q nao-relay 2>/dev/null; then
-        # Pas de service : relais lancé le temps du test, puis arrêté
+        # No service: relay started for the test, then stopped
         bash "${RELAY_DIR}/run.sh" >/dev/null 2>&1 &
         temp_pid=$!
     fi
@@ -249,30 +249,30 @@ check_relay() {
         wait "$temp_pid" 2>/dev/null || true
     fi
     case "$code" in
-        101) log "Le relais et le VPS répondent (101 Switching Protocols)" ;;
-        401) warn "401 : jeton refusé par le VPS (ROSBRIDGE_TOKEN différent de celui du VPS)" ;;
-        403) warn "403 : adresse refusée par le relais (voir NAO_IP)" ;;
-        502) warn "502 : le drone n'atteint pas NAO_RELAY_UPSTREAM" ;;
-        000) warn "Le relais ne répond pas sur le port $port (port déjà pris ? lancer run.sh pour voir l'erreur)" ;;
-        *)   warn "Réponse inattendue : $code" ;;
+        101) log "The relay and the VPS answer (101 Switching Protocols)" ;;
+        401) warn "401: token refused by the VPS (ROSBRIDGE_TOKEN differs from the VPS one)" ;;
+        403) warn "403: address refused by the relay (see NAO_IP)" ;;
+        502) warn "502: the drone cannot reach NAO_RELAY_UPSTREAM" ;;
+        000) warn "The relay does not answer on port $port (port already taken? run run.sh to see the error)" ;;
+        *)   warn "Unexpected response: $code" ;;
     esac
 }
 
 next_steps() {
-    section "Côté NAO"
+    section "NAO side"
     local ip port
     ip="$(hostname -I | awk '{ print $1 }')"
     port="$(relay_port)"
-    info "Le drone doit garder la même adresse : réservation DHCP sur la box pour ${ip:-cette machine}."
-    info "Dans /home/nao/autostart.sh, supprimer « export ROSBRIDGE_TOKEN=... » et lancer :"
-    echo "    python /home/nao/nao_ws_bridge.py --vps ws://${ip:-<IP du drone>}:${port}/ --provision &"
+    info "The drone must keep the same address: DHCP reservation on the router for ${ip:-this machine}."
+    info "In /home/nao/autostart.sh, remove \"export ROSBRIDGE_TOKEN=...\" and run:"
+    echo "    python /home/nao/nao_ws_bridge.py --vps ws://${ip:-<drone IP>}:${port}/ --provision &"
     if [[ $OPT_SERVICE -eq 1 ]]; then
-        info "Journal du relais : journalctl -u nao-relay -f"
+        info "Relay log: journalctl -u nao-relay -f"
     else
-        info "Lancer le relais (Ctrl+C pour l'arrêter) : bash ${RELAY_DIR}/run.sh"
+        info "Start the relay (Ctrl+C to stop it): bash ${RELAY_DIR}/run.sh"
         if [[ -f "$UNIT_DST" ]]; then
-            warn "Un service nao-relay installé auparavant reste en place."
-            warn "Pour l'enlever : sudo systemctl disable --now nao-relay"
+            warn "A nao-relay service installed earlier is still in place."
+            warn "To remove it: sudo systemctl disable --now nao-relay"
         fi
     fi
 }
@@ -282,7 +282,7 @@ next_steps() {
 # ============================================================
 
 main() {
-    echo -e "${CYAN}Relais du NAO — installation Ubuntu${NC}  (${RELAY_DIR})"
+    echo -e "${CYAN}NAO relay — Ubuntu installation${NC}  (${RELAY_DIR})"
     require_user_with_sudo
     require_ubuntu
 

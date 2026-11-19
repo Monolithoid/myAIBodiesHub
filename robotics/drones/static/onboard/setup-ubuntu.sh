@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# setup-ubuntu.sh — Installation du drone statique sur un PC (portable) Ubuntu
-# avec webcam et micro. Automatise pc-portable-ubuntu.md, étapes 1 à 6 (et 9,
-# 10 en option).
+# setup-ubuntu.sh — Installs the static drone on an Ubuntu (laptop) PC
+# with a webcam and a microphone. Automates pc-portable-ubuntu.md, steps 1 to 6
+# (and 9, 10 as options).
 #
-# Par défaut, rien ne démarre tout seul et la mise en veille n'est pas touchée :
-# on lance le drone à la main quand on en a besoin (PC non dédié). Sur un PC
-# dédié au drone, ajouter --service et --no-sleep.
+# By default, nothing starts on its own and sleep is left alone: the drone is
+# started by hand when needed (non-dedicated PC). On a PC dedicated to the
+# drone, add --service and --no-sleep.
 #
-# Idempotent : on peut le relancer autant de fois qu'on veut ; il ne refait que
-# ce qui manque et ne réécrit pas les réglages déjà faits dans .env.
+# Idempotent: it can be rerun as often as you like; it only redoes what is
+# missing and does not rewrite settings already made in .env.
 #
-# Usage (avec l'utilisateur du drone, pas en root) :
+# Usage (as the drone user, not as root):
 #   bash robotics/drones/static/onboard/setup-ubuntu.sh [options]
 #
-# Options :
-#   --audio        Redemander le micro et le haut-parleur par défaut
-#   --service      Démarrage automatique au boot (service utilisateur, étape 9)
-#   --no-sleep     Plus de mise en veille, même capot fermé (étape 10)
-#   -h, --help     Cette aide
+# Options:
+#   --audio        Ask again for the default microphone and speaker
+#   --service      Automatic start at boot (user service, step 9)
+#   --no-sleep     No more sleep, even with the lid closed (step 10)
+#   -h, --help     This help
 #
-# Sans terminal (ex. via ssh -T), les valeurs peuvent être passées par
-# l'environnement : ROSBRIDGE_URL, ROSBRIDGE_TOKEN, CAMERA_INDEX, CAMERA_HFOV.
-# Elles sont alors écrites dans .env.
+# Without a terminal (e.g. via ssh -T), values can be passed through the
+# environment: ROSBRIDGE_URL, ROSBRIDGE_TOKEN, CAMERA_INDEX, CAMERA_HFOV.
+# They are then written to .env.
 #
-# Le relais du NAO (ADR 006) s'installe ensuite avec nao-relay/setup-ubuntu.sh.
+# The NAO relay (ADR 006) is installed afterwards with nao-relay/setup-ubuntu.sh.
 
 set -euo pipefail
 
@@ -51,11 +51,11 @@ for arg in "$@"; do
         --service)    OPT_SERVICE=1 ;;
         --no-sleep)   OPT_POWER=1 ;;
         -h|--help)    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)            error "Option inconnue : $arg (voir --help)" ;;
+        *)            error "Unknown option: $arg (see --help)" ;;
     esac
 done
 
-# Ce qui a changé et demande de redémarrer le service à la fin
+# What changed and requires restarting the service at the end
 NEED_RESTART=0
 ENV_CREATED=0
 
@@ -64,20 +64,20 @@ ENV_CREATED=0
 # ============================================================
 
 install_packages() {
-    section "Paquets"
+    section "Packages"
     local missing=()
     for p in "${APT_PACKAGES[@]}"; do
         dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" \
             || missing+=("$p")
     done
     if [[ ${#missing[@]} -eq 0 ]]; then
-        log "Déjà installés : ${APT_PACKAGES[*]}"
+        log "Already installed: ${APT_PACKAGES[*]}"
         return
     fi
     info "Installation : ${missing[*]}"
     sudo apt-get update -qq
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
-    log "Paquets installés"
+    log "Packages installed"
 }
 
 # ============================================================
@@ -85,65 +85,65 @@ install_packages() {
 # ============================================================
 
 setup_venv() {
-    section "Environnement Python"
+    section "Python environment"
     if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-        info "Création de ${VENV_DIR}"
+        info "Creating ${VENV_DIR}"
         python3 -m venv "$VENV_DIR"
         NEED_RESTART=1
     else
-        log "venv présent : ${VENV_DIR}"
+        log "venv present: ${VENV_DIR}"
     fi
     local before after
     before="$("${VENV_DIR}/bin/pip" freeze 2>/dev/null | md5sum)"
     "${VENV_DIR}/bin/pip" install -q --disable-pip-version-check -r "${ONBOARD_DIR}/requirements.txt"
-    # openWakeWord sans ses dépendances (voir requirements-wakeword.txt)
+    # openWakeWord without its dependencies (see requirements-wakeword.txt)
     "${VENV_DIR}/bin/pip" install -q --disable-pip-version-check --no-deps \
         -r "${ONBOARD_DIR}/requirements-wakeword.txt"
     after="$("${VENV_DIR}/bin/pip" freeze 2>/dev/null | md5sum)"
     if [[ "$before" != "$after" ]]; then
         NEED_RESTART=1
-        log "Dépendances installées"
+        log "Dependencies installed"
     else
-        log "Dépendances à jour"
+        log "Dependencies up to date"
     fi
-    # Modèles communs d'openWakeWord et hey_jarvis (essai de WAKE_MODE=local
-    # sans modèle « ok nao ») : téléchargés une fois.
+    # Shared openWakeWord models and hey_jarvis (to try WAKE_MODE=local
+    # without an "ok nao" model): downloaded once.
     if "${VENV_DIR}/bin/python" -c \
         "import openwakeword.utils as u; u.download_models(['hey_jarvis'])" >/dev/null 2>&1; then
-        log "Modèles openWakeWord présents"
+        log "openWakeWord models present"
     else
-        warn "Téléchargement des modèles openWakeWord impossible (réessayé au démarrage en WAKE_MODE=local)"
+        warn "Unable to download the openWakeWord models (retried at startup with WAKE_MODE=local)"
     fi
     if [[ -f "${ONBOARD_DIR}/models/ok_nao.onnx" ]]; then
-        log "Modèle « ok nao » : models/ok_nao.onnx"
+        log "\"ok nao\" model: models/ok_nao.onnx"
     else
-        info "Pas de models/ok_nao.onnx : WAKE_MODE=local demande de l'entraîner (models/README.md)"
+        info "No models/ok_nao.onnx: WAKE_MODE=local requires training it (models/README.md)"
     fi
 }
 
 # ============================================================
-# 3. Droits : groupes audio et video
+# 3. Permissions: audio and video groups
 # ============================================================
 
 setup_groups() {
-    section "Groupes audio / video"
+    section "audio / video groups"
     local g missing=()
     for g in audio video; do
         id -nG "$USER" | tr ' ' '\n' | grep -qx "$g" || missing+=("$g")
     done
     if [[ ${#missing[@]} -eq 0 ]]; then
-        log "$USER est déjà dans audio et video"
+        log "$USER is already in audio and video"
         return
     fi
     sudo usermod -aG "$(IFS=,; echo "${missing[*]}")" "$USER"
-    warn "$USER ajouté à ${missing[*]} : se déconnecter puis se reconnecter (ou redémarrer)"
+    warn "$USER added to ${missing[*]}: log out and back in (or reboot)"
 }
 
 # ============================================================
-# 4. Micro et haut-parleur par défaut (PipeWire / PulseAudio)
+# 4. Default microphone and speaker (PipeWire / PulseAudio)
 # ============================================================
 
-# choose_default sources|sinks : affiche la liste et propose d'en choisir un
+# choose_default sources|sinks: shows the list and offers to choose one
 choose_default() {
     local kind="$1" label="$2" current list choice name i=0
     if [[ "$kind" == sources ]]; then
@@ -153,7 +153,7 @@ choose_default() {
         current="$(pactl get-default-sink 2>/dev/null || true)"
         list="$(pactl list short sinks | awk '{ print $2 }')"
     fi
-    [[ -n "$list" ]] || { warn "Aucun(e) ${label} trouvé(e)"; return; }
+    [[ -n "$list" ]] || { warn "No ${label} found"; return; }
     echo "  ${label} disponibles :"
     while read -r name; do
         i=$((i + 1))
@@ -163,10 +163,10 @@ choose_default() {
             echo "    $i) $name"
         fi
     done <<< "$list"
-    choice="$(ask "Numéro du ${label} (Entrée = garder l'actuel)" "")"
-    [[ -n "$choice" ]] || { log "${label} : ${current:-défaut}"; return; }
+    choice="$(ask "Number of the ${label} (Enter = keep the current one)" "")"
+    [[ -n "$choice" ]] || { log "${label}: ${current:-default}"; return; }
     name="$(sed -n "${choice}p" <<< "$list")"
-    [[ -n "$name" ]] || { warn "Numéro invalide, ${label} inchangé"; return; }
+    [[ -n "$name" ]] || { warn "Invalid number, ${label} unchanged"; return; }
     if [[ "$kind" == sources ]]; then
         pactl set-default-source "$name"
     else
@@ -176,24 +176,24 @@ choose_default() {
 }
 
 setup_audio() {
-    section "Micro et haut-parleur"
+    section "Microphone and speaker"
     if ! pactl info >/dev/null 2>&1; then
-        warn "Serveur de son injoignable (pas de session ?). Choisir plus tard, dans la session :"
-        warn "  pactl set-default-source <micro> ; pactl set-default-sink <haut-parleur>"
+        warn "Sound server unreachable (no session?). Choose later, in the session:"
+        warn "  pactl set-default-source <microphone> ; pactl set-default-sink <speaker>"
         return
     fi
     if [[ $OPT_AUDIO -eq 0 && $ENV_CREATED -eq 0 ]] || ! is_interactive; then
-        log "Micro : $(pactl get-default-source 2>/dev/null || echo '?')"
-        log "Haut-parleur : $(pactl get-default-sink 2>/dev/null || echo '?')"
-        info "Pour changer : relancer avec --audio, ou Paramètres > Son"
+        log "Microphone: $(pactl get-default-source 2>/dev/null || echo '?')"
+        log "Speaker: $(pactl get-default-sink 2>/dev/null || echo '?')"
+        info "To change: rerun with --audio, or Settings > Sound"
         return
     fi
-    choose_default sources "micro"
-    choose_default sinks "haut-parleur"
+    choose_default sources "microphone"
+    choose_default sinks "speaker"
 }
 
 # ============================================================
-# 5 et 6. Webcam et .env
+# 5 and 6. Webcam and .env
 # ============================================================
 
 is_placeholder() {
@@ -207,59 +207,59 @@ setup_env() {
         cp "${ONBOARD_DIR}/.env.example" "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         ENV_CREATED=1
-        # Réglages d'un PC portable (pc-portable-ubuntu.md, étape 6)
+        # Laptop settings (pc-portable-ubuntu.md, step 6)
         env_set "$ENV_FILE" RESPEAKER 0
         env_set "$ENV_FILE" MICS ""
         env_set "$ENV_FILE" CAMERA_HFOV 70
-        log "Créé depuis .env.example : $ENV_FILE"
+        log "Created from .env.example: $ENV_FILE"
     else
-        log "Existe déjà : $ENV_FILE (valeurs conservées)"
+        log "Already exists: $ENV_FILE (values kept)"
     fi
     local before
     before="$(md5sum < "$ENV_FILE")"
 
-    # Valeurs passées par l'environnement : elles priment
+    # Values passed through the environment: they take precedence
     local key
     for key in ROSBRIDGE_URL ROSBRIDGE_TOKEN CAMERA_INDEX CAMERA_HFOV; do
         if [[ -n "${!key:-}" ]]; then
             env_set "$ENV_FILE" "$key" "${!key}"
-            log "$key pris dans l'environnement"
+            log "$key taken from the environment"
         fi
     done
 
-    # Connexion au VPS : demandée seulement tant qu'elle n'est pas renseignée
+    # VPS connection: only asked for as long as it is not set
     local url domain token
     url="$(env_get "$ENV_FILE" ROSBRIDGE_URL)"
     domain="$(env_get "$ENV_FILE" DOMAIN)"
     if is_placeholder "$url" && is_placeholder "$domain"; then
-        url="$(ask "URL rosbridge du VPS (ex. wss://rosbridge.mondomaine.fr)" "")"
+        url="$(ask "VPS rosbridge URL (e.g. wss://rosbridge.mydomain.com)" "")"
         if [[ -n "$url" ]]; then
             env_set "$ENV_FILE" ROSBRIDGE_URL "$url"
         else
-            warn "ROSBRIDGE_URL à renseigner dans $ENV_FILE"
+            warn "ROSBRIDGE_URL to set in $ENV_FILE"
         fi
     fi
     token="$(env_get "$ENV_FILE" ROSBRIDGE_TOKEN)"
     if is_placeholder "$token"; then
-        token="$(ask_secret "ROSBRIDGE_TOKEN (même valeur que sur le VPS)")"
+        token="$(ask_secret "ROSBRIDGE_TOKEN (same value as on the VPS)")"
         if [[ -n "$token" ]]; then
             env_set "$ENV_FILE" ROSBRIDGE_TOKEN "$token"
         else
-            warn "ROSBRIDGE_TOKEN à renseigner dans $ENV_FILE"
+            warn "ROSBRIDGE_TOKEN to set in $ENV_FILE"
         fi
     fi
 
-    # Webcam : demandée au premier passage seulement
+    # Webcam: only asked for on the first run
     if [[ $ENV_CREATED -eq 1 && -z "${CAMERA_INDEX:-}" ]] && is_interactive; then
-        echo "  Caméras (le premier /dev/video de chaque caméra donne l'image) :"
-        v4l2-ctl --list-devices 2>/dev/null | sed 's/^/    /' || warn "Aucune caméra trouvée"
+        echo "  Cameras (the first /dev/video of each camera gives the image):"
+        v4l2-ctl --list-devices 2>/dev/null | sed 's/^/    /' || warn "No camera found"
         local cam hfov
-        cam="$(ask "CAMERA_INDEX : nom partiel (ex. C920), index ou chemin" "0")"
+        cam="$(ask "CAMERA_INDEX: partial name (e.g. C920), index or path" "0")"
         env_set "$ENV_FILE" CAMERA_INDEX "$cam"
-        hfov="$(ask "CAMERA_HFOV : champ de vision horizontal en degrés" "70")"
+        hfov="$(ask "CAMERA_HFOV: horizontal field of view in degrees" "70")"
         env_set "$ENV_FILE" CAMERA_HFOV "$hfov"
     fi
-    log "Caméra : CAMERA_INDEX=$(env_get "$ENV_FILE" CAMERA_INDEX), CAMERA_HFOV=$(env_get "$ENV_FILE" CAMERA_HFOV)"
+    log "Camera: CAMERA_INDEX=$(env_get "$ENV_FILE" CAMERA_INDEX), CAMERA_HFOV=$(env_get "$ENV_FILE" CAMERA_HFOV)"
 
     [[ "$(md5sum < "$ENV_FILE")" == "$before" ]] || NEED_RESTART=1
 }
@@ -273,17 +273,17 @@ env_ready() {
 }
 
 # ============================================================
-# 9. Démarrage automatique (service utilisateur)
+# 9. Automatic start (user service)
 # ============================================================
 
 setup_service() {
-    section "Démarrage automatique"
+    section "Automatic start"
     if ! systemctl --user show-environment >/dev/null 2>&1; then
-        warn "systemd utilisateur injoignable : relancer depuis une session de $USER (bureau ou ssh)"
+        warn "user systemd unreachable: rerun from a session of $USER (desktop or ssh)"
         return
     fi
 
-    # Le fichier du dépôt suppose ~/ia-agent : on y met le vrai chemin
+    # The repository file assumes ~/ia-agent: put the real path in it
     local tmp
     tmp="$(mktemp)"
     sed "s|%h/ia-agent/robotics/drones/static/onboard|${ONBOARD_DIR}|g" "$UNIT_SRC" > "$tmp"
@@ -291,56 +291,56 @@ setup_service() {
     if install_if_changed "$tmp" "$UNIT_DST"; then
         systemctl --user daemon-reload
         NEED_RESTART=1
-        log "Service installé : $UNIT_DST"
+        log "Service installed: $UNIT_DST"
     else
-        log "Service à jour : $UNIT_DST"
+        log "Service up to date: $UNIT_DST"
     fi
     rm -f "$tmp"
 
     if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]]; then
         sudo loginctl enable-linger "$USER"
-        log "Linger activé : le service démarre au boot, sans session ouverte"
+        log "Linger enabled: the service starts at boot, without an open session"
     else
-        log "Linger déjà activé"
+        log "Linger already enabled"
     fi
 
     systemctl --user enable -q static-drone
     if ! env_ready; then
-        warn "Service activé mais pas lancé : compléter ROSBRIDGE_URL et ROSBRIDGE_TOKEN dans .env puis relancer ce script"
+        warn "Service enabled but not started: fill in ROSBRIDGE_URL and ROSBRIDGE_TOKEN in .env, then rerun this script"
         return
     fi
-    # Redémarre aussi après une modification de .env faite à la main
+    # Also restarts after a change to .env made by hand
     if [[ $NEED_RESTART -eq 1 ]] || is_stale static-drone --user "$ENV_FILE" "$UNIT_DST"; then
         systemctl --user restart static-drone
-        log "Service (re)démarré"
+        log "Service (re)started"
     else
-        log "Service déjà lancé, rien de changé"
+        log "Service already running, nothing changed"
     fi
 }
 
 # ============================================================
-# 10. Pas de mise en veille
+# 10. No sleep
 # ============================================================
 
 setup_power() {
-    section "Mise en veille"
+    section "Sleep"
     local t to_mask=()
     for t in "${SLEEP_TARGETS[@]}"; do
         [[ "$(systemctl is-enabled "$t" 2>/dev/null || true)" == "masked" ]] || to_mask+=("$t")
     done
     if [[ ${#to_mask[@]} -gt 0 ]]; then
         sudo systemctl mask "${to_mask[@]}"
-        log "Veille désactivée (${to_mask[*]})"
+        log "Sleep disabled (${to_mask[*]})"
     else
-        log "Veille déjà désactivée"
+        log "Sleep already disabled"
     fi
 
-    # Capot fermé : ne rien faire. Fichier à part plutôt qu'une édition de
-    # logind.conf : plus simple à relire et à annuler (supprimer le fichier).
+    # Lid closed: do nothing. A separate file rather than editing
+    # logind.conf: simpler to review and undo (delete the file).
     local tmp
     tmp="$(mktemp)"
     cat > "$tmp" <<'EOF'
-# Drone statique (setup-ubuntu.sh) : le PC portable reste allumé capot fermé.
+# Static drone (setup-ubuntu.sh): the laptop stays on with the lid closed.
 [Login]
 HandleLidSwitch=ignore
 HandleLidSwitchExternalPower=ignore
@@ -348,14 +348,14 @@ HandleLidSwitchDocked=ignore
 EOF
     sudo mkdir -p "$(dirname "$LOGIND_DROPIN")"
     if install_if_changed "$tmp" "$LOGIND_DROPIN" sudo; then
-        # Redémarrer systemd-logind fermerait la session graphique : on attend
-        # le prochain redémarrage.
-        warn "Capot fermé ignoré à partir du prochain redémarrage ($LOGIND_DROPIN)"
+        # Restarting systemd-logind would close the graphical session: wait for
+        # the next reboot.
+        warn "Closed lid ignored from the next reboot on ($LOGIND_DROPIN)"
     else
-        log "Capot fermé déjà ignoré"
+        log "Closed lid already ignored"
     fi
     rm -f "$tmp"
-    info "Garder le portable sur secteur. Capot fermé, utiliser une webcam et un micro USB."
+    info "Keep the laptop on mains power. With the lid closed, use a USB webcam and microphone."
 }
 
 # ============================================================
@@ -363,7 +363,7 @@ EOF
 # ============================================================
 
 main() {
-    echo -e "${CYAN}Drone statique — installation Ubuntu${NC}  (${ONBOARD_DIR})"
+    echo -e "${CYAN}Static drone — Ubuntu installation${NC}  (${ONBOARD_DIR})"
     require_user_with_sudo
     require_ubuntu
 
@@ -375,17 +375,17 @@ main() {
     if [[ $OPT_SERVICE -eq 1 ]]; then setup_service; fi
     if [[ $OPT_POWER -eq 1 ]]; then setup_power; fi
 
-    section "Fini"
+    section "Done"
     if [[ $OPT_SERVICE -eq 1 ]]; then
-        info "Journal : journalctl --user -u static-drone -f"
+        info "Log: journalctl --user -u static-drone -f"
     else
-        info "Lancer à la main : cd ${ONBOARD_DIR} && .venv/bin/python static_drone.py"
+        info "Run by hand: cd ${ONBOARD_DIR} && .venv/bin/python static_drone.py"
         if [[ -f "$UNIT_DST" ]]; then
-            warn "Un démarrage automatique installé auparavant reste en place."
-            warn "Pour l'enlever : systemctl --user disable --now static-drone"
+            warn "An automatic start installed earlier is still in place."
+            warn "To remove it: systemctl --user disable --now static-drone"
         fi
     fi
-    info "Relais du NAO (ADR 006) : bash ${ONBOARD_DIR}/nao-relay/setup-ubuntu.sh"
+    info "NAO relay (ADR 006): bash ${ONBOARD_DIR}/nao-relay/setup-ubuntu.sh"
 }
 
 main
