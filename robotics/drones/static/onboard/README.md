@@ -164,7 +164,7 @@ movement the camera starts to see on `/drones/{id}/event`, with its direction.
 When the robot is at rest and calm for `GESTURE_REFLEX_COOLDOWN_S` seconds, the
 service asks the NAO driver (`/bodies/{nao}/actuators/gesture`, `"reflex": true`)
 for a short gesture of the generator toward the event: `GESTURE_REFLEX_SOUND`
-(`surprise:0.3`) or `GESTURE_REFLEX_MOTION` (`calme:0.3`). The driver checks heat,
+(`surprise:0.3`) or `GESTURE_REFLEX_MOTION` (`calm:0.3`). The driver checks heat,
 posture and walk as for any gesture.
 
 - A gesture asked by the LLM stops a reflex in progress (`/nao/stop`) and starts

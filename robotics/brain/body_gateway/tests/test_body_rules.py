@@ -131,18 +131,18 @@ class TestLearnedGestures(unittest.TestCase):
 
     def test_label(self):
         self.assertIn("indisponibles", body_rules.gestures_label([]))
-        text = body_rules.gestures_label(["joie", "peur"])
-        self.assertIn("joie, peur", text)
+        text = body_rules.gestures_label(["joy", "fear"])
+        self.assertIn("joy, fear", text)
         self.assertIn('"gesture"', text)
 
     def test_order(self):
-        self.assertEqual(body_rules.gesture_order({"emotion": "joie", "intensity": 1.4}, ["joie"]),
-                         {"emotion": "joie", "intensity": 1.0})
-        self.assertIsNone(body_rules.gesture_order({"emotion": "colère"}, ["joie"]))
-        self.assertIsNone(body_rules.gesture_order({}, ["joie"]))
+        self.assertEqual(body_rules.gesture_order({"emotion": "joy", "intensity": 1.4}, ["joy"]),
+                         {"emotion": "joy", "intensity": 1.0})
+        self.assertIsNone(body_rules.gesture_order({"emotion": "anger"}, ["joy"]))
+        self.assertIsNone(body_rules.gesture_order({}, ["joy"]))
         # Sans intensité : celle de l'énergie de la réponse.
-        self.assertEqual(body_rules.gesture_order({"emotion": "joie"}, ["joie"], "high")["intensity"], 0.7)
-        self.assertEqual(body_rules.gesture_order({"emotion": "joie", "intensity": "x"}, [])["intensity"], 0.5)
+        self.assertEqual(body_rules.gesture_order({"emotion": "joy"}, ["joy"], "high")["intensity"], 0.7)
+        self.assertEqual(body_rules.gesture_order({"emotion": "joy", "intensity": "x"}, [])["intensity"], 0.5)
 
     def test_event_from_voice(self):
         self.assertIsNone(body_rules.gesture_event(None))
@@ -159,7 +159,7 @@ class TestLearnedGestures(unittest.TestCase):
 class TestSpeechGestureSync(unittest.TestCase):
     CONNECTED = {"nao_01": True, "static_01": True}
     ACTIONS = [{"body": "static_01", "type": "speech", "text": "Bonjour, je suis content de te voir."},
-               {"body": "nao_01", "type": "gesture", "emotion": "joie", "intensity": 0.6}]
+               {"body": "nao_01", "type": "gesture", "emotion": "joy", "intensity": 0.6}]
 
     def test_speech_seconds(self):
         self.assertEqual(body_rules.speech_seconds(""), 0.0)
@@ -169,28 +169,28 @@ class TestSpeechGestureSync(unittest.TestCase):
         self.assertTrue(3.0 < long < 6.0, long)
 
     def test_sync_when_room_speaker_and_gesture(self):
-        sync = body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["joie"], "s-1")
+        sync = body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["joy"], "s-1")
         self.assertEqual(sync["id"], "s-1")
         self.assertEqual(sync["speech_s"], sync["speech_s_first"])
         self.assertGreater(sync["speech_s"], 1.0)
 
     def test_several_sentences(self):
         actions = self.ACTIONS + [{"body": "static_01", "type": "speech", "text": "Et toi ?"}]
-        sync = body_rules.speech_gesture_sync(actions, REGISTRY, self.CONNECTED, ["joie"], "s-1")
+        sync = body_rules.speech_gesture_sync(actions, REGISTRY, self.CONNECTED, ["joy"], "s-1")
         self.assertGreater(sync["speech_s"], sync["speech_s_first"])
 
     def test_sync_with_obs_voice_only(self):
         registry = ["nao_01", "obs_01"]
         actions = [dict(self.ACTIONS[0], body="obs_01"), self.ACTIONS[1]]
         sync = body_rules.speech_gesture_sync(actions, registry, {"nao_01": True, "obs_01": True},
-                                              ["joie"], "s-1")
+                                              ["joy"], "s-1")
         self.assertEqual(sync["id"], "s-1")
 
     def test_no_sync_without_gesture_or_static_voice(self):
         self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS[:1], REGISTRY, self.CONNECTED, [], "s"))
-        self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["peur"], "s"))
+        self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["fear"], "s"))
         self.assertIsNone(body_rules.speech_gesture_sync(
-            self.ACTIONS, REGISTRY, {"nao_01": True, "static_01": False}, ["joie"], "s"))
+            self.ACTIONS, REGISTRY, {"nao_01": True, "static_01": False}, ["joy"], "s"))
 
 
 
@@ -203,11 +203,11 @@ class TestGesturesOnly(unittest.TestCase):
         self.assertNotIn("motion", text)
 
     def test_gestures_label(self):
-        text = body_rules.gestures_label(["joie"], motion=False)
-        self.assertIn("joie", text)
+        text = body_rules.gestures_label(["joy"], motion=False)
+        self.assertIn("joy", text)
         self.assertNotIn('"motion"', text)
         self.assertIn("NAO ne bouge pas", body_rules.gestures_label([], motion=False))
-        self.assertIn('"motion"', body_rules.gestures_label(["joie"]))    # default unchanged
+        self.assertIn('"motion"', body_rules.gestures_label(["joy"]))    # default unchanged
 
 
 if __name__ == "__main__":

@@ -116,7 +116,7 @@ def read_settings():
         # Reflex: reaction to what the drone perceives, without the LLM
         "reflex": _env("GESTURE_REFLEX", "1").lower() not in ("0", "false", "no", "non", "off"),
         "reflex_gestures": {"sound": parse_reflex(_env("GESTURE_REFLEX_SOUND", "surprise:0.3")),
-                            "motion": parse_reflex(_env("GESTURE_REFLEX_MOTION", "calme:0.3"))},
+                            "motion": parse_reflex(_env("GESTURE_REFLEX_MOTION", "calm:0.3"))},
         "reflex_cooldown_s": _env_float("GESTURE_REFLEX_COOLDOWN_S", 20.0),
         "reflex_azimuth_offset_deg": _env_float("GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", 0.0),
         "nao_id": _env("GESTURE_REFLEX_NAO_ID", "nao_01"),

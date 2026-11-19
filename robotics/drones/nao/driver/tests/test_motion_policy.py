@@ -222,7 +222,7 @@ class TestLearnedGesture(unittest.TestCase):
         p = policy(rest_delay=1.0)
         p.submit(["HeadYaw"], [0.3], 0.0, now=0.0)
         p.take(0.0)                                   # rest → start, until 1.0
-        self.assertTrue(p.request_gesture({"id": "g1", "emotion": "joie"}, 0.5)[0])
+        self.assertTrue(p.request_gesture({"id": "g1", "emotion": "joy"}, 0.5)[0])
         self.assertIsNone(p.take_gesture(0.5))        # step in progress
         self.assertEqual(p.take(1.0), [])             # target dropped, nothing goes out
         self.assertEqual(p.take_gesture(1.0)["id"], "g1")

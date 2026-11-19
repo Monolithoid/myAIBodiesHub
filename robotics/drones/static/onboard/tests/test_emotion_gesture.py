@@ -135,7 +135,7 @@ class FakeBridge(object):
 
 
 class Base(unittest.TestCase):
-    data = {"emotions": ["joie", "peur"], "poses": POSES}
+    data = {"emotions": ["joy", "fear"], "poses": POSES}
 
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -205,7 +205,7 @@ class TestService(Base):
 
     def test_gesture_from_rest_then_back_to_rest(self):
         s = self.service()
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.7, "event": {"azimuth_deg": 30}})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.7, "event": {"azimuth_deg": 30}})
         s.step()
         (traj,) = self.bridge.trajectories()
         self.assertEqual(traj["id"], "a")
@@ -241,10 +241,10 @@ class TestService(Base):
 
     def test_new_gesture_chains_without_rest(self):
         s = self.service()
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})
         s.step()
-        s.on_request({"id": "b", "emotion": "peur", "intensity": 0.5})
-        s.on_request({"id": "c", "emotion": "joie", "intensity": 0.9})   # remplace b
+        s.on_request({"id": "b", "emotion": "fear", "intensity": 0.5})
+        s.on_request({"id": "c", "emotion": "joy", "intensity": 0.9})   # remplace b
         self.bridge.robot("a", "done")
         self.bridge.pose = dict(POSES["start"])
         s.step()
@@ -264,9 +264,9 @@ class TestService(Base):
         self.assertIsNotNone(s.gen)                  # l'ancienne version reste en service
 
     def test_retry_without_event(self):
-        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse_with_event=["joie"])).encode()
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse_with_event=["joy"])).encode()
         s = self.service()
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "event": {"azimuth_deg": 20}})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "event": {"azimuth_deg": 20}})
         s.step()
         self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
         self.assertIsNone(s.gen.calls[-1][2])
@@ -274,9 +274,9 @@ class TestService(Base):
         self.assertEqual(sent[-1]["retry"], "sans événement")
 
     def test_guardian_refusal_sends_nothing(self):
-        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["peur"])).encode()
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["fear"])).encode()
         s = self.service()
-        s.on_request({"id": "a", "emotion": "peur", "intensity": 0.5})
+        s.on_request({"id": "a", "emotion": "fear", "intensity": 0.5})
         s.step()
         self.assertEqual(self.bridge.trajectories(), [])
         self.assertIn(("a", "refused"), self.bridge.states())
@@ -302,7 +302,7 @@ class TestSpeechSync(Base):
     def test_gesture_fitted_to_measured_speech_and_speech_released_at_start(self):
         s = self.service(speech_offset_ms=200.0, speech_wait_s=0.5)
         self.bridge.subs[eg.SYNC_TOPIC]({"data": json.dumps({"kind": "speech", "sync": "s-1", "speech_s": 3.0})})
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
         (traj,) = self.bridge.trajectories()
         self.assertAlmostEqual(traj["times"][0][-1], 3.0)          # 1 s appris → 3 s de parole
@@ -317,7 +317,7 @@ class TestSpeechSync(Base):
 
     def test_estimate_used_when_measure_missing(self):
         s = self.service(speech_wait_s=0.0)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
         self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 2.0)
 
@@ -328,21 +328,21 @@ class TestSpeechSync(Base):
 
     def test_scale_clamped(self):
         s = self.service(speech_wait_s=0.0, scale_max=1.5)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5,
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5,
                       "sync": {"id": "s-1", "speech_s": 9.0}})
         s.step()
         self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.5)
 
     def test_match_speech_off_keeps_learned_speed(self):
         s = self.service(speech_wait_s=0.0, match_speech=False)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
         self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.0)
         self.assertEqual(len(self.go()), 1)
 
     def test_negative_offset_delays_the_gesture(self):
         s = self.service(speech_wait_s=0.0, speech_offset_ms=-300.0)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
         self.assertEqual(self.slept, [0.3])     # pas de passage à la pose de départ ici
         self.assertAlmostEqual(self.go()[0]["at"], 1000.0)   # parole tout de suite, geste 0,3 s après
@@ -355,17 +355,17 @@ class TestSpeechSync(Base):
         self.assertEqual(s.settings["speech_offset_ms"], 10000.0)
 
     def test_refused_gesture_releases_the_speech(self):
-        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["peur"])).encode()
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["fear"])).encode()
         s = self.service(speech_wait_s=0.0)
-        s.on_request({"id": "a", "emotion": "peur", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "a", "emotion": "fear", "intensity": 0.5, "sync": self.SYNC})
         s.step()
         self.assertEqual(self.go(), [{"kind": "go", "sync": "s-1", "at": 0, "in_s": 0,
                                       "reason": "geste refusé"}])
 
     def test_replaced_gesture_releases_its_speech(self):
         s = self.service(speech_wait_s=0.0)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5, "sync": self.SYNC})
-        s.on_request({"id": "b", "emotion": "joie", "intensity": 0.5})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
+        s.on_request({"id": "b", "emotion": "joy", "intensity": 0.5})
         self.assertEqual(self.go()[0]["sync"], "s-1")
         self.assertEqual(self.go()[0]["at"], 0)
 
@@ -427,7 +427,7 @@ class TestReflex(Base):
     """What the drone perceives (sound, motion) -> short gesture, through the NAO driver."""
 
     REFLEX = {"reflex": True, "reflex_cooldown_s": 20.0,
-              "reflex_gestures": {"sound": ("peur", 0.3), "motion": ("joie", 0.2)}}
+              "reflex_gestures": {"sound": ("fear", 0.3), "motion": ("joy", 0.2)}}
 
     def asked(self):
         return [d for t, d in self.bridge.out if t == "/bodies/nao_01/actuators/gesture"]
@@ -437,13 +437,13 @@ class TestReflex(Base):
         self.now[0] += 100
         s.on_event({"kind": "sound", "azimuth_deg": 30.0})
         (order,) = self.asked()
-        self.assertEqual(order, {"emotion": "peur", "intensity": 0.3, "reflex": True,
+        self.assertEqual(order, {"emotion": "fear", "intensity": 0.3, "reflex": True,
                                  "event": {"azimuth_deg": -30.0, "elevation_deg": 0.0}})
         s.on_event({"kind": "motion", "azimuth_deg": None})          # cooldown
         self.assertEqual(len(self.asked()), 1)
         self.now[0] += 25
         s.on_event({"kind": "motion", "azimuth_deg": None})
-        self.assertEqual(self.asked()[-1], {"emotion": "joie", "intensity": 0.2, "reflex": True})
+        self.assertEqual(self.asked()[-1], {"emotion": "joy", "intensity": 0.2, "reflex": True})
 
     def test_no_reflex_when_off_unknown_or_busy(self):
         s = self.service(**dict(self.REFLEX, reflex=False))
@@ -454,16 +454,16 @@ class TestReflex(Base):
         s.on_event({"kind": "sound", "azimuth_deg": 0.0})
         s = self.service(**self.REFLEX)
         self.now[0] += 100
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5})     # asked by the LLM
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})     # asked by the LLM
         s.on_event({"kind": "sound", "azimuth_deg": 0.0})
         self.assertEqual(self.asked(), [])
 
     def test_llm_gesture_stops_a_reflex(self):
         s = self.service(**self.REFLEX)
-        s.on_request({"id": "r", "emotion": "peur", "intensity": 0.3, "reflex": True})
+        s.on_request({"id": "r", "emotion": "fear", "intensity": 0.3, "reflex": True})
         s.step()
         self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["r"])
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.6})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.6})
         s.step()
         self.assertEqual(sum(1 for t, _ in self.bridge.out if t == "/nao/stop"), 1)
         s.step()                                                     # waits for "stopped"
@@ -474,15 +474,15 @@ class TestReflex(Base):
 
     def test_reflex_never_replaces_an_llm_gesture(self):
         s = self.service(**self.REFLEX)
-        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.6})
-        s.on_request({"id": "r", "emotion": "peur", "intensity": 0.3, "reflex": True})
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.6})
+        s.on_request({"id": "r", "emotion": "fear", "intensity": 0.3, "reflex": True})
         self.assertIn(("r", "ignored"), self.bridge.states())
         s.step()
         self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
 
     def test_parse_reflex(self):
         self.assertEqual(eg.parse_reflex("surprise:0.4"), ("surprise", 0.4))
-        self.assertEqual(eg.parse_reflex("calme"), ("calme", 0.3))
+        self.assertEqual(eg.parse_reflex("calm"), ("calm", 0.3))
         self.assertIsNone(eg.parse_reflex(""))
         self.assertIsNone(eg.parse_reflex("off"))
 
