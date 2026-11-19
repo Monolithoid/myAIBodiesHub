@@ -49,6 +49,10 @@ version: "3.8"
 #                              entendue par le drone statique (défaut: 0)
 #   NAO_SPEAKING_SYNC        : 1 = le NAO s'anime pendant que le drone statique parle,
 #                              0 = désactivé (défaut: 1)
+#   SPEECH_GESTURE_SYNC      : 1 = une phrase et le geste appris de la même réponse partent
+#                              ensemble, durée du geste calée sur la phrase (défaut: 1) ;
+#                              le décalage se règle sur le drone (GESTURE_SPEECH_OFFSET_MS)
+#   SPEECH_CHARS_PER_S       : débit de la synthèse vocale pour estimer une phrase (défaut: 14)
 #   LISTEN_DURATION          : durée d'écoute après wake word en secondes (défaut: 4.0)
 #   ASR_MODEL                : modèle Whisper — tiny/base/small (défaut: small)
 #
@@ -353,6 +357,8 @@ services:
       # Autres orthographes acceptées (vide = liste par défaut de body_gateway.py)
       - WAKE_ALIASES=${WAKE_ALIASES:-}
       - NAO_HEAD_YAW_OFFSET=${NAO_HEAD_YAW_OFFSET:-0}
+      - SPEECH_GESTURE_SYNC=${SPEECH_GESTURE_SYNC:-1}
+      - SPEECH_CHARS_PER_S=${SPEECH_CHARS_PER_S:-14}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - WEBUI_API_KEY=${WEBUI_API_KEY:-}
       - WEBUI_PIPE_MODEL=${WEBUI_PIPE_MODEL:-nao_brain}

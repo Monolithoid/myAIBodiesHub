@@ -29,6 +29,11 @@ Sensor flow (drone → brain):
 
 Command flow (brain → drone):
   /bodies/{id}/actuators/say → edge-tts → /drones/{id}/audio_out (String, MP3 base64)
+  Speech ↔ gesture sync: body_gateway sends {"text", "sync"} instead of plain text
+  when a NAO gesture goes with the sentence.  Then audio_out is JSON
+  {"mp3", "sync", "speech_s"} (the drone holds the sentence until the gesture
+  starts) and {"kind": "speech", "sync", "speech_s"} (measured length) goes on
+  /speech_gesture_sync for the drone's gesture service.
 
 Also started for obs_* bodies (ADR 005): the OBS stream voice uses the same
 say → edge-tts → audio_out path and the same status / speaking topics.
@@ -69,6 +74,7 @@ WHISPER_URL = os.environ.get("WHISPER_URL", "")
 WHISPER_PROMPT = os.environ.get("WHISPER_PROMPT", "Ok Nao.")
 TTS_VOICE = os.environ.get("TTS_VOICE", "fr-FR-DeniseNeural")
 DRONE_STATUS_TIMEOUT = float(os.environ.get("DRONE_STATUS_TIMEOUT", "90.0"))
+SYNC_TOPIC = "/speech_gesture_sync"
 
 
 class StaticDriverNode(Node):
@@ -92,6 +98,8 @@ class StaticDriverNode(Node):
 
         # ── Publisher: commands → drone (via rosbridge → static_drone.py) ────
         self.pub_audio_out = self.create_publisher(String, f"{drone}/audio_out", 10)
+        # Measured length of a sentence that a NAO gesture waits for (speech ↔ gesture sync).
+        self.pub_sync      = self.create_publisher(String, SYNC_TOPIC, 10)
 
         # ── Subscriber: actuator commands from body_gateway ──────────────────
         self.create_subscription(String, f"{ns}/actuators/say", self._on_say, 10)
@@ -241,26 +249,57 @@ class StaticDriverNode(Node):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _on_say(self, msg: String):
-        text = msg.data.strip()
+        """Plain text, or {"text", "sync"} from body_gateway when a NAO gesture goes with it."""
+        text, sync = parse_say(msg.data)
         if not text:
             return
-        self.get_logger().info(f"[{DRONE_ID}] → TTS : {text[:80]!r}")
-        threading.Thread(target=self._tts_and_publish, args=(text,), daemon=True).start()
+        self.get_logger().info(f"[{DRONE_ID}] → TTS : {text[:80]!r}" + (f" (sync {sync})" if sync else ""))
+        threading.Thread(target=self._tts_and_publish, args=(text, sync), daemon=True).start()
 
-    def _tts_and_publish(self, text: str):
+    def _tts_and_publish(self, text: str, sync: str = ""):
         # The drone has no local speech synthesis: without edge-tts nothing is said.
         try:
             audio_mp3 = speech_services.synthesize_mp3(text, TTS_VOICE)
         except ImportError:
             self.get_logger().error("edge-tts non installé — phrase perdue")
+            self._release(sync, "edge-tts absent")
             return
         except Exception as e:
             self.get_logger().warn(f"edge-tts erreur: {e} — phrase perdue")
+            self._release(sync, "edge-tts en erreur")
             return
+        b64 = base64.b64encode(audio_mp3).decode()
         out = String()
-        out.data = base64.b64encode(audio_mp3).decode()
+        if sync:
+            # Speech ↔ gesture sync: the gesture service on the drone fits the gesture
+            # to the measured length, the drone holds the sentence until the gesture starts.
+            seconds = speech_services.mp3_duration(audio_mp3)
+            self.pub_sync.publish(String(data=json.dumps(
+                {"kind": "speech", "sync": sync, "speech_s": seconds})))
+            out.data = json.dumps({"mp3": b64, "sync": sync, "speech_s": seconds})
+        else:
+            out.data = b64
         self.pub_audio_out.publish(out)
         self.get_logger().info(f"TTS audio envoyé ({len(audio_mp3)} octets MP3)")
+
+    def _release(self, sync: str, reason: str):
+        """No sentence after all: the gesture must not wait for it."""
+        if sync:
+            self.pub_sync.publish(String(data=json.dumps(
+                {"kind": "speech", "sync": sync, "speech_s": None, "reason": reason})))
+
+
+def parse_say(data: str) -> tuple[str, str]:
+    """(text, sync id) of an /actuators/say message: plain text or JSON {"text", "sync"}."""
+    data = (data or "").strip()
+    if data.startswith("{"):
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict) and "text" in obj:
+            return str(obj.get("text") or "").strip(), str(obj.get("sync") or "")
+    return data, ""
 
 
 def main():

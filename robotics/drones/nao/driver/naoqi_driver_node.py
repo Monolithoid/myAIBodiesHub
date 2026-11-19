@@ -114,6 +114,8 @@ class NAOqiDriverNode(Node):
         self.pub_nao_motion     = self.create_publisher(String, "/nao/motion",     10)
         self.pub_nao_stiffness  = self.create_publisher(String, "/nao/stiffness",  10)
         self.pub_nao_emotion_gesture = self.create_publisher(String, "/nao/emotion_gesture", 10)
+        # Speech ↔ gesture sync: a refused gesture frees the sentence the drone holds for it.
+        self.pub_speech_sync = self.create_publisher(String, "/speech_gesture_sync", 10)
 
         # ── Subscribers: actuator commands from body_gateway ─────────────────
         self.create_subscription(String, f"{ns}/actuators/say",     self._on_say,     10)
@@ -422,12 +424,26 @@ class NAOqiDriverNode(Node):
             return
         if isinstance(data.get("event"), dict):
             order["event"] = data["event"]
+        if isinstance(data.get("sync"), dict) and data["sync"].get("id"):
+            order["sync"] = data["sync"]      # sentence the drone holds until this gesture starts
         if self._gesture_emotions and order["emotion"] not in self._gesture_emotions:
             self.get_logger().warn(f"[{ROBOT_ID}] geste refusé : émotion inconnue {order['emotion']!r}")
+            self._release_speech(order, "émotion inconnue")
             return
+        replaced = self._motion.pending_gesture()
         ok, why = self._motion.request_gesture(order, time.time())
         if not ok:
             self.get_logger().warn(f"[{ROBOT_ID}] geste {order['emotion']!r} refusé : {why}")
+            self._release_speech(order, why)
+        elif replaced is not None and replaced is not order:
+            self._release_speech(replaced, "remplacé par un geste plus récent")
+
+    def _release_speech(self, order: dict, reason: str):
+        """The gesture will not play: the drone says its sentence now."""
+        sync = (order or {}).get("sync")
+        if isinstance(sync, dict) and sync.get("id"):
+            self.pub_speech_sync.publish(String(data=json.dumps(
+                {"kind": "go", "sync": sync["id"], "at": 0, "reason": reason})))
 
     def _on_gesture_state(self, msg: String):
         """State of the drone's gesture service: who holds the body, known emotions."""
