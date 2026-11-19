@@ -45,11 +45,21 @@ flowchart TB
         User(["Utilisateur\n(navigateur)"])
         Dev(["Développeur\n(SSH tunnel)"])
         Google["Google OAuth"]
-        NAO["Robot NAO\n(réseau local)"]
-        Static["Drone statique\n(Raspberry Pi / PC)"]
+        ExtLLM["LLM externe (optionnel)\nOpenAI / Anthropic"]
         Twitch["Tchat Twitch\n(IRC, lecture anonyme)"]
         OBS["OBS du streamer\n(source navigateur)"]
     end
+
+    subgraph Local["Réseau local (pièce)"]
+        NAO["Robot NAO\nnao_ws_bridge.py"]
+        subgraph Static["Drone statique (PC Ubuntu, puis Raspberry Pi)"]
+            StaticDrone["static_drone.py\nmicros, caméra, haut-parleur"]
+            EmoGesture["emotion_gesture.py\ngénérateur de gestes + guardian"]
+            NaoRelay["nao-relay :9090\n(Caddy, ajoute le jeton)"]
+        end
+    end
+
+    Dataset[("nao-emotion-motion-dataset\n(GitHub, version fixée)")]
 
     subgraph Coolify["Reverse Proxy — Coolify / Traefik"]
         RP_Chat["chat.mon-domain.com :443"]
@@ -82,6 +92,7 @@ flowchart TB
         subgraph robotNet["robotics-net"]
             RosbridgeProxy["rosbridge-proxy :80"]
             ObsAgent["obs-agent :8096"]
+            Regie["regie :8097"]
         end
     end
 
@@ -96,15 +107,19 @@ flowchart TB
     N8N --> Ollama
     Bitterbot -.->|bitterbot-net| Ollama
 
-    BodyGW --> Ollama
+    BodyGW -->|"BRAIN_PROVIDER=ollama (défaut)"| Ollama
+    BodyGW -.->|"BRAIN_PROVIDER=openai / anthropic"| ExtLLM
     BodyGW <-->|"ROS 2 DDS"| NaoCore
     NaoCore <-->|"ROS 2 DDS"| Ros2Bridge
 
     NaoCore --> Whisper
     Twitch -->|"!nao …"| TwitchIn --> ChatRelay
 
-    NAO -->|"WS sortant :80 + jeton"| RP_ROS --> RosbridgeProxy --> Ros2Bridge
-    Static -->|"WSS sortant + jeton"| RP_ROS
+    NAO -->|"WS local"| NaoRelay -->|"WSS sortant + jeton"| RP_ROS --> RosbridgeProxy --> Ros2Bridge
+    StaticDrone -->|"WSS sortant + jeton"| RP_ROS
+    EmoGesture -->|"WSS sortant + jeton"| RP_ROS
+    EmoGesture -.->|"HTTPS, au chargement"| Dataset
+    Regie -->|"WS + jeton"| RosbridgeProxy
     ObsAgent -->|"WS + jeton"| RosbridgeProxy
     OBS -->|"HTTPS /overlay?token="| RP_OBS --> ObsAgent
 ```
@@ -113,6 +128,16 @@ Toutes les entrées (« ok nao » dans la pièce, Open WebUI, tchat Twitch, capt
 passent par la même boucle : texte → `body-gateway` (LLM) → liste d'actions
 répartie sur les corps (NAO, voix de la pièce, voix du stream). Voir
 [ADR 005](docs/decisions/005-avatar-twitch.md).
+
+Le LLM est Ollama sur le VPS par défaut ; `BRAIN_PROVIDER=openai` ou `anthropic`
+(avec `BRAIN_URL`, `BRAIN_MODEL`, `BRAIN_API_KEY`) envoie les décisions à un LLM
+externe à la place (voir `robotics/brain/body_gateway/brain_client.py`).
+
+Les gestes appris ([ADR 009](docs/decisions/009-gestes-appris.md)) sont calculés
+sur le drone statique par `emotion_gesture.py` : le LLM choisit une émotion, le
+driver NAO (dans `nao-core`) la transmet, le drone génère le geste, le fait
+valider par le guardian, puis l'envoie au NAO, qui le joue. Tous ces échanges
+passent par rosbridge sur le VPS.
 
 ---
 
