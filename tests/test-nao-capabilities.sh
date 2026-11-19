@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
-# test-nao-capabilities.sh — Teste les capacités NAOqi via naoqi-bridge
+# test-nao-capabilities.sh — Tests the NAOqi capabilities through naoqi-bridge
 #
-# Usage :
+# Usage:
 #   bash tests/test-nao-capabilities.sh [--nao] [<section> ...]
 #
-# Sans section : lance toutes les sections.
-# Avec sections : lance uniquement celles indiquées.
+# Without a section: runs all sections.
+# With sections: runs only the ones given.
 #
-# Options :
-#   --nao     Active les tests physiques (NAO doit être allumé et connecté)
-#             Par défaut : mock mode uniquement
-#   --emotive NAO en mode émotif seul (ADR 004, docs/nao.md) : il ne parle
-#             pas, les tests de parole sont ignorés (SKIP). Équivaut à
-#             NAO_EMOTIVE=1 dans l'environnement.
+# Options:
+#   --nao     Enables the physical tests (NAO must be on and connected)
+#             Default: mock mode only
+#   --emotive NAO in emotive-only mode (ADR 004, docs/nao.md): it does not
+#             speak, the speech tests are skipped (SKIP). Same as
+#             NAO_EMOTIVE=1 in the environment.
 #
-# Sections :
-#   health        /health — état de connexion
-#   battery       /battery — niveau de batterie
-#   say           /say — synthèse vocale (ALTextToSpeech)
-#   leds          /leds — contrôle LEDs (ALLeds.fadeRGB)
-#   posture       /posture — postures prédéfinies (ALRobotPosture)
-#   motion        /motion — articulations tête (ALMotion)
-#   move          /move + /move/stop — déplacement (ALMotion.moveToward)
-#   events        /events — flux SSE (bumper, sonar, batterie)
-#   robustness    cas d'erreur et endpoints invalides
-#   stiffness     /stiffness — rigidité tête / bras
-#   emotions      rendu émotions (speech + LEDs + tête + bras)
-#   speaking      animation « je parle » du NAO quand le drone statique parle
+# Sections:
+#   health        /health — connection state
+#   battery       /battery — battery level
+#   say           /say — speech synthesis (ALTextToSpeech)
+#   leds          /leds — LED control (ALLeds.fadeRGB)
+#   posture       /posture — predefined postures (ALRobotPosture)
+#   motion        /motion — head joints (ALMotion)
+#   move          /move + /move/stop — movement (ALMotion.moveToward)
+#   events        /events — SSE stream (bumper, sonar, battery)
+#   robustness    error cases and invalid endpoints
+#   stiffness     /stiffness — head / arm stiffness
+#   emotions      emotion rendering (speech + LEDs + head + arms)
+#   speaking      NAO's "I'm speaking" animation when the static drone speaks
 
 set -uo pipefail
 
-# ─── Parsing des arguments ────────────────────────────────────────────────────
+# ─── Argument parsing ─────────────────────────────────────────────────────────
 PHYSICAL=0
 EMOTIVE="${NAO_EMOTIVE:-0}"
 SECTIONS=()
@@ -49,7 +49,7 @@ for arg in "$@"; do
     esac
 done
 
-# Par défaut : toutes les sections
+# Default: all sections
 if [ ${#SECTIONS[@]} -eq 0 ]; then
     SECTIONS=(health battery say leds posture motion move events robustness stiffness emotions speaking)
 fi
@@ -103,9 +103,9 @@ _get() {
 # ─── Sections ─────────────────────────────────────────────────────────────────
 
 _section_health() {
-    _head "0 — Prérequis / health"
+    _head "0 — Requirements / health"
 
-    _get "naoqi-bridge /health répond" "/health" '"ok"'
+    _get "naoqi-bridge /health answers" "/health" '"ok"'
 
     if [ "$PHYSICAL" -eq 1 ]; then
         HEALTH=$(curl -sf --max-time 5 "${BRIDGE}/health" 2>/dev/null || echo "{}")
@@ -113,21 +113,21 @@ _section_health() {
             "import json,sys; d=json.load(sys.stdin); print('true' if d.get('connected') else 'false')" \
             2>/dev/null || echo "false")
         if [ "$CONNECTED" = "true" ]; then
-            _info "NAO connecté — mode NAO physique actif"
+            _info "NAO connected — physical NAO mode active"
         else
-            _fail "connected=false — NAO non connecté, impossible de lancer --nao"
+            _fail "connected=false — NAO not connected, cannot run --nao"
             _info "$HEALTH"
             exit 1
         fi
     else
-        _info "Mode mock — commandes simulées (relancer avec --nao quand NAO est allumé)"
+        _info "Mock mode — simulated commands (rerun with --nao when NAO is on)"
     fi
 }
 
 _section_battery() {
     _head "1 — Batterie  (GET /battery)"
-    _sub "Lecture du niveau de charge"
-    _get "GET /battery → niveau retourné" "/battery" '"level"'
+    _sub "Reading the charge level"
+    _get "GET /battery → level returned" "/battery" '"level"'
 
     if [ "$PHYSICAL" -eq 1 ]; then
         LEVEL=$(curl -sf --max-time 5 "${BRIDGE}/battery" 2>/dev/null \
@@ -137,14 +137,14 @@ _section_battery() {
 }
 
 _section_say() {
-    _head "2 — Synthèse vocale  (POST /say)"
+    _head "2 — Speech synthesis  (POST /say)"
 
     if [ "$EMOTIVE" = "1" ]; then
-        _skip "NAO émotif seul : module speech désactivé, le drone statique parle"
+        _skip "Emotive-only NAO: speech module disabled, the static drone speaks"
         return
     fi
 
-    _sub "Texte vide → erreur 400"
+    _sub "Empty text → error 400"
     out=$(curl -s --max-time 5 -X POST "${BRIDGE}/say" \
           -H "Content-Type: application/json" -d '{"text":""}' 2>&1)
     if echo "$out" | grep -q '"error"'; then
@@ -156,15 +156,15 @@ _section_say() {
     _sub "Phrase courte"
     _post "/say 'Bonjour'" '{"text":"Bonjour"}' "/say"
 
-    _sub "Phrase avec accents (UTF-8)"
+    _sub "Sentence with accents (UTF-8)"
     _post "/say UTF-8 — accents" '{"text":"Je suis prêt à t'\''aider"}' "/say"
 
-    _sub "Phrase longue (> 50 car.)"
+    _sub "Long sentence (> 50 chars)"
     _post "/say phrase longue" \
         '{"text":"Je suis le robot NAO. Je peux parler, bouger et interagir avec vous."}' "/say"
 
     if [ "$PHYSICAL" -eq 1 ]; then
-        _sub "Chiffres et ponctuation"
+        _sub "Numbers and punctuation"
         _post "/say chiffres + ponctuation" \
             '{"text":"Deux plus deux font quatre. Est-ce correct ?"}' "/say"
 
@@ -196,19 +196,19 @@ _section_leds() {
     _post "AllLeds → extinction" \
         '{"group":"AllLeds","r":0.0,"g":0.0,"b":0.0,"duration":1.0}' "/leds"
 
-    _sub "Durée courte (flash 0.1s)"
+    _sub "Short duration (0.1s flash)"
     _post "AllLeds flash rapide" \
         '{"group":"AllLeds","r":1.0,"g":1.0,"b":0.0,"duration":0.1}' "/leds"
 
-    _sub "Durée longue (fondu 3s)"
+    _sub "Long duration (3s fade)"
     _post "FaceLeds fondu lent 3s" \
         '{"group":"FaceLeds","r":0.5,"g":0.0,"b":0.5,"duration":3.0}' "/leds"
 
-    _sub "Valeurs RGB à la limite (1.0, 1.0, 1.0)"
+    _sub "RGB values at the limit (1.0, 1.0, 1.0)"
     _post "AllLeds valeurs max" \
         '{"group":"AllLeds","r":1.0,"g":1.0,"b":1.0,"duration":0.5}' "/leds"
 
-    _sub "Valeurs RGB à 0 (extinction totale)"
+    _sub "RGB values at 0 (all off)"
     _post "AllLeds valeurs min" \
         '{"group":"AllLeds","r":0.0,"g":0.0,"b":0.0,"duration":0.5}' "/leds"
 }
@@ -229,13 +229,13 @@ _section_posture() {
         _sub "Posture Sit (assis)"
         _post "posture Sit" '{"posture":"Sit","speed":0.3}' "/posture"
 
-        _sub "Posture SitRelax (assis relâché)"
+        _sub "SitRelax posture (seated relaxed)"
         _post "posture SitRelax" '{"posture":"SitRelax","speed":0.3}' "/posture"
 
-        _sub "Posture LyingBelly (allongé ventre)"
+        _sub "LyingBelly posture (lying on the belly)"
         _post "posture LyingBelly (lent)" '{"posture":"LyingBelly","speed":0.2}' "/posture"
 
-        _sub "Posture LyingBack (allongé dos)"
+        _sub "LyingBack posture (lying on the back)"
         _post "posture LyingBack (lent)" '{"posture":"LyingBack","speed":0.2}' "/posture"
 
         _sub "Retour Stand vitesse rapide (0.8)"
@@ -244,12 +244,12 @@ _section_posture() {
         _sub "Retour Stand vitesse lente (0.1)"
         _post "posture Stand lent" '{"posture":"Stand","speed":0.1}' "/posture"
     else
-        _skip "postures Sit/Lying ignorées en mode mock (--nao pour tester)"
+        _skip "Sit/Lying postures skipped in mock mode (--nao to test)"
     fi
 }
 
 _section_motion() {
-    _head "5 — Articulations tête  (POST /motion)"
+    _head "5 — Head joints  (POST /motion)"
     # HeadYaw [-2.09, 2.09] rad  |  HeadPitch [-0.67, 0.51] rad
 
     _sub "HeadYaw → 0 (centre)"
@@ -294,132 +294,132 @@ _section_motion() {
 }
 
 _section_move() {
-    _head "6 — Déplacement  (POST /move  +  POST /move/stop)"
+    _head "6 — Movement  (POST /move  +  POST /move/stop)"
 
-    _sub "Arrêt immédiat (sans mouvement préalable)"
-    _post "/move/stop sans contexte" '{}' "/move/stop"
+    _sub "Immediate stop (no prior movement)"
+    _post "/move/stop without context" '{}' "/move/stop"
 
     _sub "Avancer (x=0.3 m/s)"
     _post "/move avancer x=0.3" '{"x":0.3,"y":0.0,"theta":0.0}' "/move"
 
-    _sub "Arrêt après avancer"
+    _sub "Stop after moving forward"
     _post "/move/stop" '{}' "/move/stop"
 
     _sub "Reculer (x=-0.3 m/s)"
     _post "/move reculer x=-0.3" '{"x":-0.3,"y":0.0,"theta":0.0}' "/move"
 
-    _sub "Arrêt"
+    _sub "Stop"
     _post "/move/stop" '{}' "/move/stop"
 
     _sub "Strafe gauche (y=0.2 m/s)"
     _post "/move strafe gauche y=0.2" '{"x":0.0,"y":0.2,"theta":0.0}' "/move"
 
-    _sub "Arrêt"
+    _sub "Stop"
     _post "/move/stop" '{}' "/move/stop"
 
     _sub "Strafe droite (y=-0.2 m/s)"
     _post "/move strafe droite y=-0.2" '{"x":0.0,"y":-0.2,"theta":0.0}' "/move"
 
-    _sub "Arrêt"
+    _sub "Stop"
     _post "/move/stop" '{}' "/move/stop"
 
     _sub "Rotation gauche (theta=0.5 rad/s)"
     _post "/move rotation gauche theta=0.5" '{"x":0.0,"y":0.0,"theta":0.5}' "/move"
 
-    _sub "Arrêt"
+    _sub "Stop"
     _post "/move/stop" '{}' "/move/stop"
 
     _sub "Rotation droite (theta=-0.5 rad/s)"
     _post "/move rotation droite theta=-0.5" '{"x":0.0,"y":0.0,"theta":-0.5}' "/move"
 
-    _sub "Arrêt final"
+    _sub "Final stop"
     _post "/move/stop final" '{}' "/move/stop"
 
     if [ "$PHYSICAL" -eq 1 ]; then
-        _sub "Déplacement combiné (avance + rotation)"
-        _post "/move combiné x=0.2 theta=0.3" '{"x":0.2,"y":0.0,"theta":0.3}' "/move"
+        _sub "Combined movement (forward + rotation)"
+        _post "/move combined x=0.2 theta=0.3" '{"x":0.2,"y":0.0,"theta":0.3}' "/move"
         sleep 2
-        _post "/move/stop après déplacement combiné" '{}' "/move/stop"
+        _post "/move/stop after combined movement" '{}' "/move/stop"
     else
-        _skip "déplacement combiné ignoré en mode mock (--nao pour tester)"
+        _skip "combined movement skipped in mock mode (--nao to test)"
     fi
 }
 
 _section_events() {
     _head "7 — Flux SSE  (GET /events)"
 
-    _sub "Connexion SSE et réception du keepalive"
+    _sub "SSE connection and keepalive reception"
     out=$(curl -s --max-time 20 -N -H "Accept: text/event-stream" \
           "${BRIDGE}/events" 2>&1 | head -5 || true)
     if echo "$out" | grep -qE "data:|keepalive"; then
-        _pass "/events stream SSE actif (keepalive ou data reçu)"; _info "$out"
+        _pass "/events SSE stream active (keepalive or data received)"; _info "$out"
     else
-        _fail "/events stream SSE : aucune donnée reçue en 20 s"
+        _fail "/events SSE stream: no data received in 20 s"
         [ -n "$out" ] && _info "$out"
     fi
 
     if [ "$PHYSICAL" -eq 1 ]; then
-        _sub "Batterie disponible dans le stream (poll 30 s — attend 35 s)"
-        _warn "Ce test attend jusqu'à 35 s (polling batterie)"
+        _sub "Battery available in the stream (30 s poll — waits 35 s)"
+        _warn "This test waits up to 35 s (battery polling)"
         out=$(curl -s --max-time 40 -N -H "Accept: text/event-stream" \
               "${BRIDGE}/events" 2>&1 \
               | grep -m1 '"topic":"battery"' || true)
         if [ -n "$out" ]; then
-            _pass "/events topic battery reçu"; _info "$out"
+            _pass "/events battery topic received"; _info "$out"
         else
             _fail "/events topic battery absent en 40 s"
         fi
     else
-        _skip "test batterie SSE ignoré (mode mock)"
+        _skip "SSE battery test skipped (mock mode)"
     fi
 }
 
 _section_robustness() {
-    _head "8 — Robustesse / cas d'erreur"
+    _head "8 — Robustness / error cases"
 
-    _sub "/say sans body JSON"
+    _sub "/say without a JSON body"
     code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
            -X POST "${BRIDGE}/say" 2>&1)
     if echo "$code" | grep -qE "^[45]"; then
-        _pass "/say sans body → HTTP $code (erreur attendue)"
+        _pass "/say without body → HTTP $code (expected error)"
     else
-        _fail "/say sans body devrait retourner 4xx ou 5xx (obtenu: $code)"
+        _fail "/say without body should return 4xx or 5xx (got: $code)"
     fi
 
-    _sub "/motion avec joint invalide"
+    _sub "/motion with an invalid joint"
     out=$(curl -s --max-time 10 -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"JointInexistant","angle":0.5,"speed":0.1}' 2>&1)
     if [ "$PHYSICAL" -eq 1 ]; then
         if echo "$out" | grep -q '"error"'; then
-            _pass "/motion joint invalide → erreur NAOqi retournée (correct)"
+            _pass "/motion invalid joint → NAOqi error returned (correct)"
         else
-            _fail "/motion joint invalide → NAOqi aurait dû rejeter ce joint"
+            _fail "/motion invalid joint → NAOqi should have rejected this joint"
         fi
     else
         if echo "$out" | grep -q '"ok".*true'; then
-            _pass "/motion joint invalide → mock retourne ok:true (normal)"
+            _pass "/motion invalid joint → mock returns ok:true (normal)"
         else
-            _fail "/motion joint invalide → réponse inattendue du mock"
+            _fail "/motion invalid joint → unexpected mock response"
         fi
     fi
     _info "$out"
 
-    _sub "/posture avec nom invalide"
+    _sub "/posture with an invalid name"
     out=$(curl -s --max-time 10 -X POST "${BRIDGE}/posture" \
           -H "Content-Type: application/json" \
           -d '{"posture":"PostureInexistante","speed":0.5}' 2>&1)
     if [ "$PHYSICAL" -eq 1 ]; then
         if echo "$out" | grep -q '"error"'; then
-            _pass "/posture invalide → erreur NAOqi retournée (correct)"
+            _pass "/posture invalid → NAOqi error returned (correct)"
         else
-            _fail "/posture invalide → NAOqi aurait dû rejeter cette posture"
+            _fail "/posture invalid → NAOqi should have rejected this posture"
         fi
     else
         if echo "$out" | grep -q '"ok".*true'; then
-            _pass "/posture invalide → mock retourne ok:true (normal)"
+            _pass "/posture invalid → mock returns ok:true (normal)"
         else
-            _fail "/posture invalide → réponse inattendue du mock"
+            _fail "/posture invalid → unexpected mock response"
         fi
     fi
     _info "$out"
@@ -435,16 +435,16 @@ _section_robustness() {
 }
 
 _section_stiffness() {
-    _head "9 — Stiffness (contrôle rigidité moteurs)"
+    _head "9 — Stiffness (motor stiffness control)"
 
-    _sub "Activer stiffness tête uniquement"
+    _sub "Enable head stiffness only"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
           -H "Content-Type: application/json" \
           -d '{"groups":["head"],"value":1.0}' 2>&1)
     if echo "$out" | grep -q '"ok".*true'; then
         _pass "/stiffness head 1.0 → ok"
     else
-        _fail "/stiffness head 1.0 → réponse inattendue"
+        _fail "/stiffness head 1.0 → unexpected response"
     fi
     _info "$out"
 
@@ -455,7 +455,7 @@ _section_stiffness() {
     if echo "$out" | grep -q '"ok".*true'; then
         _pass "/stiffness larm 1.0 → ok"
     else
-        _fail "/stiffness larm 1.0 → réponse inattendue"
+        _fail "/stiffness larm 1.0 → unexpected response"
     fi
     _info "$out"
 
@@ -466,58 +466,58 @@ _section_stiffness() {
     if echo "$out" | grep -q '"ok".*true'; then
         _pass "/stiffness rarm 1.0 → ok"
     else
-        _fail "/stiffness rarm 1.0 → réponse inattendue"
+        _fail "/stiffness rarm 1.0 → unexpected response"
     fi
     _info "$out"
 
-    _sub "Activer tête + bras en une seule requête"
+    _sub "Enable head + arms in a single request"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
           -H "Content-Type: application/json" \
           -d '{"groups":["head","larm","rarm"],"value":1.0}' 2>&1)
     if echo "$out" | grep -q '"ok".*true'; then
         _pass "/stiffness head+larm+rarm 1.0 → ok"
     else
-        _fail "/stiffness head+larm+rarm 1.0 → réponse inattendue"
+        _fail "/stiffness head+larm+rarm 1.0 → unexpected response"
     fi
     _info "$out"
 
-    _sub "Désactiver stiffness tête + bras"
+    _sub "Disable head + arms stiffness"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
           -H "Content-Type: application/json" \
           -d '{"groups":["head","larm","rarm"],"value":0.0}' 2>&1)
     if echo "$out" | grep -q '"ok".*true'; then
         _pass "/stiffness head+larm+rarm 0.0 → ok"
     else
-        _fail "/stiffness head+larm+rarm 0.0 → réponse inattendue"
+        _fail "/stiffness head+larm+rarm 0.0 → unexpected response"
     fi
     _info "$out"
 
-    _sub "Groupe invalide → warning (pas d'erreur fatale)"
+    _sub "Invalid group → warning (no fatal error)"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
           -H "Content-Type: application/json" \
           -d '{"groups":["inconnu"],"value":1.0}' 2>&1)
     if echo "$out" | grep -q '"ok".*true'; then
-        _pass "/stiffness groupe inconnu → ok avec warning"
+        _pass "/stiffness unknown group → ok with warning"
     else
-        _fail "/stiffness groupe inconnu → réponse inattendue"
+        _fail "/stiffness unknown group → unexpected response"
     fi
     _info "$out"
 
-    _sub "Sans body JSON → erreur 4xx/5xx"
+    _sub "Without a JSON body → 4xx/5xx error"
     code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
            -X POST "${BRIDGE}/stiffness" 2>&1)
     if echo "$code" | grep -qE "^[245]"; then
-        _pass "/stiffness sans body → HTTP $code (géré)"
+        _pass "/stiffness without body → HTTP $code (handled)"
     else
-        _fail "/stiffness sans body → réponse inattendue (HTTP $code)"
+        _fail "/stiffness without body → unexpected response (HTTP $code)"
     fi
 }
 
-# Parole d'une émotion : ignorée quand le NAO est en mode émotif seul.
+# An emotion's speech: skipped when the NAO is in emotive-only mode.
 _emotion_say() {
     local emotion="$1" body="$2" out
     if [ "$EMOTIVE" = "1" ]; then
-        _skip "$emotion: speech (NAO émotif seul)"
+        _skip "$emotion: speech (emotive-only NAO)"
         return
     fi
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/say" \
@@ -526,38 +526,38 @@ _emotion_say() {
 }
 
 _section_emotions() {
-    _head "10 — Rendu émotions (speech + LEDs + tête + bras)"
+    _head "10 — Emotion rendering (speech + LEDs + head + arms)"
 
-    # Pré-requis : activer stiffness tête + bras
-    _sub "Prérequis : activer stiffness tête + bras"
+    # Requirement: enable head + arms stiffness
+    _sub "Requirement: enable head + arms stiffness"
     curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
          -H "Content-Type: application/json" \
          -d '{"groups":["head","larm","rarm"],"value":1.0}' > /dev/null
 
-    _sub "Émotion EXCITED : speech + LEDs blanc + regard en haut + bras levés"
+    _sub "EXCITED emotion: speech + white LEDs + looking up + arms raised"
     # 1. LEDs blanches vives
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/leds" \
           -H "Content-Type: application/json" \
           -d '{"group":"AllLeds","r":1.0,"g":1.0,"b":1.0,"duration":2.0}' 2>&1)
     [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: LEDs blanches" || _fail "excited: LEDs blanches"
-    # 2. Tête vers le haut (HeadPitch = -0.30)
+    # 2. Head up (HeadPitch = -0.30)
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"HeadPitch","angle":-0.30,"speed":0.15}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: tête en haut" || _fail "excited: tête en haut"
-    # 3. Bras levés (ShoulderPitch ~0.4)
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: head up" || _fail "excited: head up"
+    # 3. Arms raised (ShoulderPitch ~0.4)
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"LShoulderPitch","angle":0.4,"speed":0.12}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: bras gauche levé" || _fail "excited: bras gauche levé"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: left arm raised" || _fail "excited: left arm raised"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"RShoulderPitch","angle":0.4,"speed":0.12}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: bras droit levé" || _fail "excited: bras droit levé"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "excited: right arm raised" || _fail "excited: right arm raised"
     # 4. Speech
     _emotion_say "excited" '{"text":"Super ! Je suis vraiment excite !"}'
 
-    _sub "Émotion CURIOUS : speech + LEDs bleues + tête inclinée + bras repos"
+    _sub "CURIOUS emotion: speech + blue LEDs + tilted head + arms at rest"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/leds" \
           -H "Content-Type: application/json" \
           -d '{"group":"AllLeds","r":0.0,"g":0.0,"b":1.0,"duration":2.0}' 2>&1)
@@ -565,7 +565,7 @@ _section_emotions() {
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"HeadPitch","angle":-0.20,"speed":0.04}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "curious: tête inclinée" || _fail "curious: tête inclinée"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "curious: head tilted" || _fail "curious: head tilted"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"LShoulderPitch","angle":1.50,"speed":0.06}' 2>&1)
@@ -576,7 +576,7 @@ _section_emotions() {
     [[ "$out" =~ '"ok"'.*'true' ]] && _pass "curious: bras droit repos" || _fail "curious: bras droit repos"
     _emotion_say "curious" '{"text":"Hmm, je me pose des questions..."}'
 
-    _sub "Émotion UNCERTAIN : speech + LEDs jaunes + yaw lent + haussement d'épaules"
+    _sub "UNCERTAIN emotion: speech + yellow LEDs + slow yaw + shrug"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/leds" \
           -H "Content-Type: application/json" \
           -d '{"group":"AllLeds","r":0.8,"g":0.6,"b":0.0,"duration":2.0}' 2>&1)
@@ -584,7 +584,7 @@ _section_emotions() {
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"HeadYaw","angle":0.18,"speed":0.04}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "uncertain: tête yaw" || _fail "uncertain: tête yaw"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "uncertain: head yaw" || _fail "uncertain: head yaw"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"LElbowRoll","angle":-0.80,"speed":0.07}' 2>&1)
@@ -595,7 +595,7 @@ _section_emotions() {
     [[ "$out" =~ '"ok"'.*'true' ]] && _pass "uncertain: bras droit haussement" || _fail "uncertain: bras droit haussement"
     _emotion_say "uncertain" '{"text":"Je ne suis pas sur de comprendre..."}'
 
-    _sub "Émotion NEUTRAL : speech + LEDs sombres + tête droite + bras repos"
+    _sub "NEUTRAL emotion: speech + dim LEDs + head straight + arms at rest"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/leds" \
           -H "Content-Type: application/json" \
           -d '{"group":"AllLeds","r":0.05,"g":0.05,"b":0.10,"duration":2.0}' 2>&1)
@@ -603,7 +603,7 @@ _section_emotions() {
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"HeadPitch","angle":0.0,"speed":0.10}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "neutral: tête droite" || _fail "neutral: tête droite"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "neutral: head straight" || _fail "neutral: head straight"
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
           -H "Content-Type: application/json" \
           -d '{"joint":"LShoulderPitch","angle":1.50,"speed":0.06}' 2>&1)
@@ -614,8 +614,8 @@ _section_emotions() {
     [[ "$out" =~ '"ok"'.*'true' ]] && _pass "neutral: bras droit repos" || _fail "neutral: bras droit repos"
     _emotion_say "neutral" '{"text":"Bonjour. Comment puis-je vous aider ?"}'
 
-    # Fin : remettre les bras au repos et désactiver stiffness
-    _sub "Remise au repos + désactivation stiffness bras"
+    # End: put the arms back at rest and disable stiffness
+    _sub "Back to rest + arm stiffness disabled"
     curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/motion" \
          -H "Content-Type: application/json" \
          -d '{"joint":"HeadPitch","angle":0.0,"speed":0.10}' > /dev/null
@@ -625,14 +625,14 @@ _section_emotions() {
     out=$(curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
           -H "Content-Type: application/json" \
           -d '{"groups":["larm","rarm"],"value":0.0}' 2>&1)
-    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "remise au repos OK" || _fail "remise au repos échouée"
+    [[ "$out" =~ '"ok"'.*'true' ]] && _pass "back to rest OK" || _fail "back to rest failed"
 }
 
 _section_speaking() {
-    _head "11 — Animation « je parle » (drone statique qui parle)"
+    _head "11 — \"I'm speaking\" animation (static drone speaking)"
 
-    # Mêmes images que cognitive_renderer (speaking_animation.py), en commandes
-    # mono-articulation pour l'API HTTP de naoqi-bridge.
+    # Same frames as cognitive_renderer (speaking_animation.py), as
+    # single-joint commands for naoqi-bridge's HTTP API.
     local anim_dir
     anim_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../robotics/drones/nao/cognitive_renderer" && pwd)"
     local cmds
@@ -650,37 +650,37 @@ for tick in range(4):
 PY
     ) || { _fail "speaking_animation.py illisible"; return; }
 
-    _sub "Prérequis : activer stiffness tête + bras"
+    _sub "Requirement: enable head + arms stiffness"
     curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
          -H "Content-Type: application/json" \
          -d '{"groups":["head","larm","rarm"],"value":1.0}' > /dev/null
 
-    _sub "Yeux qui clignotent + hochements + avant-bras gauche puis droit (4 images)"
+    _sub "Blinking eyes + nods + left then right forearm (4 frames)"
     local endpoint body
     while read -r endpoint body; do
         _post "speaking ${endpoint} $(echo "$body" | cut -c1-50)" "$body" "$endpoint"
         [ "$endpoint" = "/leds" ] && [ "$PHYSICAL" -eq 1 ] && sleep 1.5
     done <<< "$cmds"
 
-    _sub "Retour au repos"
-    _post "tête droite" '{"joint":"HeadPitch","angle":0.0,"speed":0.08}' "/motion"
+    _sub "Back to rest"
+    _post "head straight" '{"joint":"HeadPitch","angle":0.0,"speed":0.08}' "/motion"
     curl -s --max-time "$TIMEOUT" -X POST "${BRIDGE}/stiffness" \
          -H "Content-Type: application/json" \
          -d '{"groups":["larm","rarm"],"value":0.0}' > /dev/null
 }
 
-# ─── En-tête ──────────────────────────────────────────────────────────────────
+# ─── Header ───────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║   test-nao-capabilities.sh — Capacités NAOqi via bridge     ║${NC}"
+echo -e "${YELLOW}║   test-nao-capabilities.sh — NAOqi capabilities via bridge  ║${NC}"
 if [ "$PHYSICAL" -eq 1 ]; then
-echo -e "${YELLOW}║   Mode : NAO physique  (--nao)                               ║${NC}"
+echo -e "${YELLOW}║   Mode: physical NAO  (--nao)                                ║${NC}"
 else
-echo -e "${YELLOW}║   Mode : mock  (relancer avec --nao quand NAO est allumé)    ║${NC}"
+echo -e "${YELLOW}║   Mode: mock  (rerun with --nao when NAO is on)              ║${NC}"
 fi
 echo -e "${YELLOW}║   Sections : ${SECTIONS[*]:0:5}...$(printf '%*s' $((36 - ${#SECTIONS[*]} * 1)) '')║${NC}"
 echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
 
-# ─── Dispatch des sections ────────────────────────────────────────────────────
+# ─── Section dispatch ─────────────────────────────────────────────────────────
 for section in "${SECTIONS[@]}"; do
     case "$section" in
         health)      _section_health ;;
@@ -698,10 +698,10 @@ for section in "${SECTIONS[@]}"; do
     esac
 done
 
-# ─── Résumé ───────────────────────────────────────────────────────────────────
+# ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║   RÉSUMÉ                                                     ║${NC}"
+echo -e "${YELLOW}║   SUMMARY                                                    ║${NC}"
 echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
 
 echo -e "  ${GREEN}✓ PASS : $PASS${NC}"
@@ -710,14 +710,14 @@ echo -e "  ${BLUE}⊘ SKIP : $SKIP${NC}"
 
 if [ "$PHYSICAL" -eq 0 ] && [ ${#SECTIONS[@]} -ge 5 ]; then
     echo ""
-    echo -e "  ${CYAN}Mode mock — relancer avec --nao quand NAO est allumé${NC}"
+    echo -e "  ${CYAN}Mock mode — rerun with --nao when NAO is on${NC}"
 fi
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then
-    echo -e "  ${GREEN}Toutes les capacités NAOqi répondent correctement.${NC}"
+    echo -e "  ${GREEN}All NAOqi capabilities answer correctly.${NC}"
     exit 0
 else
-    echo -e "  ${RED}$FAIL capacité(s) en échec — voir les erreurs ci-dessus.${NC}"
+    echo -e "  ${RED}$FAIL capability(ies) failing — see the errors above.${NC}"
     exit 1
 fi

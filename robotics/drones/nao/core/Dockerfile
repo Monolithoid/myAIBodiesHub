@@ -1,9 +1,9 @@
 FROM ros:humble-ros-base
 
-# Build context : robotics/ (pour inclure robotics/shared/)
-# Réunit naoqi-driver, cognitive-renderer et motion-engine en un seul conteneur,
-# plus static-driver, le driver du drone statique (ADR 004) : mêmes dépendances
-# (Whisper, edge-tts), même réseau ROS 2.
+# Build context: robotics/ (to include robotics/shared/)
+# Brings naoqi-driver, cognitive-renderer and motion-engine together in one container,
+# plus static-driver, the static drone's driver (ADR 004): same dependencies
+# (Whisper, edge-tts), same ROS 2 network.
 
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DOMAIN_ID=42 \
@@ -21,13 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-# Dépendances pip (naoqi-driver et static-driver : requests + edge-tts)
+# pip dependencies (naoqi-driver and static-driver: requests + edge-tts)
 COPY drones/nao/driver/requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 WORKDIR /ros2_ws
 
-# Scripts des quatre nœuds et module partagé (Whisper + edge-tts)
+# Scripts of the four nodes and shared module (Whisper + edge-tts)
 COPY shared/speech_services.py                               ./speech_services.py
 COPY drones/nao/driver/naoqi_driver_node.py                  ./naoqi_driver_node.py
 COPY drones/nao/driver/motion_policy.py                      ./motion_policy.py

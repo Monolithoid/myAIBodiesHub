@@ -1,30 +1,30 @@
-# ADR 001 — ROS 2 plutôt que ROS 1
+# ADR 001 — ROS 2 rather than ROS 1
 
-**Date :** 2026-04-18  
-**Statut :** Accepté
+**Date:** 2026-04-18  
+**Status:** Accepted
 
-## Contexte
+## Context
 
-Besoin d'un middleware robotique pour piloter un NAO et, à terme, des drones.
-Deux options : ROS 1 (Noetic) et ROS 2 (Jazzy).
+A robotics middleware is needed to drive a NAO and, eventually, drones.
+Two options: ROS 1 (Noetic) and ROS 2 (Jazzy).
 
-## Décision
+## Decision
 
-Utiliser **ROS 2 Jazzy Jalisco**.
+Use **ROS 2 Jazzy Jalisco**.
 
-## Raisons
+## Reasons
 
-- **Fin de vie ROS 1** : ROS Noetic atteint sa fin de vie en mai 2025. Aucun correctif de sécurité après cette date.
-- **Multi-robots natif** : ROS 2 utilise DDS (Data Distribution Service) décentralisé — pas de `roscore` unique, pas de SPOF.
-- **Sécurité** : DDS supporte l'authentification et le chiffrement nativement (SROS 2).
-- **Drones** : PX4, DJI et Parrot ont tous des drivers ROS 2 officiels. Aucune migration nécessaire pour étendre la stack.
-- **Docker-friendly** : L'image officielle `ros:jazzy-ros-base` est maintenue et légère.
+- **ROS 1 end of life**: ROS Noetic reaches its end of life in May 2025. No security fixes after that date.
+- **Native multi-robot**: ROS 2 uses decentralised DDS (Data Distribution Service) — no single `roscore`, no SPOF.
+- **Security**: DDS supports authentication and encryption natively (SROS 2).
+- **Drones**: PX4, DJI and Parrot all have official ROS 2 drivers. No migration needed to extend the stack.
+- **Docker-friendly**: the official `ros:jazzy-ros-base` image is maintained and lightweight.
 
-## Conséquences
+## Consequences
 
-- Le bridge NAO utilise `rosbridge_suite` pour traduire WebSocket JSON ↔ topics ROS 2, ce qui évite d'avoir NAOqi comme dépendance directe dans les containers VPS.
-- Aucune compatibilité ROS 1 requise ; pas de `ros1_bridge` dans la stack.
+- The NAO bridge uses `rosbridge_suite` to translate WebSocket JSON ↔ ROS 2 topics, which avoids having NAOqi as a direct dependency in the VPS containers.
+- No ROS 1 compatibility required; no `ros1_bridge` in the stack.
 
 ---
 
-← [Toutes les décisions](../../README.md#décisions-darchitecture-adr) · [Architecture](../architecture.md)
+← [All decisions](../../README.md#architecture-decisions-adr) · [Architecture](../architecture.md)

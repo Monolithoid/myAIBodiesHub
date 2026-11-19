@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# run-tests.sh — Lanceur de tests pour la chaîne WebUI → NAO
+# run-tests.sh — Test launcher for the WebUI → NAO chain
 #
-# Usage :
-#   bash tests/run-tests.sh                          # liste les suites disponibles
-#   bash tests/run-tests.sh <suite> [<suite> ...]    # lance les suites indiquées
-#   bash tests/run-tests.sh all                      # lance toutes les suites (sans --nao)
+# Usage:
+#   bash tests/run-tests.sh                          # lists the available suites
+#   bash tests/run-tests.sh <suite> [<suite> ...]    # runs the given suites
+#   bash tests/run-tests.sh all                      # runs all suites (without --nao)
 #
-# Exemples :
+# Examples:
 #   bash tests/run-tests.sh chain
 #   bash tests/run-tests.sh nao:say nao:leds
 #   bash tests/run-tests.sh nao:move --nao
@@ -25,48 +25,48 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ─── Aide / liste des suites ──────────────────────────────────────────────────
+# ─── Help / suite list ──────────────────────────────────────────────────────
 _usage() {
     echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${YELLOW}║   run-tests.sh — Lanceur de suites de tests                 ║${NC}"
+    echo -e "${YELLOW}║   run-tests.sh — Test suite launcher                        ║${NC}"
     echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  ${CYAN}Usage :${NC}"
+    echo -e "  ${CYAN}Usage:${NC}"
     echo -e "    bash tests/run-tests.sh <suite> [<suite> ...] [--nao]"
     echo -e "    bash tests/run-tests.sh all"
     echo ""
-    echo -e "  ${CYAN}Options :${NC}"
-    echo -e "    ${GREEN}--nao${NC}   Active les tests NAO physique pour les suites nao:*"
+    echo -e "  ${CYAN}Options:${NC}"
+    echo -e "    ${GREEN}--nao${NC}   Enables the physical NAO tests for the nao:* suites"
     echo ""
-    echo -e "  ${CYAN}Suites — infrastructure :${NC}"
+    echo -e "  ${CYAN}Suites — infrastructure:${NC}"
     echo ""
     echo -e "    ${GREEN}chain${NC}"
-    echo -e "        Maillons WebUI → Ollama → naoqi-bridge (NAO peut être éteint)"
-    echo -e "        Inclut le maillon 8 : pipe __ping__ via l'API Open WebUI"
-    echo -e "        (nécessite WEBUI_API_KEY défini dans l'environnement)"
+    echo -e "        Links WebUI → Ollama → naoqi-bridge (NAO can be off)"
+    echo -e "        Includes link 8: __ping__ pipe through the Open WebUI API"
+    echo -e "        (needs WEBUI_API_KEY set in the environment)"
     echo ""
     echo -e "    ${GREEN}diag${NC}"
-    echo -e "        Diagnostic de connexion NAO (réseau, qi SDK, port 9559)"
+    echo -e "        NAO connection diagnostics (network, qi SDK, port 9559)"
     echo ""
-    echo -e "  ${CYAN}Suites — capacités NAOqi (mock par défaut, --nao pour physique) :${NC}"
+    echo -e "  ${CYAN}Suites — NAOqi capabilities (mock by default, --nao for physical):${NC}"
     echo ""
-    echo -e "    ${GREEN}nao:health${NC}       /health — état de connexion bridge"
-    echo -e "    ${GREEN}nao:battery${NC}      /battery — niveau de batterie"
-    echo -e "    ${GREEN}nao:say${NC}          /say — synthèse vocale (ALTextToSpeech)"
-    echo -e "    ${GREEN}nao:leds${NC}         /leds — contrôle LEDs (ALLeds.fadeRGB)"
+    echo -e "    ${GREEN}nao:health${NC}       /health — bridge connection state"
+    echo -e "    ${GREEN}nao:battery${NC}      /battery — battery level"
+    echo -e "    ${GREEN}nao:say${NC}          /say — speech synthesis (ALTextToSpeech)"
+    echo -e "    ${GREEN}nao:leds${NC}         /leds — LED control (ALLeds.fadeRGB)"
     echo -e "    ${GREEN}nao:posture${NC}      /posture — postures (Stand, Crouch, Sit…)"
-    echo -e "    ${GREEN}nao:motion${NC}       /motion — articulations tête (HeadYaw, HeadPitch)"
-    echo -e "    ${GREEN}nao:move${NC}         /move + /move/stop — déplacement locomotion"
-    echo -e "    ${GREEN}nao:events${NC}       /events — flux SSE (bumper, sonar, batterie)"
-    echo -e "    ${GREEN}nao:robustness${NC}   cas d'erreur et endpoints invalides"
-    echo -e "    ${GREEN}nao:speaking${NC}     animation « je parle » (yeux, tête, bras) du NAO émotif"
-    echo -e "    ${GREEN}nao:all${NC}          toutes les sections nao:* ci-dessus"
+    echo -e "    ${GREEN}nao:motion${NC}       /motion — head joints (HeadYaw, HeadPitch)"
+    echo -e "    ${GREEN}nao:move${NC}         /move + /move/stop — locomotion"
+    echo -e "    ${GREEN}nao:events${NC}       /events — SSE stream (bumper, sonar, battery)"
+    echo -e "    ${GREEN}nao:robustness${NC}   error cases and invalid endpoints"
+    echo -e "    ${GREEN}nao:speaking${NC}     \"I'm speaking\" animation (eyes, head, arms) of the emotive NAO"
+    echo -e "    ${GREEN}nao:all${NC}          all the nao:* sections above"
     echo ""
-    echo -e "  ${CYAN}Raccourcis :${NC}"
+    echo -e "  ${CYAN}Shortcuts:${NC}"
     echo ""
-    echo -e "    ${GREEN}all${NC}   chain + nao:all + diag  (sans --nao)"
+    echo -e "    ${GREEN}all${NC}   chain + nao:all + diag  (without --nao)"
     echo ""
-    echo -e "  ${CYAN}Exemples :${NC}"
+    echo -e "  ${CYAN}Examples:${NC}"
     echo -e "    bash tests/run-tests.sh chain"
     echo -e "    bash tests/run-tests.sh nao:say nao:leds"
     echo -e "    bash tests/run-tests.sh nao:move --nao"
@@ -75,7 +75,7 @@ _usage() {
     echo ""
 }
 
-# ─── Gestion des suites ───────────────────────────────────────────────────────
+# ─── Suite handling ────────────────────────────────────────────────────────────
 SUITES_RUN=()
 SUITES_FAILED=()
 PHYSICAL=0
@@ -91,15 +91,15 @@ _run_suite() {
         chain)
             script="$SCRIPT_DIR/test-chain.sh"
             args=()
-            label="chain — maillons WebUI → NAO"
+            label="chain — WebUI → NAO links"
             ;;
         diag)
             script="$SCRIPT_DIR/diag-nao-connection.sh"
             args=()
-            label="diag — diagnostic connexion NAO"
+            label="diag — NAO connection diagnostics"
             ;;
         nao:all)
-            # Expansé en amont — ne devrait pas arriver ici
+            # Expanded upstream — should not get here
             for s in "${NAO_SECTIONS[@]}"; do _run_suite "nao:$s"; done
             return
             ;;
@@ -111,8 +111,8 @@ _run_suite() {
             label="$suite$([ "$PHYSICAL" -eq 1 ] && echo ' (--nao)' || echo ' (mock)')"
             ;;
         *)
-            echo -e "${RED}Suite inconnue : '$suite'${NC}" >&2
-            echo -e "Lancez ${CYAN}bash tests/run-tests.sh${NC} sans argument pour voir les suites disponibles." >&2
+            echo -e "${RED}Unknown suite: '$suite'${NC}" >&2
+            echo -e "Run ${CYAN}bash tests/run-tests.sh${NC} without arguments to see the available suites." >&2
             SUITES_RUN+=("${RED}✗${NC} $suite (inconnue)")
             SUITES_FAILED+=("$suite")
             return 1
@@ -132,13 +132,13 @@ _run_suite() {
     fi
 }
 
-# ─── Point d'entrée ───────────────────────────────────────────────────────────
+# ─── Entry point ──────────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
     _usage
     exit 0
 fi
 
-# Parsing : sépare --nao des noms de suites
+# Parsing: separates --nao from the suite names
 RAW_SUITES=()
 for arg in "$@"; do
     case "$arg" in
@@ -147,7 +147,7 @@ for arg in "$@"; do
     esac
 done
 
-# Expansion de "all" et "nao:all"
+# Expansion of "all" and "nao:all"
 EXPANDED=()
 for arg in "${RAW_SUITES[@]}"; do
     case "$arg" in
@@ -165,7 +165,7 @@ for arg in "${RAW_SUITES[@]}"; do
     esac
 done
 
-# Dédoublonnage (ordre conservé)
+# Deduplication (order kept)
 SEEN=()
 DEDUPED=()
 for s in "${EXPANDED[@]}"; do
@@ -181,10 +181,10 @@ for suite in "${DEDUPED[@]}"; do
     _run_suite "$suite"
 done
 
-# ─── Résumé global ────────────────────────────────────────────────────────────
+# ─── Overall summary──────────────────────────────────────────────────────────
 echo ""
 echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║   RÉSUMÉ GLOBAL                                              ║${NC}"
+echo -e "${YELLOW}║   OVERALL SUMMARY                                            ║${NC}"
 echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 for line in "${SUITES_RUN[@]}"; do
@@ -193,9 +193,9 @@ done
 echo ""
 
 if [ ${#SUITES_FAILED[@]} -eq 0 ]; then
-    echo -e "  ${GREEN}Toutes les suites ont réussi.${NC}"
+    echo -e "  ${GREEN}All suites passed.${NC}"
     exit 0
 else
-    echo -e "  ${RED}${#SUITES_FAILED[@]} suite(s) en échec : ${SUITES_FAILED[*]}${NC}"
+    echo -e "  ${RED}${#SUITES_FAILED[@]} suite(s) failing: ${SUITES_FAILED[*]}${NC}"
     exit 1
 fi

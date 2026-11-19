@@ -1,11 +1,11 @@
-# Drone statique — dépendances Python 3 (Ubuntu ou Raspberry Pi OS 64 bits)
+# Static drone — Python 3 dependencies (Ubuntu or Raspberry Pi OS 64-bit)
 numpy>=1.24
 websocket-client>=1.6
-sounddevice>=0.4.6        # nécessite libportaudio2 (apt)
+sounddevice>=0.4.6        # needs libportaudio2 (apt)
 opencv-python-headless>=4.8
-pyusb>=1.2                # ReSpeaker USB ; nécessite libusb-1.0-0 (apt)
-# Mot de réveil local (WAKE_MODE=local) : dépendances d'openWakeWord, qui
-# s'installe à part sans les siennes (requirements-wakeword.txt).
+pyusb>=1.2                # ReSpeaker USB; needs libusb-1.0-0 (apt)
+# Local wake word (WAKE_MODE=local): openWakeWord's dependencies, as it
+# is installed separately without its own (requirements-wakeword.txt).
 onnxruntime>=1.16
 scipy>=1.10
 scikit-learn>=1.2

@@ -1,55 +1,54 @@
-# ADR 008 — Univers moteur contraint : profil moteur calibré depuis la régie
+# ADR 008 — Constrained motor universe: motor profile calibrated from the control room
 
-**Date :** 2026-10-29  
-**Statut :** Accepté
+**Date:** 2026-10-29  
+**Status:** Accepted
 
-## Contexte
+## Context
 
-La gestion motrice de NAOqi plante dès qu'un mouvement sort de l'ordinaire,
-sans raison claire. Jusqu'ici un geste était une liste d'angles cibles : presets
-(`wave` mettait les deux épaules à -1.0), angles libres de `motion_engine` à
-20 Hz, poses de bras de `cognitive_renderer`, retour à la pose de lancement.
-Rien ne garantissait que ces angles et ces trajets étaient sûrs pour ce robot.
+NAOqi's motor management crashes as soon as a movement is out of the ordinary,
+without a clear reason. Until now a gesture was a list of target angles: presets
+(`wave` set both shoulders to -1.0), free angles from `motion_engine` at 20 Hz, arm
+poses from `cognitive_renderer`, return to the launch pose. Nothing guaranteed that
+these angles and paths were safe for this robot.
 
-## Décision
+## Decision
 
-On définit arbitrairement un univers moteur stable et fortement contraint.
+We arbitrarily define a stable, strongly constrained motor universe.
 
-1. **NAO reste assis.** Pas de changement de posture, pas de marche.
-2. **Trois chaînes** : la tête, le bras gauche et le bras droit (épaule et coude,
-   ni poignet ni main). Pas de danse, pas de coucou avec la main.
-3. **Un profil moteur par robot**, `nao_motor_profile.json` sur le robot :
-   pour chaque chaîne, une position de repos, une position de départ, une plage
-   par articulation (qui contient le départ) et une vitesse.
-4. **Chaque geste va repos → départ → cible → départ → repos.** Un nouvel ordre
-   pendant un geste enchaîne cible → départ → nouvelle cible. Le trajet départ →
-   cible reste dans la plage, puisque celle-ci est une boîte qui contient le départ.
-5. **Le LLM donne un ordre bas niveau** : la position d'une ou plusieurs
-   articulations, dans les plages qu'on lui montre. Il ne connaît ni le repos ni
-   le départ.
-6. **Le calibrage se fait depuis la régie** (page `/robot`), chaîne par chaîne :
-   raideur coupée pour placer la chaîne à la main, capture du repos et du
-   départ, enregistrement des plages, vitesse, rejeu de validation, puis écriture.
-   Il tourne sur le robot, sans la latence du VPS.
-7. **Le plus de composants NAOqi possible sont coupés** (fall manager,
-   anti-collision, respiration, posture d'attente, awareness…), et chacun est
-   réactivable depuis la régie. Le fall manager et l'anti-collision des bras
-   sont probablement une source de crash.
+1. **NAO stays seated.** No posture change, no walking.
+2. **Three chains**: the head, the left arm and the right arm (shoulder and elbow,
+   no wrist and no hand). No dancing, no waving with the hand.
+3. **One motor profile per robot**, `nao_motor_profile.json` on the robot: for each
+   chain, a rest position, a start position, a range per joint (which contains the
+   start) and a speed.
+4. **Every gesture goes rest → start → target → start → rest.** A new order during a
+   gesture chains target → start → new target. The start → target path stays within
+   the range, since the range is a box that contains the start.
+5. **The LLM gives a low-level order**: the position of one or more joints, within
+   the ranges shown to it. It knows neither the rest nor the start pose.
+6. **Calibration is done from the control room** (`/robot` page), chain by chain:
+   stiffness cut to place the chain by hand, capture of the rest and start poses,
+   recording of the ranges, speed, validation replay, then writing. It runs on the
+   robot, without the VPS latency.
+7. **As many NAOqi components as possible are turned off** (fall manager, collision
+   avoidance, breathing, idle posture, awareness…), and each can be turned back on
+   from the control room. The fall manager and the arms' collision avoidance are a
+   likely source of crashes.
 
-Répartition, dans la continuité de « le robot est une marionnette » :
+Split, in line with "the robot is a puppet":
 
-| Où | Quoi |
+| Where | What |
 |---|---|
-| driver NAO (`motion_policy.py`) | séquences par chaîne, regroupement des ordres, retour au repos, chaleur |
-| pont sur le robot (`nao_ws_bridge.py`) | profil, bornes de dernier filet (boîte du profil), repos au démarrage, calibrage, composants |
-| `body-gateway` | plages dans le prompt, ordres bas niveau |
-| régie | page Robot : calibrage et composants (seule page qui écrit) |
+| NAO driver (`motion_policy.py`) | sequences per chain, grouping of orders, return to rest, heat |
+| bridge on the robot (`nao_ws_bridge.py`) | profile, last-resort bounds (profile box), rest at startup, calibration, components |
+| `body-gateway` | ranges in the prompt, low-level orders |
+| control room | Robot page: calibration and components (the only page that writes) |
 
-## Conséquences
+## Consequences
 
-- Sans profil, NAO ne bouge pas : il faut calibrer chaque chaîne une fois.
-- `motion_engine` et les bras de `cognitive_renderer` sont coupés par défaut
-  (`MOTION_ENGINE=1`, `RENDERER_ARMS=1` pour les relancer).
-- Moins de spontanéité : la variété vient du choix des cibles par le LLM.
-  Le retour tactile (débloquer un mouvement, dire « bien » ou « pas bien ») et
-  l'apprentissage par démonstration pourront s'ajouter plus tard sur ce socle.
+- Without a profile, NAO does not move: each chain must be calibrated once.
+- `motion_engine` and the arms of `cognitive_renderer` are off by default
+  (`MOTION_ENGINE=1`, `RENDERER_ARMS=1` to bring them back).
+- Less spontaneity: variety comes from the LLM's choice of targets. Tactile feedback
+  (unlocking a movement, saying "good" or "not good") and learning from
+  demonstration can be added later on this foundation.

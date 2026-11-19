@@ -1,72 +1,71 @@
-# Relais du NAO sur le drone statique
+# NAO relay on the static drone
 
-Le NAO ne parle plus directement au VPS : il envoie ses requêtes au drone
-statique, sur le réseau local, et le drone les relaie en TLS
+The NAO no longer talks to the VPS directly: it sends its requests to the static
+drone, on the local network, and the drone relays them over TLS
 ([ADR 006](../../../../../docs/decisions/006-nao-via-drone-statique.md)).
 
 ```
-NAO (Wi-Fi) ── ws://, sans jeton ──► drone :9090 (Caddy)
+NAO (Wi-Fi) ── ws://, no token ──► drone :9090 (Caddy)
                                         │ + Authorization: Bearer $ROSBRIDGE_TOKEN
                                         └─► wss://rosbridge.$DOMAIN (TLS) ─► VPS
 ```
 
-Pourquoi : le Python 2.7 du NAO ne sait pas faire de TLS. Sans relais, le VPS
-devait accepter rosbridge en HTTP clair (port 80), avec le jeton visible sur
-Internet. Avec le relais, le VPS n'accepte plus que `wss://`, et le jeton
-n'est plus stocké sur le robot. Le réseau local est considéré comme sûr.
+Why: the NAO's Python 2.7 cannot do TLS. Without a relay, the VPS had to accept
+rosbridge over plain HTTP (port 80), with the token visible on the Internet. With the
+relay, the VPS only accepts `wss://`, and the token is no longer stored on the robot.
+The local network is considered safe.
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `Caddyfile` | Le relais : proxy inverse WebSocket, ajoute le jeton |
-| `nao-relay.service` | Service systemd du relais |
-| `setup-ubuntu.sh` | Installation automatique sur Ubuntu (idempotente) |
-| `run.sh` | Lance le relais à la main, sans service |
+| `Caddyfile` | The relay: WebSocket reverse proxy, adds the token |
+| `nao-relay.service` | systemd service for the relay |
+| `setup-ubuntu.sh` | Automatic installation on Ubuntu (idempotent) |
+| `run.sh` | Starts the relay by hand, without a service |
 
-Les commandes valent pour le PC Ubuntu comme pour le Raspberry Pi. Le drone
-doit déjà fonctionner ([installation du drone](../README.md)).
+The commands apply to the Ubuntu PC as well as the Raspberry Pi. The drone must
+already be working ([drone installation](../README.md)).
 
-## Installation automatique
+## Automatic installation
 
-Sur Ubuntu, `setup-ubuntu.sh` fait les étapes 2 et 3 et vérifie le relais
-(tableau de l'étape 5). Il est idempotent.
+On Ubuntu, `setup-ubuntu.sh` does steps 2 and 3 and checks the relay (step 5 table).
+It is idempotent.
 
 ```bash
 bash ~/ia-agent/robotics/drones/static/onboard/nao-relay/setup-ubuntu.sh
-bash ~/ia-agent/robotics/drones/static/onboard/nao-relay/run.sh   # lance le relais, Ctrl+C pour l'arrêter
+bash ~/ia-agent/robotics/drones/static/onboard/nao-relay/run.sh   # starts the relay, Ctrl+C to stop it
 ```
 
-Par défaut, le relais ne démarre pas tout seul : on le lance avec `run.sh`
-quand le NAO doit joindre le VPS. Sur un PC dédié, `setup-ubuntu.sh --service`
-installe le service `nao-relay`, lancé au boot ; relancer le script ne le
-redémarre que si `.env`, le `Caddyfile` ou le service ont changé.
+By default, the relay does not start on its own: it is started with `run.sh` when the
+NAO needs to reach the VPS. On a dedicated PC, `setup-ubuntu.sh --service` installs
+the `nao-relay` service, started at boot; rerunning the script only restarts it if
+`.env`, the `Caddyfile` or the service changed.
 
-À lancer avec l'utilisateur du drone, **sans sudo**, après l'installation du
-drone (`../setup-ubuntu.sh`) : il lit `ROSBRIDGE_TOKEN` dans le `.env` du
-drone et propose `NAO_RELAY_UPSTREAM` d'après `ROSBRIDGE_URL`. À la fin, il
-affiche l'adresse du drone et la ligne à mettre dans `autostart.sh` du NAO.
-Restent à faire à la main : la réservation DHCP (étape 1) et le NAO (étape 4).
+Run it as the drone user, **without sudo**, after installing the drone
+(`../setup-ubuntu.sh`): it reads `ROSBRIDGE_TOKEN` from the drone's `.env` and
+suggests `NAO_RELAY_UPSTREAM` based on `ROSBRIDGE_URL`. At the end, it shows the
+drone's address and the line to put in the NAO's `autostart.sh`. Still to do by hand:
+the DHCP reservation (step 1) and the NAO (step 4).
 
-## 1. Une adresse fixe pour le drone
+## 1. A fixed address for the drone
 
-Le NAO doit retrouver le drone à la même adresse à chaque démarrage. Le plus
-simple : une **réservation DHCP** pour le drone dans l'interface de la box.
-Relever ensuite son adresse :
+The NAO must find the drone at the same address on every start. The simplest: a
+**DHCP reservation** for the drone in the router's interface. Then note its address:
 
 ```bash
-hostname -I          # ex. 192.168.1.20
+hostname -I          # e.g. 192.168.1.20
 ```
 
-## 2. Installer Caddy
+## 2. Install Caddy
 
 ```bash
 sudo apt update
 sudo apt install -y caddy
-# Caddy démarre avec une config par défaut : on l'arrête, nao-relay la remplace.
+# Caddy starts with a default config: stop it, nao-relay replaces it.
 sudo systemctl disable --now caddy
 ```
 
-`caddy` est dans les dépôts d'Ubuntu 24.04 et de Raspberry Pi OS Bookworm. Sur
-Ubuntu 22.04, ajouter d'abord le dépôt officiel :
+`caddy` is in the Ubuntu 24.04 and Raspberry Pi OS Bookworm repositories. On Ubuntu
+22.04, first add the official repository:
 
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
@@ -77,19 +76,19 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
 sudo apt update && sudo apt install -y caddy
 ```
 
-## 3. Configurer et lancer le relais
+## 3. Configure and start the relay
 
-Dans le `.env` du drone (`../.env`, voir `../.env.example`) :
+In the drone's `.env` (`../.env`, see `../.env.example`):
 
 ```bash
-NAO_RELAY_UPSTREAM=https://rosbridge.mondomaine.fr   # même hôte que ROSBRIDGE_URL, en https://
-ROSBRIDGE_TOKEN=...                                  # déjà présent pour le drone
+NAO_RELAY_UPSTREAM=https://rosbridge.mydomain.com   # same host as ROSBRIDGE_URL, with https://
+ROSBRIDGE_TOKEN=...                                 # already present for the drone
 ```
 
-Par défaut le relais accepte tout le réseau local (192.168.x, 172.16-31.x,
-10.x) et refuse le reste. Pour n'accepter que le NAO : `NAO_IP=192.168.1.42`.
+By default the relay accepts the whole local network (192.168.x, 172.16-31.x, 10.x)
+and refuses the rest. To accept only the NAO: `NAO_IP=192.168.1.42`.
 
-Adapter `User` et les chemins de `nao-relay.service`, puis :
+Adapt `User` and the paths in `nao-relay.service`, then:
 
 ```bash
 sudo cp nao-relay.service /etc/systemd/system/
@@ -98,13 +97,12 @@ sudo systemctl enable --now nao-relay
 journalctl -u nao-relay -f
 ```
 
-Si le pare-feu du drone est actif (`sudo ufw status`), ouvrir le port au
-réseau local : `sudo ufw allow from 192.168.0.0/16 to any port 9090 proto tcp`.
+If the drone's firewall is active (`sudo ufw status`), open the port to the local
+network: `sudo ufw allow from 192.168.0.0/16 to any port 9090 proto tcp`.
 
-## 4. Côté NAO
+## 4. NAO side
 
-Dans `/home/nao/autostart.sh`, l'URL pointe vers le drone et le jeton
-disparaît :
+In `/home/nao/autostart.sh`, the URL points to the drone and the token goes away:
 
 ```bash
 #!/bin/bash
@@ -112,20 +110,19 @@ sleep 10   # wait for network
 python /home/nao/nao_ws_bridge.py --vps ws://192.168.1.20:9090/ --provision &
 ```
 
-Remplacer `192.168.1.20` par l'adresse du drone, supprimer la ligne
-`export ROSBRIDGE_TOKEN=...`, puis redémarrer le bridge (ou le NAO). Le
-journal du bridge doit afficher `[bridge] Connected.` puis `[bridge] Ready.`
+Replace `192.168.1.20` with the drone's address, remove the
+`export ROSBRIDGE_TOKEN=...` line, then restart the bridge (or the NAO). The bridge
+log must show `[bridge] Connected.` then `[bridge] Ready.`
 
-## 5. Vérifications
+## 5. Checks
 
-| Test | Où | Attendu |
+| Test | Where | Expected |
 |---|---|---|
-| `journalctl -u nao-relay -f` | drone | une ligne `status: 101` à chaque connexion du NAO |
-| `ros2 topic echo /nao/status` | VPS | la batterie du NAO toutes les 30 s |
-| `curl -i http://rosbridge.mondomaine.fr/` | n'importe où | plus de rosbridge en HTTP clair (404 ou redirection) |
+| `journalctl -u nao-relay -f` | drone | a `status: 101` line on every NAO connection |
+| `ros2 topic echo /nao/status` | VPS | the NAO's battery every 30 s |
+| `curl -i http://rosbridge.mydomain.com/` | anywhere | no more plain-HTTP rosbridge (404 or redirect) |
 
-Si le NAO n'arrive pas à se connecter, essayer depuis un autre ordinateur du
-réseau local :
+If the NAO cannot connect, try from another computer on the local network:
 
 ```bash
 curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" \
@@ -133,7 +130,7 @@ curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" \
   http://192.168.1.20:9090/
 ```
 
-`101 Switching Protocols` : le relais et le VPS répondent. `403` : l'adresse
-n'est pas acceptée (voir `NAO_IP`). `401` : jeton refusé par le VPS
-(`ROSBRIDGE_TOKEN` du drone différent de celui du VPS). `502` : le drone
-n'atteint pas `NAO_RELAY_UPSTREAM`.
+`101 Switching Protocols`: the relay and the VPS answer. `403`: the address is not
+accepted (see `NAO_IP`). `401`: token refused by the VPS (the drone's
+`ROSBRIDGE_TOKEN` differs from the VPS one). `502`: the drone cannot reach
+`NAO_RELAY_UPSTREAM`.

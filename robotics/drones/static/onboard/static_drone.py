@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """
-static_drone.py — Programme embarqué du drone statique (ADR 004).
+static_drone.py — Onboard program of the static drone (ADR 004).
 
-Tourne sur un PC Ubuntu ou un Raspberry Pi 5 (Raspberry Pi OS 64 bits) placé
-dans la pièce. Il ouvre une connexion WebSocket SORTANTE vers rosbridge sur le
-VPS (même principe que le NAO, ADR 002) et assure :
+Runs on an Ubuntu PC or a Raspberry Pi 5 (Raspberry Pi OS 64-bit) placed in the
+room. It opens an OUTBOUND WebSocket connection to rosbridge on the VPS (same
+principle as the NAO, ADR 002) and handles:
 
-    - signal de vie        → /drones/{id}/status        (toutes les 30 s)
-    - écoute               → /drones/{id}/audio         (WAV base64 + angle)
-    - mot de réveil local  → /drones/{id}/wake          (WAKE_MODE=local)
-    - parole               ← /drones/{id}/audio_out     (MP3 base64, ou JSON
+    - heartbeat            → /drones/{id}/status        (every 30 s)
+    - listening            → /drones/{id}/audio         (base64 WAV + angle)
+    - local wake word      → /drones/{id}/wake          (WAKE_MODE=local)
+    - speech               ← /drones/{id}/audio_out     (base64 MP3, or JSON
                                                          {"mp3", "sync", "speech_s"})
                            → /drones/{id}/speaking      (true / false)
-                           ← /speech_gesture_sync       ({"kind": "go", "sync", "at"} :
-                                                         une phrase liée à un geste du
-                                                         NAO attend son départ)
-    - image                → /drones/{id}/image         (JPEG base64)
+                           ← /speech_gesture_sync       ({"kind": "go", "sync", "at"}:
+                                                         a sentence tied to a NAO
+                                                         gesture waits for its start)
+    - image                → /drones/{id}/image         (base64 JPEG)
                            ← /drones/{id}/image_request
 
-Configuration par variables d'environnement (voir .env.example). Un fichier
-.env placé à côté du script est lu au démarrage, sans écraser les variables
-déjà définies.
+Configuration through environment variables (see .env.example). A .env file
+placed next to the script is read at startup, without overwriting variables
+that are already set.
 
-Lancement :
+Run:
     python3 static_drone.py
 """
 
@@ -50,13 +50,13 @@ log = logging.getLogger("static_drone")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Identifiants USB du ReSpeaker USB Mic Array v2.0 (tuning.py de Seeed,
+# USB IDs of the ReSpeaker USB Mic Array v2.0 (Seeed's tuning.py,
 # github.com/respeaker/usb_4_mic_array).
 RESPEAKER_VID = 0x2886
 RESPEAKER_PID = 0x0018
 
-# WAKE_MODE=local : après la détection, la parole des premières secondes peut
-# encore être la fin de « nao » et ne démarre pas la phrase.
+# WAKE_MODE=local: after detection, the speech of the first moments may
+# still be the end of "nao" and does not start the sentence.
 WAKE_TAIL_S = 0.3
 
 
@@ -65,7 +65,7 @@ WAKE_TAIL_S = 0.3
 # ======================================================================
 
 def load_dotenv(path):
-    """Lit un fichier KEY=VALUE simple, sans écraser l'environnement existant."""
+    """Reads a simple KEY=VALUE file, without overwriting the existing environment."""
     if not os.path.isfile(path):
         return
     with open(path, encoding="utf-8") as f:
@@ -104,20 +104,20 @@ class Config:
         self.rosbridge_token = _env("ROSBRIDGE_TOKEN")
 
         # Audio
-        self.audio_input_device = _env("AUDIO_INPUT_DEVICE")    # nom (partiel) ou index
+        self.audio_input_device = _env("AUDIO_INPUT_DEVICE")    # (partial) name or index
         self.sample_rate = _env_int("SAMPLE_RATE", 16000)
         self.record_channel = _env_int("RECORD_CHANNEL", 0)
         self.mics = direction.parse_mics(_env("MICS", ""))
-        self.rms_threshold = _env_float("RMS_THRESHOLD", 500)    # sur des échantillons int16
+        self.rms_threshold = _env_float("RMS_THRESHOLD", 500)    # on int16 samples
         self.silence_s = _env_float("SILENCE_S", 0.8)
         self.min_speech_s = _env_float("MIN_SPEECH_S", 0.2)
         self.max_record_s = _env_float("MAX_RECORD_S", 15)
         self.pre_roll_s = _env_float("PRE_ROLL_S", 0.3)
         self.block_ms = _env_int("BLOCK_MS", 30)
 
-        # Mot de réveil : server = tout est envoyé, body-gateway cherche « ok nao »
-        # dans le texte ; local = openWakeWord sur le drone, seule la phrase qui
-        # suit est envoyée.
+        # Wake word: server = everything is sent, body-gateway looks for "ok nao"
+        # in the text; local = openWakeWord on the drone, only the following
+        # sentence is sent.
         self.wake_mode = _env("WAKE_MODE", "server").lower()
         self.wake_model = _env("WAKE_MODEL", "ok_nao")
         self.wake_threshold = _env_float("WAKE_THRESHOLD", 0.5)
@@ -136,7 +136,7 @@ class Config:
         # Phrase liée à un geste du NAO : attente maximale du départ du geste (s).
         self.speech_sync_max_wait_s = _env_float("SPEECH_SYNC_MAX_WAIT_S", 4.0)
 
-        # Caméra
+        # Camera
         self.camera_index = _env("CAMERA_INDEX", "0")
         self.camera_hfov = _env_float("CAMERA_HFOV", 66)
         self.camera_width = _env_int("CAMERA_WIDTH", 320)
@@ -144,9 +144,9 @@ class Config:
         self.camera_fps = _env_float("CAMERA_FPS", 5)
         self.jpeg_quality = _env_int("JPEG_QUALITY", 70)
         self.motion_threshold = _env_int("MOTION_THRESHOLD", 25)
-        self.image_interval = _env_float("IMAGE_INTERVAL", 10)  # 0 = jamais en périodique
+        self.image_interval = _env_float("IMAGE_INTERVAL", 10)  # 0 = never periodic
 
-        # Intervalles réseau
+        # Network intervals
         self.status_interval = _env_float("STATUS_INTERVAL", 30)
         self.reconnect_max_s = _env_float("RECONNECT_MAX_S", 30)
 
@@ -159,9 +159,9 @@ class Config:
 # ======================================================================
 
 class Rosbridge:
-    """Client rosbridge JSON : advertise / publish / subscribe.
+    """rosbridge JSON client: advertise / publish / subscribe.
 
-    Les annonces et abonnements déclarés sont rejoués à chaque reconnexion.
+    Declared advertisements and subscriptions are replayed on every reconnection.
     """
 
     def __init__(self, url, token, reconnect_max_s=30):
@@ -186,13 +186,13 @@ class Rosbridge:
         self._subscribed[topic] = (msg_type, callback)
 
     def publish(self, topic, msg):
-        """Publie un message ; renvoie False (message perdu) si déconnecté."""
+        """Publishes a message; returns False (message lost) if disconnected."""
         return self._send({"op": "publish", "topic": topic, "msg": msg})
 
     def _send(self, payload):
         ws = self._ws
         if ws is None or not self.connected:
-            log.debug("Hors ligne, message ignoré : %s", payload.get("topic"))
+            log.debug("Offline, message dropped: %s", payload.get("topic"))
             return False
         try:
             with self._send_lock:
@@ -208,7 +208,7 @@ class Rosbridge:
             self._send({"op": "advertise", "topic": topic, "type": msg_type})
         for topic, (msg_type, _) in self._subscribed.items():
             self._send({"op": "subscribe", "topic": topic, "type": msg_type})
-        log.info("Connecté à %s", self.url)
+        log.info("Connected to %s", self.url)
 
     def _on_message(self, ws, raw):
         try:
@@ -222,19 +222,19 @@ class Rosbridge:
             try:
                 entry[1](msg.get("msg", {}))
             except Exception:
-                log.exception("Erreur en traitant %s", msg.get("topic"))
+                log.exception("Error while handling %s", msg.get("topic"))
 
     def _on_error(self, ws, error):
         import websocket
         if isinstance(error, websocket.WebSocketConnectionClosedException):
-            return      # fermeture normale, gérée par la boucle de reconnexion
-        log.warning("Erreur WebSocket : %s", error)
+            return      # normal close, handled by the reconnection loop
+        log.warning("WebSocket error: %s", error)
 
     def _on_close(self, ws, *args):
         self._connected.clear()
 
     def run_forever(self):
-        """Boucle de connexion avec backoff exponentiel (1 s → reconnect_max_s)."""
+        """Connection loop with exponential backoff (1 s → reconnect_max_s)."""
         import websocket   # websocket-client
 
         header = ["Authorization: Bearer {}".format(self.token)] if self.token else []
@@ -249,10 +249,10 @@ class Rosbridge:
             self._connected.clear()
             if self._stop.is_set():
                 break
-            # Une connexion restée ouverte un moment remet le délai à zéro.
+            # A connection that stayed open for a while resets the delay.
             if time.monotonic() - started > 60:
                 delay = 1.0
-            log.info("Déconnecté, nouvelle tentative dans %.0f s", delay)
+            log.info("Disconnected, retrying in %.0f s", delay)
             self._stop.wait(delay)
             delay = min(delay * 2, self.reconnect_max_s)
 
@@ -263,15 +263,15 @@ class Rosbridge:
 
 
 # ======================================================================
-# ReSpeaker USB Mic Array v2.0 (paramètres DSP via pyusb)
+# ReSpeaker USB Mic Array v2.0 (DSP parameters through pyusb)
 # ======================================================================
 
 class ReSpeaker:
-    """Lecture de DOAANGLE et SPEECHDETECTED, comme Tuning.read() de Seeed.
+    """Reads DOAANGLE and SPEECHDETECTED, like Seeed's Tuning.read().
 
-    Paramètres repris de tuning.py (github.com/respeaker/usb_4_mic_array) :
-        DOAANGLE       : id 21, offset 0,  int, 0..359, lecture seule
-        SPEECHDETECTED : id 19, offset 22, int, 0/1,    lecture seule
+    Parameters taken from tuning.py (github.com/respeaker/usb_4_mic_array):
+        DOAANGLE       : id 21, offset 0,  int, 0..359, read-only
+        SPEECHDETECTED : id 19, offset 22, int, 0/1,    read-only
     """
 
     PARAMETERS = {
@@ -289,11 +289,11 @@ class ReSpeaker:
         try:
             import usb.core
         except ImportError:
-            log.info("pyusb absent : pas de ReSpeaker")
+            log.info("pyusb missing: no ReSpeaker")
             return None
         try:
             dev = usb.core.find(idVendor=RESPEAKER_VID, idProduct=RESPEAKER_PID)
-        except Exception as exc:    # pas de backend libusb, etc.
+        except Exception as exc:    # no libusb backend, etc.
             log.warning("Recherche USB impossible : %s", exc)
             return None
         return cls(dev) if dev else None
@@ -301,7 +301,7 @@ class ReSpeaker:
     def _read_int(self, name):
         import usb.util
         param_id, offset = self.PARAMETERS[name]
-        cmd = 0x80 | offset | 0x40      # lecture d'un entier
+        cmd = 0x80 | offset | 0x40      # reading an integer
         with self._lock:
             response = self.dev.ctrl_transfer(
                 usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
@@ -316,7 +316,7 @@ class ReSpeaker:
 
 
 # ======================================================================
-# Caméra : dernière image + mouvement
+# Camera: last image + motion
 # ======================================================================
 
 class Camera:
@@ -324,7 +324,7 @@ class Camera:
         self.cfg = cfg
         self._cap = None
         self._lock = threading.Lock()
-        self._frame = None          # dernière image BGR
+        self._frame = None          # last BGR image
         self._prev_gray = None
         self._motion = None         # (horodatage, angle)
 
@@ -332,18 +332,18 @@ class Camera:
         try:
             import cv2
         except ImportError:
-            log.warning("OpenCV absent : pas de caméra")
+            log.warning("OpenCV missing: no camera")
             return False
         wanted = self.cfg.camera_index
         index = find_camera(wanted)
         if index is None:
-            log.warning("Caméra %r introuvable (v4l2-ctl --list-devices)", wanted)
+            log.warning("Camera %r not found (v4l2-ctl --list-devices)", wanted)
             return False
         cap = cv2.VideoCapture(index)
         if not cap.isOpened():
-            log.warning("Caméra %s introuvable", index)
+            log.warning("Camera %s not found", index)
             return False
-        log.info("Caméra : %s", camera_name(index) or index)
+        log.info("Camera: %s", camera_name(index) or index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.camera_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.camera_height)
         self._cap = cap
@@ -377,7 +377,7 @@ class Camera:
         self._cap.release()
 
     def last_motion_since(self, t0):
-        """Dernier angle de mouvement observé après l'instant t0 (monotonic)."""
+        """Last motion angle observed after time t0 (monotonic)."""
         with self._lock:
             if self._motion and self._motion[0] >= t0:
                 return self._motion[1]
@@ -394,12 +394,12 @@ class Camera:
 
 
 def _video_index(name):
-    """'video2' → 2, sinon None."""
+    """'video2' → 2, otherwise None."""
     return int(name[5:]) if name.startswith("video") and name[5:].isdigit() else None
 
 
 def camera_name(index, sysfs="/sys/class/video4linux"):
-    """Nom de la caméra /dev/video{index} donné par le noyau, ou None."""
+    """Name of the /dev/video{index} camera given by the kernel, or None."""
     try:
         with open(os.path.join(sysfs, "video{}".format(index), "name"), encoding="utf-8") as f:
             return f.read().strip()
@@ -408,15 +408,15 @@ def camera_name(index, sysfs="/sys/class/video4linux"):
 
 
 def find_camera(wanted, sysfs="/sys/class/video4linux"):
-    """Caméra à ouvrir d'après CAMERA_INDEX.
+    """Camera to open according to CAMERA_INDEX.
 
-    - « 2 » → index 2 ;
-    - un chemin (/dev/video2, /dev/v4l/by-id/…) → index du /dev/videoN visé ;
-    - sinon un nom (partiel, sans casse), cherché dans les noms des caméras du
-      noyau (ceux de v4l2-ctl --list-devices) : premier nœud qui correspond.
-      Une webcam crée souvent deux nœuds (image + métadonnées) : le premier est
-      celui de l'image.
-    Renvoie un int, un chemin à passer tel quel à OpenCV, ou None.
+    - "2" → index 2;
+    - a path (/dev/video2, /dev/v4l/by-id/…) → index of the target /dev/videoN;
+    - otherwise a (partial, case-insensitive) name, looked up in the kernel's camera
+      names (those of v4l2-ctl --list-devices): first matching node.
+      A webcam often creates two nodes (image + metadata): the first one is
+      the image one.
+    Returns an int, a path to pass as is to OpenCV, or None.
     """
     wanted = (wanted or "0").strip()
     if wanted.isdigit():
@@ -454,7 +454,7 @@ def pcm_to_wav(pcm, rate):
 
 
 def find_input_device(sd, wanted):
-    """Index de l'entrée audio : AUDIO_INPUT_DEVICE, sinon ReSpeaker, sinon défaut."""
+    """Audio input index: AUDIO_INPUT_DEVICE, otherwise ReSpeaker, otherwise default."""
     if wanted is not None and wanted.isdigit():
         return int(wanted)
     needle = (wanted or "respeaker").lower()
@@ -462,15 +462,15 @@ def find_input_device(sd, wanted):
         if dev["max_input_channels"] > 0 and needle in dev["name"].lower():
             return i
     if wanted:
-        raise RuntimeError("Entrée audio {!r} introuvable".format(wanted))
-    return None     # périphérique par défaut
+        raise RuntimeError("Audio input {!r} not found".format(wanted))
+    return None     # default device
 
 
 def choose_sample_rate(sd, device, channels, wanted, info):
-    """SAMPLE_RATE si l'entrée l'accepte, sinon sa fréquence par défaut.
+    """SAMPLE_RATE if the input accepts it, otherwise its default rate.
 
-    Les micros USB ouverts en direct (hw:…) refusent souvent 16 kHz ; le WAV
-    envoyé indique sa fréquence, Whisper s'adapte.
+    USB microphones opened directly (hw:…) often refuse 16 kHz; the WAV
+    sent states its rate, Whisper adapts.
     """
     try:
         sd.check_input_settings(device=device, channels=channels, samplerate=wanted,
@@ -478,7 +478,7 @@ def choose_sample_rate(sd, device, channels, wanted, info):
         return wanted
     except Exception as exc:
         fallback = int(info["default_samplerate"])
-        log.warning("%d Hz refusé par %r (%s) : %d Hz utilisé", wanted, info["name"],
+        log.warning("%d Hz refused by %r (%s): %d Hz used", wanted, info["name"],
                     exc, fallback)
         return fallback
 
@@ -570,7 +570,7 @@ class StaticDrone:
         self.channels = 1
         self.source = direction.SOURCE_NONE
         self.sample_rate = cfg.sample_rate
-        self.wake = None            # wakeword.WakeWordDetector si WAKE_MODE=local
+        self.wake = None            # wakeword.WakeWordDetector if WAKE_MODE=local
         self._audio_q = queue.Queue(maxsize=200)
         self._play_lock = threading.Lock()
         self.speech_sync = SpeechSync(cfg.speech_sync_max_wait_s)
@@ -578,28 +578,28 @@ class StaticDrone:
         self._rms_logged = 0.0
 
     # ------------------------------------------------------------------
-    # Matériel
+    # Hardware
     # ------------------------------------------------------------------
 
     def detect_hardware(self):
         if self.cfg.respeaker in ("auto", "1"):
             self.respeaker = ReSpeaker.find()
             if self.respeaker is None and self.cfg.respeaker == "1":
-                raise RuntimeError("RESPEAKER=1 mais aucun ReSpeaker USB trouvé")
+                raise RuntimeError("RESPEAKER=1 but no USB ReSpeaker found")
         if self.respeaker:
-            log.info("ReSpeaker USB détecté")
+            log.info("ReSpeaker USB detected")
         self.camera.open()
         self.source = direction.choose_direction_source(
             self.respeaker is not None, len(self.cfg.mics), self.camera.available)
-        log.info("Direction : %s (%d micros déclarés, caméra : %s)", self.source,
-                 len(self.cfg.mics), "oui" if self.camera.available else "non")
+        log.info("Direction: %s (%d mics declared, camera: %s)", self.source,
+                 len(self.cfg.mics), "yes" if self.camera.available else "no")
 
     def mute_while_speaking(self):
-        """Coupe l'écoute pendant la lecture, sauf ReSpeaker avec annulation d'écho."""
+        """Cuts listening during playback, except for a ReSpeaker with echo cancellation."""
         return not (self.respeaker is not None and self.cfg.respeaker_aec)
 
     # ------------------------------------------------------------------
-    # Écoute
+    # Listening
     # ------------------------------------------------------------------
 
     def _audio_callback(self, indata, frames, time_info, status):
@@ -617,22 +617,22 @@ class StaticDrone:
         info = sd.query_devices(device, "input")
         max_ch = int(info["max_input_channels"])
         if self.respeaker is not None:
-            # Firmware 6 canaux : canal 0 = audio traité, 1-4 = micros bruts.
-            # Firmware 1 canal : canal 0 = audio traité.
+            # 6-channel firmware: channel 0 = processed audio, 1-4 = raw mics.
+            # 1-channel firmware: channel 0 = processed audio.
             self.channels = min(max_ch, 6)
         else:
             self.channels = min(max_ch, max(self.cfg.record_channel + 1, len(self.cfg.mics), 1))
         if self.source == direction.SOURCE_LOUDEST_MIC and self.channels < len(self.cfg.mics):
-            raise RuntimeError("MICS déclare {} micros mais {!r} n'a que {} canaux".format(
+            raise RuntimeError("MICS declares {} mics but {!r} only has {} channels".format(
                 len(self.cfg.mics), info["name"], self.channels))
         rate = self.sample_rate = choose_sample_rate(sd, device, self.channels,
                                                      self.cfg.sample_rate, info)
-        log.info("Entrée audio : %s (%d canaux, %d Hz)", info["name"], self.channels, rate)
+        log.info("Audio input: %s (%d channels, %d Hz)", info["name"], self.channels, rate)
 
         if self.cfg.wake_mode == "local":
             model, name = wakeword.load_model(self.cfg.wake_model, os.path.join(HERE, "models"))
             self.wake = wakeword.WakeWordDetector(model, name, self.cfg.wake_threshold, rate)
-            log.info("Mot de réveil local : modèle %s, seuil %.2f", name, self.cfg.wake_threshold)
+            log.info("Local wake word: model %s, threshold %.2f", name, self.cfg.wake_threshold)
 
         block = int(rate * self.cfg.block_ms / 1000)
         with sd.InputStream(device=device, channels=self.channels, samplerate=rate,
@@ -643,8 +643,8 @@ class StaticDrone:
                 self._listen_all(rate)
 
     def _blocks(self, rate):
-        """Blocs reçus : (frames, mono, horloge audio), ou None pendant que le drone parle."""
-        # Horloge audio (somme des blocs reçus) : insensible aux retards de traitement.
+        """Received blocks: (frames, mono, audio clock), or None while the drone speaks."""
+        # Audio clock (sum of the received blocks): insensitive to processing delays.
         now = 0.0
         while not self.stop.is_set():
             try:
@@ -661,10 +661,10 @@ class StaticDrone:
         return max(1, int(seconds * 1000 / self.cfg.block_ms))
 
     def _listen_all(self, rate):
-        """WAKE_MODE=server : chaque segment de parole est envoyé au VPS."""
+        """WAKE_MODE=server: every speech segment is sent to the VPS."""
         pre_roll = collections.deque(maxlen=self._blocks_for(self.cfg.pre_roll_s))
-        recording = None            # liste de blocs mono pendant un enregistrement
-        levels = None               # énergie cumulée par micro
+        recording = None            # list of mono blocks during a recording
+        levels = None               # cumulative energy per mic
         doas = []
         t_start = t_voice = 0.0
         wall_start = 0.0
@@ -689,7 +689,7 @@ class StaticDrone:
                 t_start = t_voice = now
                 wall_start = time.monotonic()
                 voiced_s = 0.0
-                log.info("Parole détectée")
+                log.info("Speech detected")
             else:
                 recording.append(mono)
 
@@ -703,17 +703,17 @@ class StaticDrone:
                     found = self._final_direction(levels, doas, wall_start)
                     self.publish_audio(np.concatenate(recording), found)
                 else:
-                    log.info("Trop court, ignoré (%.2f s)", voiced_s)
+                    log.info("Too short, ignored (%.2f s)", voiced_s)
                 recording = None
 
     def _listen_after_wake(self, rate):
-        """WAKE_MODE=local : écoute continue, seule la phrase qui suit « ok nao » est envoyée.
+        """WAKE_MODE=local: continuous listening, only the sentence following "ok nao" is sent.
 
-        Comme une enceinte connectée : un tampon circulaire garde les dernières
-        WAKE_PRE_ROLL_S secondes ; au mot de réveil, l'enregistrement part de ce
-        tampon (« ok nao quelle heure… » dit d'une traite n'est pas coupé), attend
-        le début de la phrase jusqu'à WAKE_LISTEN_S, puis s'arrête après SILENCE_S
-        de silence.
+        Like a smart speaker: a ring buffer keeps the last
+        WAKE_PRE_ROLL_S seconds; on the wake word, recording starts from that
+        buffer ("ok nao quelle heure…" said in one go is not cut), waits
+        for the start of the sentence up to WAKE_LISTEN_S, then stops after SILENCE_S
+        of silence.
         """
         pre_roll = collections.deque(maxlen=self._blocks_for(self.cfg.wake_pre_roll_s))
         recording = None
@@ -728,7 +728,7 @@ class StaticDrone:
         for block in self._blocks(rate):
             if block is None:
                 if not muted:
-                    # Le drone parle : ni réveil sur sa propre voix, ni phrase en cours.
+                    # The drone speaks: no wake-up on its own voice, no sentence in progress.
                     recording = None
                     pre_roll.clear()
                     self.wake.reset()
@@ -755,8 +755,8 @@ class StaticDrone:
                 continue
 
             recording.append(mono)
-            # La fin de « nao » peut encore sonner juste après la détection : elle
-            # reste dans l'enregistrement mais ne compte pas comme début de phrase.
+            # The end of "nao" may still sound right after detection: it
+            # stays in the recording but does not count as the start of the sentence.
             if self._is_speech(mono) and (t_voice is not None or now - t_wake >= WAKE_TAIL_S):
                 t_voice = now
                 voiced_s += frames.shape[0] / float(rate)
@@ -764,7 +764,7 @@ class StaticDrone:
 
             if t_voice is None:
                 if now - t_wake >= self.cfg.wake_listen_s:
-                    log.info("Rien entendu après le mot de réveil")
+                    log.info("Nothing heard after the wake word")
                     recording = None
                 continue
             if now - t_voice >= self.cfg.silence_s or now - t_wake >= self.cfg.max_record_s:
@@ -772,7 +772,7 @@ class StaticDrone:
                     found = self._final_direction(levels, doas, wall_start)
                     self.publish_audio(np.concatenate(recording), found, wake_score=score)
                 else:
-                    log.info("Trop court, ignoré (%.2f s)", voiced_s)
+                    log.info("Too short, ignored (%.2f s)", voiced_s)
                 recording = None
 
     def _is_speech(self, mono):
@@ -780,17 +780,17 @@ class StaticDrone:
             try:
                 return self.respeaker.speech_detected()
             except Exception as exc:
-                log.warning("Lecture SPEECHDETECTED impossible, seuil RMS utilisé : %s", exc)
+                log.warning("Unable to read SPEECHDETECTED, RMS threshold used: %s", exc)
         level = float(direction.channel_rms(mono)[0])
-        # En DEBUG, le niveau max de chaque seconde aide à régler RMS_THRESHOLD.
+        # In DEBUG, the max level of each second helps tune RMS_THRESHOLD.
         self._rms_peak = max(self._rms_peak, level)
         if time.monotonic() - self._rms_logged >= 1.0:
-            log.debug("RMS max sur 1 s : %.0f (seuil %.0f)", self._rms_peak, self.cfg.rms_threshold)
+            log.debug("Max RMS over 1 s: %.0f (threshold %.0f)", self._rms_peak, self.cfg.rms_threshold)
             self._rms_peak, self._rms_logged = 0.0, time.monotonic()
         return level >= self.cfg.rms_threshold
 
     def _sample_direction(self, frames, levels, doas):
-        """Collecte de quoi calculer la direction, bloc par bloc pendant la parole."""
+        """Collects what is needed to compute the direction, block by block during speech."""
         if self.source == direction.SOURCE_RESPEAKER:
             try:
                 doas.append(self.respeaker.doa())
@@ -801,7 +801,7 @@ class StaticDrone:
             levels += direction.channel_rms(frames[:, :n]) ** 2
 
     def _final_direction(self, levels, doas, wall_start):
-        """Renvoie (angle ou None, direction_source) selon la règle de l'ADR 004."""
+        """Returns (angle or None, direction_source) according to the ADR 004 rule."""
         if self.source == direction.SOURCE_RESPEAKER:
             mean = direction.circular_mean_deg(doas)
             if mean is not None:
@@ -826,17 +826,17 @@ class StaticDrone:
             "direction_source": source,
         }
         if wake_score is not None:
-            # Phrase qui suit un mot de réveil détecté ici : body-gateway ne la
-            # refiltre pas.
+            # Sentence following a wake word detected here: body-gateway does not
+            # filter it again.
             payload["wake"] = "local"
             payload["wake_score"] = round(wake_score, 2)
         sent = self.bridge.publish(self.cfg.topic("audio"), {"data": json.dumps(payload)})
-        log.info("Audio %s : %.1f s, angle %s (%s)", "envoyé" if sent else "perdu (hors ligne)",
+        log.info("Audio %s: %.1f s, angle %s (%s)", "sent" if sent else "lost (offline)",
                  len(pcm) / float(self.sample_rate), payload["azimuth_deg"], source)
 
     def publish_wake(self, score):
-        """Prévient le VPS dès la détection : la régie affiche « ok nao » tout de suite."""
-        log.info("Mot de réveil entendu (%s, score %.2f)", self.wake.name, score)
+        """Tells the VPS on detection: the control room shows "ok nao" right away."""
+        log.info("Wake word heard (%s, score %.2f)", self.wake.name, score)
         self.bridge.publish(self.cfg.topic("wake"), {"data": json.dumps({
             "model": self.wake.name, "score": round(score, 2),
             "threshold": self.cfg.wake_threshold})})
@@ -859,13 +859,13 @@ class StaticDrone:
             self.speech_sync.on_message(payload)
 
     def play_mp3(self, mp3, sync=""):
-        with self._play_lock:   # une seule lecture à la fois, dans l'ordre d'arrivée
+        with self._play_lock:   # a single playback at a time, in arrival order
             if sync:
-                # Phrase liée à un geste du NAO : elle part quand le geste démarre
-                # (plus le décalage réglé dans emotion_gesture.env), au plus tard
-                # après SPEECH_SYNC_MAX_WAIT_S.
+                # Sentence tied to a NAO gesture: it starts when the gesture starts
+                # (plus the offset set in emotion_gesture.env), at the latest
+                # after SPEECH_SYNC_MAX_WAIT_S.
                 how = self.speech_sync.wait(sync)
-                log.info("Phrase %s : %s", sync, how)
+                log.info("Sentence %s: %s", sync, how)
             self.speaking.set()
             self.bridge.publish(self.cfg.topic("speaking"), {"data": True})
             try:
@@ -874,7 +874,7 @@ class StaticDrone:
             except Exception as exc:
                 log.warning("Lecture impossible (%s) : %s", self.cfg.player_cmd, exc)
             finally:
-                # Laisse l'écho de la pièce s'éteindre avant de réécouter.
+                # Lets the room's echo die down before listening again.
                 time.sleep(self.cfg.playback_tail_s)
                 self.speaking.clear()
                 self.bridge.publish(self.cfg.topic("speaking"), {"data": False})
@@ -902,7 +902,7 @@ class StaticDrone:
             self.publish_image("periodic")
 
     # ------------------------------------------------------------------
-    # Signal de vie
+    # Heartbeat
     # ------------------------------------------------------------------
 
     def status(self):
@@ -936,7 +936,7 @@ class StaticDrone:
             self.stop.wait(self.cfg.status_interval)
 
     # ------------------------------------------------------------------
-    # Démarrage
+    # Startup
     # ------------------------------------------------------------------
 
     def run(self):
@@ -966,12 +966,12 @@ class StaticDrone:
         b.stop()
 
     def _guard(self, fn):
-        """Arrête le programme si une boucle critique échoue (systemd relancera)."""
+        """Stops the program if a critical loop fails (systemd will restart it)."""
         def wrapper():
             try:
                 fn()
             except Exception:
-                log.exception("Arrêt sur erreur dans %s", fn.__name__)
+                log.exception("Stopping on error in %s", fn.__name__)
                 self.stop.set()
         return wrapper
 
@@ -982,13 +982,13 @@ def main():
                         format="%(asctime)s %(levelname)s %(message)s")
     cfg = Config()
     if not cfg.rosbridge_url:
-        log.error("ROSBRIDGE_URL (ou DOMAIN) est obligatoire")
+        log.error("ROSBRIDGE_URL (or DOMAIN) is required")
         return 2
     if cfg.wake_mode not in ("server", "local"):
-        log.error("WAKE_MODE=%s : server ou local attendu", cfg.wake_mode)
+        log.error("WAKE_MODE=%s: server or local expected", cfg.wake_mode)
         return 2
     if not cfg.rosbridge_token:
-        log.warning("ROSBRIDGE_TOKEN vide : rosbridge-proxy refusera la connexion")
+        log.warning("ROSBRIDGE_TOKEN empty: rosbridge-proxy will refuse the connection")
 
     drone = StaticDrone(cfg)
     stopped = []
@@ -1001,7 +1001,7 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     log.info("Drone %s → %s", cfg.drone_id, cfg.rosbridge_url)
     drone.run()
-    # Code non nul si l'arrêt vient d'une erreur : systemd relancera.
+    # Non-zero code if the stop comes from an error: systemd will restart it.
     return 0 if stopped else 1
 
 

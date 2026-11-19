@@ -150,18 +150,18 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 
 | Variable | Description |
 |---|---|
-| `BRAIN_PROVIDER` | `ollama` (default), `openai` or `anthropic` — see [ia-stack.md](ia-stack.md#fournisseur-du-cerveau-body-gateway) |
+| `BRAIN_PROVIDER` | `ollama` (default), `openai` or `anthropic` — see [ia-stack.md](ia-stack.md#brain-provider-body-gateway) |
 | `BRAIN_URL` | Provider URL, empty = provider default (Ollama: `http://localhost:11434`) |
 | `BRAIN_MODEL` | LLM model, empty = provider default (Ollama: `qwen3:1.7b`) |
 | `BRAIN_API_KEY` | Provider API key (compose default: `OLLAMA_API_KEYS`) |
 | `BRAIN_TIMEOUT` | Stream timeout in seconds, default 120 (compose: 60) |
 | `BRAIN_EFFORT` | Anthropic only, optional |
-| `BRAIN_PERSONA_FILE` | NAO personality file at the top of the system prompt, re-read on each LLM call; empty or missing = `persona.DEFAULT_PERSONA` (compose: `/opt/ia/nao/persona/personnalite.md` on the VPS) — see [ia-stack.md](ia-stack.md#personnalité-de-nao) |
+| `BRAIN_PERSONA_FILE` | NAO personality file at the top of the system prompt, re-read on each LLM call; empty or missing = `persona.DEFAULT_PERSONA` (compose: `/opt/ia/nao/persona/personnalite.md` on the VPS) — see [ia-stack.md](ia-stack.md#naos-personality) |
 | `BODY_REGISTRY` | Comma-separated body IDs, default `nao_01` (compose: `nao_01,static_01,obs_01`). IDs starting with `static` are static drones, `obs` stream voices, all others are NAOs |
 | `WAKE_WORD` | Wake word required in the static drone's speech, default `ok nao` |
 | `WAKE_WINDOW_S` | Seconds during which a lone wake word stays valid for the next sentence, default 10 |
 | `NAO_HEAD_YAW_OFFSET` | Degrees added when turning the NAO head toward a voice (manual calibration), default 0 |
-| `SPEECH_GESTURE_SYNC` | `1` (default): a sentence said by the static drone and the learned gesture of the same answer start together, and the gesture lasts as long as the sentence ([details](../robotics/drones/static/onboard/README.md#synchronisation-parole--geste)); the start offset is set on the drone (`GESTURE_SPEECH_OFFSET_MS`) |
+| `SPEECH_GESTURE_SYNC` | `1` (default): a sentence said by the static drone and the learned gesture of the same answer start together, and the gesture lasts as long as the sentence ([details](../robotics/drones/static/onboard/README.md#speech--gesture-synchronisation)); the start offset is set on the drone (`GESTURE_SPEECH_OFFSET_MS`) |
 | `SPEECH_CHARS_PER_S` | Speech rate used to estimate a sentence length until the measured one arrives, default 14 |
 | `DREAMING_HOUR_START/END` | Dream window, default 2 / 6 |
 | `DREAMING_BATTERY_THRESHOLD` | Minimum battery % to dream, default 80.0 |

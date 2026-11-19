@@ -1,6 +1,6 @@
 FROM ros:humble-ros-base
 
-# Build context : robotics/ (pour inclure robotics/shared/)
+# Build context: robotics/ (to include robotics/shared/)
 #   docker build -f robotics/drones/nao/driver/Dockerfile robotics
 
 ENV DEBIAN_FRONTEND=noninteractive \

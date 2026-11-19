@@ -1,14 +1,14 @@
-# Drone statique
+# Static drone
 
-Corps fixe (PC Ubuntu ou Raspberry Pi 5) posé dans la pièce : micros, caméra,
-haut-parleur ([ADR 004](../../../docs/decisions/004-drone-statique.md)).
-Il se connecte en sortant au même cerveau (`robotics/brain/`) que les autres
-drones, via rosbridge.
+Fixed body (Ubuntu PC or Raspberry Pi 5) placed in the room: microphones, camera,
+speaker ([ADR 004](../../../docs/decisions/004-drone-statique.md)).
+It connects outbound to the same brain (`robotics/brain/`) as the other drones,
+through rosbridge.
 
-- [`onboard/`](onboard/README.md) — programme embarqué, installation pas à pas
-  ([sur un PC portable Ubuntu](onboard/pc-portable-ubuntu.md)).
-- [`driver/`](driver/static_driver_node.py) — nœud ROS 2 côté VPS (conteneur
-  `nao-core`) : `/drones/{id}/*` ↔ `/bodies/{id}/*`, Whisper et edge-tts
-  ([détails](../../../docs/bridge-ia-ros2-nao.md#static_driver)).
-- Test sans matériel : `python3 tests/fake-static-drone.py` depuis la racine
-  du dépôt, sur le VPS ([maillon 9](../../../docs/test-chain.md#maillon-9--drone-statique-simulé-faux-messages-rosbridge)).
+- [`onboard/`](onboard/README.md) — onboard program, step-by-step installation
+  ([on an Ubuntu laptop](onboard/pc-portable-ubuntu.md)).
+- [`driver/`](driver/static_driver_node.py) — ROS 2 node on the VPS side (`nao-core`
+  container): `/drones/{id}/*` ↔ `/bodies/{id}/*`, Whisper and edge-tts
+  ([details](../../../docs/bridge-ia-ros2-nao.md#static_driver)).
+- Test without hardware: `python3 tests/fake-static-drone.py` from the repository
+  root, on the VPS ([link 9](../../../docs/test-chain.md#link-9--simulated-static-drone-fake-rosbridge-messages)).

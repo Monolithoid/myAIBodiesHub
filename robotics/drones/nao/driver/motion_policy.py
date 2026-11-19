@@ -1,77 +1,76 @@
 """
-motion_policy.py — Décisions de mouvement du NAO, sans dépendance ROS 2.
+motion_policy.py — NAO motion decisions, with no ROS 2 dependency.
 
-Le robot est une marionnette : il plante trop souvent pour décider de sa
-position.  Le driver NAO décide donc de tout ce qui part sur /nao/motion,
-/nao/gesture et /nao/cmd_vel ; nao_ws_bridge.py, sur le robot, ne garde que
-des bornes (angles, vitesse, stiffness, marche) en dernier filet.
+The robot is a puppet: it crashes too often to decide on its own position. The
+NAO driver therefore decides everything that goes out on /nao/motion,
+/nao/gesture and /nao/cmd_vel; nao_ws_bridge.py, on the robot, only keeps bounds
+(angles, speed, stiffness, walk) as a last safety net.
 
-Univers moteur contraint : NAO reste assis et ne bouge que trois chaînes
-(tête, bras gauche, bras droit).  Le profil moteur, calibré depuis la régie
-et annoncé par le robot (motor_profile dans /nao/capabilities), donne pour
-chaque chaîne une position de repos, une position de départ, une plage par
-articulation et une vitesse.  Le LLM ne connaît que les plages.
+Constrained motor universe: NAO stays seated and only moves three chains (head,
+left arm, right arm). The motor profile, calibrated from the control room and
+announced by the robot (motor_profile in /nao/capabilities), gives for each chain
+a rest position, a start position, a range per joint and a speed. The LLM only
+knows the ranges.
 
-Décisions prises ici :
-  - séquence : chaque geste va repos → départ → cible → départ → repos.
-    La cible part de la position de départ, complétée par les articulations
-    demandées et ramenées dans leur plage.  Un nouvel ordre pendant le geste
-    enchaîne cible → départ → nouvelle cible, sans repasser par le repos ;
-  - regroupement : les ordres d'une même chaîne reçus en merge_window
-    secondes forment une seule cible (le LLM envoie souvent une action par
-    articulation) ;
-  - fin d'étape : une étape dure max(min_move_time, durée estimée d'après
-    JOINT_MAX_VELOCITY) ; l'étape suivante part ensuite ;
-  - repos : une chaîne inactive depuis rest_delay revient au repos par le
-    départ ;
-  - sans profil, ou pour une articulation hors chaîne, l'ordre est refusé ;
-  - jambes : postures et marche bougent les jambes, que ce NAO ne bouge pas.
-    Elles sont donc coupées par défaut (postures vides, walk=false).  Une
-    fois réactivées : liste de postures, délai entre deux changements,
-    gestes bloqués pendant posture_block secondes et pendant la marche, pas
-    de marche pendant une posture ni de posture pendant la marche ;
-  - chaleur : une chaîne trop chaude (motor_temp de /nao/status) refuse les
-    nouveaux ordres, mais peut encore revenir au repos ;
-  - gestes appris (ADR 009) : un geste émotionnel est calculé et joué par le
-    drone statique (emotion_gesture.py), sur la tête, les bras, les poignets
-    et les mains à la fois.  Le driver l'accepte seulement sans posture, sans
-    marche et sans chaîne trop chaude ; il abandonne alors les cibles en
-    cours, attend que les chaînes aient fini leur étape, puis réserve toutes
-    les chaînes au drone.  Tant que le drone tient le corps (owns_body dans
-    /nao/emotion_gesture_state), aucun ordre /nao/motion, posture ou marche
-    ne part.  Le drone rend la main au repos ; s'il se tait plus de
-    gesture_timeout secondes, ou rend la main ailleurs qu'au repos, les
-    chaînes repartent par la pose de départ vers le repos.
+Decisions taken here:
+  - sequence: every gesture goes rest → start → target → start → rest. The
+    target starts from the start position, completed by the requested joints
+    clamped into their range. A new order during the gesture chains target →
+    start → new target, without going back through rest;
+  - grouping: orders for the same chain received within merge_window seconds
+    form a single target (the LLM often sends one action per joint);
+  - end of step: a step lasts max(min_move_time, duration estimated from
+    JOINT_MAX_VELOCITY); the next step starts afterwards;
+  - rest: a chain inactive for rest_delay goes back to rest through the start
+    pose;
+  - without a profile, or for a joint outside the chains, the order is refused;
+  - legs: postures and walking move the legs, which this NAO does not move. They
+    are therefore off by default (empty postures, walk=false). Once re-enabled:
+    list of postures, delay between two changes, gestures blocked for
+    posture_block seconds and during walking, no walking during a posture and
+    no posture during walking;
+  - heat: a chain that is too hot (motor_temp from /nao/status) refuses new
+    orders, but can still return to rest;
+  - learned gestures (ADR 009): an emotional gesture is computed and played by
+    the static drone (emotion_gesture.py), on the head, arms, wrists and hands at
+    once. The driver only accepts it without a posture, without walking and
+    without a chain that is too hot; it then drops the current targets, waits
+    for the chains to finish their step, then reserves all the chains for the
+    drone. While the drone holds the body (owns_body in
+    /nao/emotion_gesture_state), no /nao/motion, posture or walk order goes out.
+    The drone hands back control at rest; if it is silent for more than
+    gesture_timeout seconds, or hands back control elsewhere than at rest, the
+    chains go back to rest through the start pose.
 """
 
 DEFAULT_LIMITS = {
-    "min_interval":      0.1,    # s entre deux envois /nao/motion (10 Hz max)
-    "min_move_time":     0.3,    # s minimum par étape de la séquence
-    "velocity_scale":    1.0,    # part de JOINT_MAX_VELOCITY réellement atteinte (0 = pas d'estimation)
-    "merge_window":      0.3,    # s pendant lesquelles les ordres d'une chaîne forment une seule cible
-    "max_motor_temp":    70,     # °C ; au-delà la chaîne refuse les ordres (0 = désactivé)
-    "postures":          [],     # postures autorisées (ex. ["Stand", "Sit"]) ; vide = aucune
+    "min_interval":      0.1,    # s between two /nao/motion sends (10 Hz max)
+    "min_move_time":     0.3,    # minimum s per sequence step
+    "velocity_scale":    1.0,    # share of JOINT_MAX_VELOCITY actually reached (0 = no estimate)
+    "merge_window":      0.3,    # s during which a chain's orders form a single target
+    "max_motor_temp":    70,     # °C; above it the chain refuses orders (0 = disabled)
+    "postures":          [],     # allowed postures (e.g. ["Stand", "Sit"]); empty = none
     "walk":              False,  # autoriser /nao/cmd_vel (marche)
-    "posture_cooldown":  5.0,    # s entre deux changements de posture
-    "posture_block":     5.0,    # s pendant lesquelles un changement de posture bloque les gestes
-    "joints_while_busy": False,  # accepter les gestes pendant une posture ou une marche
-    "rest_return":       True,   # retour au repos après rest_delay d'inactivité
-    "rest_delay":        3.0,    # s d'inactivité (après la fin du geste) avant le retour
-    "gestures":          True,   # accepter les gestes appris (drone statique, ADR 009)
-    "gesture_timeout":   60.0,   # s sans nouvelle du drone avant de reprendre les chaînes
+    "posture_cooldown":  5.0,    # s between two posture changes
+    "posture_block":     5.0,    # s during which a posture change blocks gestures
+    "joints_while_busy": False,  # accept gestures during a posture or a walk
+    "rest_return":       True,   # return to rest after rest_delay of inactivity
+    "rest_delay":        3.0,    # s of inactivity (after the end of the gesture) before returning
+    "gestures":          True,   # accept learned gestures (static drone, ADR 009)
+    "gesture_timeout":   60.0,   # s without news from the drone before taking the chains back
 }
 
-# Chaînes commandables et leurs articulations.  Poignets et mains n'en font
-# pas partie : pas de mouvement de main dans cet univers.
+# Commandable chains and their joints. Wrists and hands are not
+# included: no hand movement in this universe.
 CHAINS = {
     "head": ("HeadYaw", "HeadPitch"),
     "larm": ("LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll"),
     "rarm": ("RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll"),
 }
 
-# Vitesse max (rad/s) à la vitesse 1.0 : vitesse à vide du moteur tête/bras
-# (RE-Max 17, 11 900 tr/min = 1246 rad/s) / rapport de réduction (doc
-# Aldebaran « H25 - Motors » : A 150.27, B 173.22, C 50.61).
+# Max velocity (rad/s) at speed 1.0: no-load speed of the head/arm motor
+# (RE-Max 17, 11,900 rpm = 1246 rad/s) / reduction ratio (Aldebaran
+# "H25 - Motors" doc: A 150.27, B 173.22, C 50.61).
 JOINT_MAX_VELOCITY = {
     "HeadYaw": 8.29, "HeadPitch": 7.19,
     "ShoulderPitch": 8.29, "ShoulderRoll": 7.19,
@@ -81,8 +80,8 @@ JOINT_MAX_VELOCITY = {
 
 
 def chain_of(joint: str) -> str:
-    """Chaîne (head / larm / rarm) d'une articulation commandable, '' sinon.
-    Mêmes noms que les clés motor_temp de /nao/status."""
+    """Chain (head / larm / rarm) of a commandable joint, '' otherwise.
+    Same names as the motor_temp keys of /nao/status."""
     for name, joints in CHAINS.items():
         if joint in joints:
             return name
@@ -90,10 +89,10 @@ def chain_of(joint: str) -> str:
 
 
 def load_limits(section) -> tuple[dict, list[str]]:
-    """Fusionne une configuration (dict) avec DEFAULT_LIMITS.
+    """Merges a configuration (dict) with DEFAULT_LIMITS.
 
-    Clés inconnues et valeurs du mauvais type sont ignorées : une faute de
-    frappe ne désactive jamais une limite.  Retourne (limites, avertissements).
+    Unknown keys and values of the wrong type are ignored: a typo
+    never disables a limit. Returns (limits, warnings).
     """
     limits = dict(DEFAULT_LIMITS)
     warnings = []
@@ -101,7 +100,7 @@ def load_limits(section) -> tuple[dict, list[str]]:
         return limits, warnings
     for key, value in section.items():
         if key not in limits:
-            warnings.append(f"clé inconnue : {key}")
+            warnings.append(f"unknown key: {key}")
             continue
         default = limits[key]
         if isinstance(default, bool):
@@ -118,9 +117,9 @@ def load_limits(section) -> tuple[dict, list[str]]:
 
 
 def parse_motion(data: dict) -> tuple[list[str], list[float], float]:
-    """(articulations, angles, vitesse) d'une commande /nao/motion,
-    multi-articulations {joints, angles, speed} ou simple {joint, angle, speed}.
-    Vitesse 0 quand elle n'est pas donnée : celle du profil s'applique."""
+    """(joints, angles, speed) of a /nao/motion command,
+    multi-joint {joints, angles, speed} or single {joint, angle, speed}.
+    Speed 0 when not given: the profile's speed applies."""
     speed = float(data.get("speed", 0.0))
     if "joints" in data:
         return [str(j) for j in data["joints"]], [float(a) for a in data["angles"]], speed
@@ -139,22 +138,22 @@ def _pose(section, joints) -> dict | None:
 
 
 def load_profile(profile) -> tuple[dict, list[str]]:
-    """Chaînes valides d'un profil moteur annoncé par le robot.
+    """Valid chains of a motor profile announced by the robot.
 
-    Retourne ({chaîne: {rest, start, range, speed}}, erreurs).  Une chaîne
-    incomplète ou incohérente (départ hors plage) est écartée : elle ne
-    bougera pas.  Le robot valide déjà le profil ; ceci protège d'un
-    profil écrit à la main.
+    Returns ({chain: {rest, start, range, speed}}, errors). An incomplete
+    or inconsistent chain (start out of range) is dropped: it will not
+    move. The robot already validates the profile; this protects against
+    a hand-written profile.
     """
     chains, errors = {}, []
     if not isinstance(profile, dict):
         return chains, errors
     section = profile.get("chains", {})
     if not isinstance(section, dict):
-        return chains, ["chains n'est pas un objet"]
+        return chains, ["chains is not an object"]
     for name, cfg in section.items():
         if name not in CHAINS or not isinstance(cfg, dict):
-            errors.append(f"chaîne inconnue : {name}")
+            errors.append(f"unknown chain: {name}")
             continue
         joints = CHAINS[name]
         rest, start = _pose(cfg.get("rest"), joints), _pose(cfg.get("start"), joints)
@@ -172,21 +171,21 @@ def load_profile(profile) -> tuple[dict, list[str]]:
         except (TypeError, ValueError):
             speed = 0.0
         if rest is None or start is None or len(rng) != len(joints) or not 0 < speed <= 1:
-            errors.append(f"{name} : repos, départ, plage ou vitesse manquant")
+            errors.append(f"{name}: rest, start, range or speed missing")
             continue
         if any(not rng[j][0] - 1e-3 <= start[j] <= rng[j][1] + 1e-3 for j in joints):
-            errors.append(f"{name} : position de départ hors plage")
+            errors.append(f"{name}: start position out of range")
             continue
         chains[name] = {"rest": rest, "start": start, "range": rng, "speed": speed}
     return chains, errors
 
 
-# s pendant lesquelles un état du drone sans rapport avec le geste envoyé est ignoré
+# s during which a drone state unrelated to the gesture sent is ignored
 GESTURE_GRACE = 2.0
 
 
 class _Chain:
-    """État d'une chaîne : dernière étape envoyée, étapes à venir, cible en formation."""
+    """State of a chain: last step sent, upcoming steps, target being formed."""
 
     def __init__(self, name: str, cfg: dict):
         self.name = name
@@ -195,11 +194,11 @@ class _Chain:
         self.start = cfg["start"]
         self.range = cfg["range"]
         self.speed = cfg["speed"]
-        self.pose = dict(self.rest)   # dernière position commandée (le robot démarre au repos)
-        self.kind = "rest"            # rest | start | target : nature de la dernière étape
-        self.hold_until = 0.0         # fin estimée de la dernière étape
+        self.pose = dict(self.rest)   # last commanded position (the robot starts at rest)
+        self.kind = "rest"            # rest | start | target: kind of the last step
+        self.hold_until = 0.0         # estimated end of the last step
         self.queue: list[tuple[str, dict, float]] = []   # (nature, position, vitesse)
-        self.target: dict | None = None    # cible en formation (pas encore planifiée)
+        self.target: dict | None = None    # target being formed (not planned yet)
         self.target_speed = self.speed
         self.target_since = 0.0
         self.last_order = 0.0
@@ -210,8 +209,8 @@ class _Chain:
 
 
 class MotionPolicy:
-    """Toutes les décisions de mouvement du NAO.  Les heures (now) sont
-    passées par l'appelant, ce qui rend la classe testable sans horloge."""
+    """All of the NAO's motion decisions. The times (now) are
+    passed by the caller, which makes the class testable without a clock."""
 
     def __init__(self, limits: dict | None = None):
         self.limits = limits or dict(DEFAULT_LIMITS)
@@ -222,24 +221,24 @@ class MotionPolicy:
         self._posture_until = 0.0
         self._last_posture = float("-inf")
         self.refused = 0
-        self._gesture_pending: dict | None = None   # geste accepté, en attente de chaînes libres
-        self._gesture_until = 0.0                     # chaînes réservées au drone jusqu'à cette heure
-        self._gesture_sent: tuple[str, float] = ("", 0.0)   # (id, heure) du dernier geste publié
+        self._gesture_pending: dict | None = None   # accepted gesture, waiting for free chains
+        self._gesture_until = 0.0                     # chains reserved for the drone until this time
+        self._gesture_sent: tuple[str, float] = ("", 0.0)   # (id, time) of the last published gesture
 
-    # -- état venu du robot ------------------------------------------------
+    # -- state coming from the robot ------------------------------------------------
 
     def set_profile(self, chains: dict) -> None:
-        """Profil moteur (déjà validé par load_profile) : le robot vient de
-        (re)lancer son script ou de finir un calibrage, il est au repos."""
+        """Motor profile (already validated by load_profile): the robot has just
+        (re)started its script or finished a calibration, it is at rest."""
         self.chains = {name: _Chain(name, cfg) for name, cfg in chains.items()}
 
     def ranges(self) -> dict:
-        """Plages autorisées par chaîne, pour le LLM : {chaîne: {art.: [min, max]}}."""
+        """Allowed ranges per chain, for the LLM: {chain: {joint: [min, max]}}."""
         return {name: {j: [round(lo, 3), round(hi, 3)] for j, (lo, hi) in c.range.items()}
                 for name, c in sorted(self.chains.items())}
 
     def set_motor_temps(self, temps: dict) -> set[str]:
-        """temps : {"head"|"larm"|"rarm": °C}.  Retourne les chaînes trop chaudes."""
+        """temps: {"head"|"larm"|"rarm": °C}. Returns the chains that are too hot."""
         max_temp = self.limits["max_motor_temp"]
         self._hot = {g for g, t in temps.items() if max_temp and t >= max_temp}
         return self._hot
@@ -254,28 +253,28 @@ class MotionPolicy:
         return self._walking or now < self._posture_until
 
     def gesture_active(self, now: float) -> bool:
-        """Geste appris en attente ou en cours : le drone a (ou va avoir) la main."""
+        """Learned gesture pending or in progress: the drone has (or will have) control."""
         if self._gesture_pending is not None:
             return True
         if self._gesture_until and now >= self._gesture_until:
-            # Plus de nouvelles du drone : on reprend, sans savoir où sont les bras.
+            # No more news from the drone: take back control, without knowing where the arms are.
             self.release_gesture(at_rest=False, now=now)
         return now < self._gesture_until
 
     # -- ordres ------------------------------------------------------------
 
     def posture_allowed(self, name: str, now: float) -> tuple[bool, str]:
-        """(autorisée ?, raison du refus).  Une posture autorisée bloque les gestes."""
+        """(allowed?, refusal reason). An allowed posture blocks gestures."""
         if not self.limits["postures"]:
-            return False, "postures désactivées (jambes)"
+            return False, "postures disabled (legs)"
         if self.gesture_active(now):
-            return False, "geste appris en cours"
+            return False, "learned gesture in progress"
         if name not in self.limits["postures"]:
             return False, "hors liste"
         if self._walking:
-            return False, "marche en cours"
+            return False, "walk in progress"
         if now - self._last_posture < float(self.limits["posture_cooldown"]):
-            return False, "délai entre deux postures"
+            return False, "delay between two postures"
         self._last_posture = now
         self._posture_until = now + float(self.limits["posture_block"])
         for c in self.chains.values():
@@ -283,26 +282,26 @@ class MotionPolicy:
         return True, ""
 
     def move_decision(self, walking: bool, now: float) -> tuple[bool, str]:
-        """(envoyer ?, raison du refus) pour un ordre de marche.
+        """(send?, refusal reason) for a walk order.
 
-        Un ordre à vitesse nulle n'est envoyé que pour arrêter une marche en
-        cours : sinon moveToward(0, 0, 0) réveille le moteur de marche pour
-        rien, et pendant un changement de posture il fait planter NAOqi.
+        A zero-velocity order is only sent to stop a walk in
+        progress: otherwise moveToward(0, 0, 0) wakes the walk engine for
+        nothing, and during a posture change it crashes NAOqi.
         """
         if not self.limits["walk"]:
-            return False, "marche désactivée (jambes)"
+            return False, "walk disabled (legs)"
         if self.gesture_active(now):
-            return False, "geste appris en cours"
+            return False, "learned gesture in progress"
         if now < self._posture_until:
-            return False, "changement de posture en cours"
+            return False, "posture change in progress"
         if not walking and not self._walking:
-            return False, "vitesse nulle, le robot ne marche pas"
+            return False, "zero velocity, the robot is not walking"
         self.set_walking(walking)
         return True, ""
 
     def submit(self, joints, angles, speed: float, now: float) -> int:
-        """Ajoute des articulations à la cible de leur chaîne ; retourne le
-        nombre d'articulations acceptées (les autres sont comptées dans refused)."""
+        """Adds joints to their chain's target; returns the
+        number of accepted joints (the others are counted in refused)."""
         if (self._busy(now) and not self.limits["joints_while_busy"]) or self.gesture_active(now):
             self.refused += len(joints)
             return 0
@@ -324,18 +323,18 @@ class MotionPolicy:
         return accepted
 
     def request_gesture(self, order: dict, now: float) -> tuple[bool, str]:
-        """(accepté ?, raison du refus) pour un geste appris.  Accepté, il part
-        par take_gesture() dès que les chaînes ont fini leur étape en cours."""
+        """(accepted?, refusal reason) for a learned gesture. Once accepted, it goes
+        out through take_gesture() as soon as the chains have finished their current step."""
         if not self.limits["gestures"]:
-            return False, "gestes appris désactivés"
+            return False, "learned gestures disabled"
         if not self.chains:
-            return False, "pas de profil moteur"
+            return False, "no motor profile"
         if self._busy(now):
-            return False, "posture ou marche en cours"
+            return False, "posture or walk in progress"
         if self._hot:
             return False, "trop chaud : " + ", ".join(sorted(self._hot))
         if self._gesture_pending is not None:
-            # Le plus récent remplace celui qui attendait encore les chaînes.
+            # The most recent one replaces the one still waiting for the chains.
             self._gesture_pending = order
             return True, ""
         for c in self.chains.values():
@@ -349,7 +348,7 @@ class MotionPolicy:
         return self._gesture_pending
 
     def take_gesture(self, now: float) -> dict | None:
-        """Le geste à publier sur /nao/emotion_gesture, une fois les chaînes immobiles."""
+        """The gesture to publish on /nao/emotion_gesture, once the chains are still."""
         if self._gesture_pending is None:
             return None
         if any(c.hold_until > now for c in self.chains.values()):
@@ -360,13 +359,13 @@ class MotionPolicy:
         return order
 
     def gesture_state(self, owns_body: bool, at_rest: bool, now: float, gid=None) -> None:
-        """État publié par le drone : il tient encore le corps, ou il le rend.
+        """State published by the drone: it still holds the body, or hands it back.
 
-        Juste après l'envoi d'un geste, un état « rend la main » qui ne parle
-        pas de ce geste a pu partir avant que le drone le reçoive : il est
-        ignoré pendant GESTURE_GRACE secondes."""
+        Right after a gesture is sent, a "hands back control" state that does not
+        mention this gesture may have left before the drone received it: it is
+        ignored for GESTURE_GRACE seconds."""
         if owns_body:
-            # Même un geste qui n'est pas passé par ici (bouton de la régie) réserve les chaînes.
+            # Even a gesture that did not go through here (control room button) reserves the chains.
             if self._gesture_pending is None:
                 self._gesture_until = now + float(self.limits["gesture_timeout"])
             return
@@ -378,13 +377,13 @@ class MotionPolicy:
         self.release_gesture(at_rest, now)
 
     def release_gesture(self, at_rest: bool, now: float) -> None:
-        """Le drone rend les chaînes.  Au repos (relâché par le robot) : rien à
-        faire.  Ailleurs : retour au repos par la pose de départ, tout de suite."""
+        """The drone hands the chains back. At rest (relaxed by the robot): nothing to
+        do. Elsewhere: return to rest through the start pose, right away."""
         self._gesture_until = 0.0
         for c in self.chains.values():
             c.target = None
             c.queue = []
-            # Inactive depuis rest_delay : le retour au repos peut partir tout de suite.
+            # Inactive for rest_delay: the return to rest can go right away.
             c.hold_until = c.last_order = now - float(self.limits["rest_delay"])
             if at_rest:
                 c.pose, c.kind = dict(c.rest), "rest"
@@ -407,11 +406,11 @@ class MotionPolicy:
         return duration
 
     def _plan(self, c: _Chain, now: float) -> None:
-        """Transforme la cible en formation en étapes, ou planifie le retour au repos."""
+        """Turns the target being formed into steps, or plans the return to rest."""
         if c.target is not None:
             if now - c.target_since < float(self.limits["merge_window"]):
                 return
-            # Déjà au départ (ou en route) : directement la cible.  Sinon, par le départ.
+            # Already at start (or on the way): straight to the target. Otherwise, through start.
             steps = [] if c.kind == "start" else [("start", c.start, c.speed)]
             c.queue = steps + [("target", c.target, c.target_speed)]
             c.target = None
@@ -424,7 +423,7 @@ class MotionPolicy:
             c.queue = back if c.kind == "start" else [("start", c.start, c.speed)] + back
 
     def take(self, now: float) -> list[dict]:
-        """Commandes /nao/motion à envoyer maintenant, une par chaîne prête."""
+        """/nao/motion commands to send now, one per ready chain."""
         if now - self._last_send < float(self.limits["min_interval"]):
             return []
         cmds = []

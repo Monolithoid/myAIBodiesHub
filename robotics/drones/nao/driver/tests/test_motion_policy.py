@@ -1,4 +1,4 @@
-"""Tests sans ROS 2 des décisions de mouvement du driver NAO (motion_policy.py).
+"""Tests without ROS 2 of the NAO driver's motion decisions (motion_policy.py).
 
     cd robotics/drones/nao/driver && python3 -m unittest discover -s tests -v
 """
@@ -24,7 +24,7 @@ RARM = {"rest":  {"RShoulderPitch": 1.5, "RShoulderRoll": -0.1, "RElbowYaw": 1.2
 
 
 def policy(**overrides):
-    # Pas d'estimation de durée ni de regroupement : chaque étape dure min_move_time.
+    # No duration estimate and no grouping: each step lasts min_move_time.
     base = {"min_interval": 0.0, "min_move_time": 1.0, "velocity_scale": 0, "merge_window": 0.0}
     base.update(overrides)
     limits, warnings = load_limits(base)
@@ -76,17 +76,17 @@ class TestSequence(unittest.TestCase):
     def test_rest_start_target_start_rest(self):
         p = policy(rest_delay=3.0)
         self.assertEqual(p.submit(["HeadYaw"], [0.3], 0.0, now=0.0), 1)
-        self.assertEqual(head(p.take(0.0)[0]), {"HeadYaw": 0.0, "HeadPitch": 0.0})   # départ
-        self.assertEqual(p.take(0.5), [])                                             # étape en cours
+        self.assertEqual(head(p.take(0.0)[0]), {"HeadYaw": 0.0, "HeadPitch": 0.0})   # start
+        self.assertEqual(p.take(0.5), [])                                             # step in progress
         cmd = p.take(1.0)[0]
         self.assertEqual(head(cmd), {"HeadYaw": 0.3, "HeadPitch": 0.0})               # cible
-        self.assertEqual(cmd["speed"], 0.1)                                           # vitesse du profil
-        # Inactive rest_delay après la fin de la cible (2.0) : retour à 5.0.
+        self.assertEqual(cmd["speed"], 0.1)                                           # profile speed
+        # Inactive for rest_delay after the end of the target (2.0): return at 5.0.
         self.assertEqual(p.take(4.5), [])
-        self.assertEqual(head(p.take(5.0)[0]), {"HeadYaw": 0.0, "HeadPitch": 0.0})   # départ
+        self.assertEqual(head(p.take(5.0)[0]), {"HeadYaw": 0.0, "HeadPitch": 0.0})   # start
         rest = p.take(6.0)[0]
         self.assertEqual(head(rest), {"HeadYaw": 0.0, "HeadPitch": 0.3})              # repos
-        self.assertEqual(rest["rest_in"], 1.0)                 # le pont coupe alors la raideur
+        self.assertEqual(rest["rest_in"], 1.0)                 # the bridge then cuts the stiffness
         self.assertEqual(p.take(20.0), [])
 
     def test_target_clamped_and_speed_capped(self):
@@ -102,11 +102,11 @@ class TestSequence(unittest.TestCase):
         p.submit(["RShoulderPitch"], [-0.5], 0.0, now=0.0)
         p.submit(["RElbowRoll"], [0.9], 0.0, now=0.1)
         self.assertEqual(p.take(0.2), [])
-        p.take(0.3)                                  # départ
+        p.take(0.3)                                  # start
         target = head(p.take(1.3)[0])
         self.assertEqual(target["RShoulderPitch"], -0.5)
         self.assertEqual(target["RElbowRoll"], 0.9)
-        self.assertEqual(target["RShoulderRoll"], -0.1)   # complété par le départ
+        self.assertEqual(target["RShoulderRoll"], -0.1)   # completed by the start pose
 
     def test_new_order_goes_through_start_not_rest(self):
         p = policy(rest_delay=3.0)
@@ -114,8 +114,8 @@ class TestSequence(unittest.TestCase):
         p.take(0.0)
         p.take(1.0)                                  # cible 1
         p.submit(["HeadYaw"], [-0.3], 0.0, now=1.5)
-        self.assertEqual(p.take(1.5), [])            # cible 1 encore en cours
-        self.assertEqual(head(p.take(2.0)[0])["HeadYaw"], 0.0)    # départ
+        self.assertEqual(p.take(1.5), [])            # target 1 still in progress
+        self.assertEqual(head(p.take(2.0)[0])["HeadYaw"], 0.0)    # start
         self.assertEqual(head(p.take(3.0)[0])["HeadYaw"], -0.3)   # cible 2
 
     def test_order_while_going_back_to_start(self):
@@ -123,9 +123,9 @@ class TestSequence(unittest.TestCase):
         p.submit(["HeadYaw"], [0.3], 0.0, now=0.0)
         p.take(0.0)
         p.take(1.0)
-        self.assertEqual(head(p.take(3.0)[0])["HeadYaw"], 0.0)    # retour : départ
+        self.assertEqual(head(p.take(3.0)[0])["HeadYaw"], 0.0)    # return: start
         p.submit(["HeadYaw"], [0.2], 0.0, now=3.5)
-        self.assertEqual(head(p.take(4.0)[0])["HeadYaw"], 0.2)    # directement la cible
+        self.assertEqual(head(p.take(4.0)[0])["HeadYaw"], 0.2)    # straight to the target
 
     def test_chains_move_together(self):
         p = policy()
@@ -154,9 +154,9 @@ class TestSequence(unittest.TestCase):
     def test_duration_from_joint_velocity(self):
         p = policy(min_move_time=0.3, velocity_scale=1.0)
         p.submit(["HeadYaw"], [0.5], 0.0, now=0.0)
-        p.take(0.0)                                  # départ : HeadPitch 0.3 rad à 0.719 rad/s
+        p.take(0.0)                                  # start: HeadPitch 0.3 rad at 0.719 rad/s
         self.assertEqual(p.take(0.4), [])
-        p.take(0.5)                                  # cible : 0.5 rad à 0.829 rad/s ≈ 0.6 s
+        p.take(0.5)                                  # target: 0.5 rad at 0.829 rad/s ≈ 0.6 s
         p.submit(["HeadYaw"], [0.0], 0.0, now=0.6)
         self.assertEqual(p.take(1.0), [])
         self.assertEqual(len(p.take(1.15)), 1)
@@ -180,7 +180,7 @@ class TestPostureWalkHeat(unittest.TestCase):
         self.assertFalse(p.move_decision(False, 0.0)[0])
 
     def test_regie_crash_scenario(self):
-        # « stand » puis « move 0,0,0 » : le move ne part pas pendant la posture.
+        # "stand" then "move 0,0,0": the move does not go out during the posture.
         p = policy(postures=["Stand"], walk=True)
         self.assertTrue(p.posture_allowed("Stand", 0.0)[0])
         ok, why = p.move_decision(False, 0.1)
@@ -216,17 +216,17 @@ class TestPostureWalkHeat(unittest.TestCase):
 
 
 class TestLearnedGesture(unittest.TestCase):
-    """Gestes appris joués par le drone statique (ADR 009)."""
+    """Learned gestures played by the static drone (ADR 009)."""
 
     def test_waits_for_the_current_step_then_reserves(self):
         p = policy(rest_delay=1.0)
         p.submit(["HeadYaw"], [0.3], 0.0, now=0.0)
-        p.take(0.0)                                   # repos → départ, jusqu'à 1.0
+        p.take(0.0)                                   # rest → start, until 1.0
         self.assertTrue(p.request_gesture({"id": "g1", "emotion": "joie"}, 0.5)[0])
-        self.assertIsNone(p.take_gesture(0.5))        # étape en cours
-        self.assertEqual(p.take(1.0), [])             # cible abandonnée, rien ne part
+        self.assertIsNone(p.take_gesture(0.5))        # step in progress
+        self.assertEqual(p.take(1.0), [])             # target dropped, nothing goes out
         self.assertEqual(p.take_gesture(1.0)["id"], "g1")
-        # Le drone tient le corps : ni ordre, ni retour au repos, ni posture.
+        # The drone holds the body: no order, no return to rest, no posture.
         p.gesture_state(True, False, 1.2, "g1")
         self.assertEqual(p.submit(["HeadYaw"], [0.1], 0.0, now=2.0), 0)
         self.assertEqual(p.take(10.0), [])
@@ -239,14 +239,14 @@ class TestLearnedGesture(unittest.TestCase):
         p.gesture_state(True, False, 1.0, "g1")
         p.gesture_state(False, True, 20.0, "rest-1")
         self.assertFalse(p.gesture_active(20.0))
-        self.assertEqual(p.take(30.0), [])            # déjà au repos et relâché
+        self.assertEqual(p.take(30.0), [])            # already at rest and relaxed
         self.assertEqual(p.submit(["HeadYaw"], [0.3], 0.0, now=30.0), 1)
 
     def test_given_back_elsewhere_goes_to_rest_by_start(self):
         p = policy(rest_delay=1.0)
         p.request_gesture({"id": "g1"}, 0.0)
         p.take_gesture(0.0)
-        p.gesture_state(False, False, 5.0, "rest-1")  # retour au repos refusé par le drone
+        p.gesture_state(False, False, 5.0, "rest-1")  # return to rest refused by the drone
         cmds = p.take(5.0)
         self.assertEqual(head(cmds[0]), HEAD["start"])
         self.assertEqual(head(p.take(6.0)[0]), HEAD["rest"])
@@ -255,9 +255,9 @@ class TestLearnedGesture(unittest.TestCase):
         p = policy()
         p.request_gesture({"id": "g1"}, 0.0)
         p.take_gesture(0.0)
-        p.gesture_state(False, True, 0.5, None)       # annonce périodique partie avant
+        p.gesture_state(False, True, 0.5, None)       # periodic announcement sent before
         self.assertTrue(p.gesture_active(0.5))
-        p.gesture_state(False, True, 0.6, "g1")       # refus du geste lui-même
+        p.gesture_state(False, True, 0.6, "g1")       # refusal of the gesture itself
         self.assertFalse(p.gesture_active(0.6))
 
     def test_silent_drone_times_out(self):
@@ -276,11 +276,11 @@ class TestLearnedGesture(unittest.TestCase):
         p.posture_allowed("Stand", 0.0)
         self.assertFalse(p.request_gesture({"id": "a"}, 1.0)[0])
         self.assertFalse(policy(gestures=False).request_gesture({"id": "a"}, 0.0)[0])
-        self.assertFalse(MotionPolicy().request_gesture({"id": "a"}, 0.0)[0])   # pas de profil
+        self.assertFalse(MotionPolicy().request_gesture({"id": "a"}, 0.0)[0])   # no profile
 
     def test_regie_gesture_reserves_too(self):
         p = policy()
-        p.gesture_state(True, False, 0.0, "regie-1")  # pas passé par le driver
+        p.gesture_state(True, False, 0.0, "regie-1")  # did not go through the driver
         self.assertEqual(p.submit(["HeadYaw"], [0.1], 0.0, now=0.5), 0)
         self.assertFalse(p.posture_allowed("Stand", 0.5)[0])
 

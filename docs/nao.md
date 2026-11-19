@@ -14,7 +14,7 @@ NAO (Wi-Fi, local network)
         └─► Outbound WebSocket ws://DRONE_IP:9090 (local network, no token)
               └─► static drone relay (Caddy): wss://rosbridge.$DOMAIN + token
                     └─► rosbridge-proxy → ros2-bridge (ROS 2 Humble, VPS)
-                    └─► nao-core (naoqi_driver + cognitive_renderer [+ motion_engine si MOTION_ENGINE=1])
+                    └─► nao-core (naoqi_driver + cognitive_renderer [+ motion_engine if MOTION_ENGINE=1])
                           └─► body_gateway → Ollama (LLM)
 ```
 
@@ -62,7 +62,7 @@ For a NAO without a drone, see [SSL / WSS](#ssl--wss).
 - **VAD audio capture** — records speech after wake word, publishes WAV on `/nao/audio`
 - **TTS method negotiation** — announces `mp3` or `text` to the VPS on connect
 - **Motion bounds** — hard angle, speed, stiffness and walk bounds before ALMotion; motion decisions live in the NAO driver (see [Motion bounds](#motion-bounds-robot-side))
-- **Trajectory player** — module `trajectory`: plays a learned gesture computed on the static drone (`/nao/trajectory`), after checking joints, hardware ranges and the measured start posture; `/nao/stop` interrupts it (see [static drone: learned gestures](../robotics/drones/static/onboard/README.md#gestes-appris-du-nao))
+- **Trajectory player** — module `trajectory`: plays a learned gesture computed on the static drone (`/nao/trajectory`), after checking joints, hardware ranges and the measured start posture; `/nao/stop` interrupts it (see [static drone: learned gestures](../robotics/drones/static/onboard/README.md#learned-nao-gestures))
 - **Post-flash provisioning** — applies autonomous life state, language, volume from JSON,
   plus the bridge's default modules and audio capture (`"bridge"` section)
 

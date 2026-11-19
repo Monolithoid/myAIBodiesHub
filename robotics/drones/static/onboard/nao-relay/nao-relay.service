@@ -1,11 +1,11 @@
-# Service systemd du relais du NAO (ADR 006). Adapter User et les chemins, puis :
+# systemd service for the NAO relay (ADR 006). Adapt User and the paths, then:
 #   sudo cp nao-relay.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now nao-relay
 #   journalctl -u nao-relay -f
 
 [Unit]
-Description=Relais rosbridge du NAO (ADR 006)
+Description=NAO rosbridge relay (ADR 006)
 Wants=network-online.target
 After=network-online.target
 

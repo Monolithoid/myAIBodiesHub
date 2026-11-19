@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Fonctions communes à setup-ubuntu.sh et nao-relay/setup-ubuntu.sh.
-# Ce fichier est sourcé, pas exécuté.
+# Functions shared by setup-ubuntu.sh and nao-relay/setup-ubuntu.sh.
+# This file is sourced, not executed.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,12 +14,12 @@ warn()   { echo -e "${YELLOW}[!]${NC} $*"; }
 error()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 section(){ echo -e "\n${CYAN}══ $* ══${NC}"; }
 
-# Le script tourne en utilisateur normal et appelle sudo quand il le faut :
-# le venv, le .env et les services appartiennent à l'utilisateur du drone.
+# The script runs as a normal user and calls sudo when needed:
+# the venv, the .env and the services belong to the drone user.
 require_user_with_sudo() {
-    [[ $EUID -ne 0 ]] || error "Lancer sans sudo, avec l'utilisateur du drone : bash $0"
-    command -v sudo >/dev/null || error "sudo est nécessaire"
-    sudo -v || error "sudo refusé"
+    [[ $EUID -ne 0 ]] || error "Run without sudo, as the drone user: bash $0"
+    command -v sudo >/dev/null || error "sudo is required"
+    sudo -v || error "sudo refused"
 }
 
 require_ubuntu() {
@@ -27,14 +27,14 @@ require_ubuntu() {
         # shellcheck disable=SC1091
         . /etc/os-release
         if [[ "${ID:-}" != "ubuntu" ]]; then
-            warn "Système ${PRETTY_NAME:-inconnu} : script prévu pour Ubuntu 22.04 / 24.04"
+            warn "System ${PRETTY_NAME:-unknown}: script meant for Ubuntu 22.04 / 24.04"
         fi
     fi
 }
 
 is_interactive() { [[ -t 0 ]]; }
 
-# ask "Question" [défaut] → réponse sur stdout (défaut si pas de terminal)
+# ask "Question" [default] → answer on stdout (default if no terminal)
 ask() {
     local prompt="$1" default="${2:-}" value=""
     if is_interactive; then
@@ -56,11 +56,11 @@ ask_secret() {
     echo "$value"
 }
 
-# ── Fichier .env (KEY=valeur, une par ligne) ────────────────────────────────
-# Le .env n'est jamais sourcé : certaines valeurs (PLAYER_CMD=mpg123 -q -) ne
-# sont pas du bash valide.
+# ── .env file (KEY=value, one per line) ─────────────────────────────────────
+# The .env is never sourced: some values (PLAYER_CMD=mpg123 -q -) are not
+# valid bash.
 
-# env_get FICHIER CLÉ → dernière valeur non commentée (vide si absente)
+# env_get FILE KEY → last uncommented value (empty if missing)
 env_get() {
     local file="$1" key="$2"
     [[ -f "$file" ]] || return 0
@@ -70,13 +70,13 @@ env_get() {
     ' "$file"
 }
 
-# env_has FICHIER CLÉ → vrai si une ligne non commentée CLÉ= existe
+# env_has FILE KEY → true if an uncommented KEY= line exists
 env_has() {
     [[ -f "$1" ]] && grep -q "^$2=" "$1"
 }
 
-# env_set FICHIER CLÉ VALEUR : remplace la ligne CLÉ=, sinon décommente la
-# première ligne #CLÉ=, sinon ajoute à la fin. Ne touche pas au reste.
+# env_set FILE KEY VALUE: replaces the KEY= line, otherwise uncomments the
+# first #KEY= line, otherwise appends at the end. Leaves the rest alone.
 env_set() {
     local file="$1" key="$2" value="$3" tmp
     tmp="$(mktemp)"
@@ -101,7 +101,7 @@ env_set() {
     rm -f "$tmp"
 }
 
-# install_if_changed SOURCE DESTINATION [sudo] → vrai (0) si le fichier a changé
+# install_if_changed SOURCE DESTINATION [sudo] → true (0) if the file changed
 install_if_changed() {
     local src="$1" dst="$2" use_sudo="${3:-}"
     if [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
@@ -115,8 +115,8 @@ install_if_changed() {
     return 0
 }
 
-# is_stale SERVICE [--user] FICHIER… → vrai si le service ne tourne pas, ou si
-# l'un des fichiers a été modifié après son démarrage (réglage à appliquer).
+# is_stale SERVICE [--user] FILE… → true if the service is not running, or if
+# one of the files was changed after it started (setting to apply).
 is_stale() {
     local unit="$1"; shift
     local sc=(systemctl)

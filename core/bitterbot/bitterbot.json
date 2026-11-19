@@ -1,19 +1,19 @@
-// Bitterbot — configuration 100% locale
-// Copier ce fichier vers : /opt/ia/bitterbot/config/bitterbot.json
-// Générer le gateway token : openssl rand -hex 32
+// Bitterbot — 100% local configuration
+// Copy this file to: /opt/ia/bitterbot/config/bitterbot.json
+// Generate the gateway token: openssl rand -hex 32
 //
-// Composants désactivés intentionnellement :
-//   - Tous les canaux messaging (WhatsApp, Telegram, Discord, Signal, Slack)
-//   - Discovery P2P large zone (libp2p / Gossipsub)
-//   - Onramp Stripe (aucune clé cloud configurée)
+// Components disabled on purpose:
+//   - All messaging channels (WhatsApp, Telegram, Discord, Signal, Slack)
+//   - Wide-area P2P discovery (libp2p / Gossipsub)
+//   - Stripe onramp (no cloud key configured)
 //
-// Composants actifs :
-//   - Inférence 100% locale via Ollama (http://ollama:11434)
-//   - Dream Engine (consolidation mémoire toutes les 2h)
-//   - Ingestion documents (workspace)
-//   - Gateway WebSocket + API OpenAI-compatible sur le port 19001
+// Active components:
+//   - 100% local inference through Ollama (http://ollama:11434)
+//   - Dream Engine (memory consolidation every 2 hours)
+//   - Document ingestion (workspace)
+//   - WebSocket gateway + OpenAI-compatible API on port 19001
 //
-// Schéma validé sur version 2026.2.15 (SHA 85b5095) via bitterbot doctor --fix
+// Schema validated on version 2026.2.15 (SHA 85b5095) with bitterbot doctor --fix
 
 {
   models: {
@@ -21,9 +21,9 @@
       ollama: {
         baseUrl: "http://ollama:11434",
         apiKey: "ollama-local",
-        // API native Ollama : streaming + tool calling simultanés
+        // Native Ollama API: simultaneous streaming + tool calling
         api: "ollama",
-        // id + name tous les deux obligatoires
+        // id + name both required
         models: [
           { id: "qwen2.5:7b", name: "Qwen 2.5 7B" },
         ],
@@ -33,7 +33,7 @@
 
   agents: {
     defaults: {
-      // model doit être un objet { primary, fallbacks? }, pas une string
+      // model must be an object { primary, fallbacks? }, not a string
       model: {
         primary: "ollama:qwen2.5:7b",
       },
@@ -41,20 +41,20 @@
     },
   },
 
-  // Canaux messaging désactivés par omission (enabled invalide à la racine du channel)
+  // Messaging channels disabled by omission (enabled is invalid at the channel root)
 
   discovery: {
-    // enabled invalide à la racine — doit être sous wideArea
+    // enabled is invalid at the root — must be under wideArea
     wideArea: {
       enabled: false,
     },
   },
 
   gateway: {
-    // "local" = gateway autonome sans dépendance au cloud Bitterbot
+    // "local" = standalone gateway with no dependency on the Bitterbot cloud
     mode: "local",
     auth: {
-      // Doit correspondre exactement à BITTERBOT_GATEWAY_TOKEN dans docker-compose.yml
+      // Must match BITTERBOT_GATEWAY_TOKEN in docker-compose.yml exactly
       token: "CHANGE_THIS_BITTERBOT_TOKEN",
     },
   },

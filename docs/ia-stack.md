@@ -1,177 +1,177 @@
-# Stack IA
+# AI stack
 
-Services constituant le cœur de l'intelligence artificielle : moteur LLM, interface de chat, orchestrateur de workflows, mémoire vectorielle et agent autonome.
+Services that make up the core of the artificial intelligence: LLM engine, chat interface, workflow orchestrator, vector memory and autonomous agent.
 
 ---
 
-## Vue d'ensemble
+## Overview
 
 ```
-Utilisateur (navigateur)
+User (browser)
   └─► chat.$DOMAIN (Coolify/Traefik)
         └─► Open WebUI :8080
-              ├─► Ollama :11434  (inférence LLM)
-              └─► ChromaDB :8000 (RAG / mémoire vectorielle)
+              ├─► Ollama :11434  (LLM inference)
+              └─► ChromaDB :8000 (RAG / vector memory)
 
-Développeur (SSH tunnel)
-  └─► n8n :5678          (automatisations)
-  └─► Bitterbot :19001   (agent autonome)
+Developer (SSH tunnel)
+  └─► n8n :5678          (automations)
+  └─► Bitterbot :19001   (autonomous agent)
 ```
 
-Tous ces services tournent dans `ai-network`, sauf Bitterbot qui est isolé dans `bitterbot-net` (accès internet bloqué au niveau Docker — seul Ollama est joignable).
+All these services run in `ai-network`, except Bitterbot, which is isolated in `bitterbot-net` (internet access blocked at the Docker level — only Ollama is reachable).
 
 ---
 
-## Ollama — moteur LLM
+## Ollama — LLM engine
 
-**Image :** `ollama/ollama:latest`  
-**Port :** 11434 (exposé via Traefik avec clé d'API obligatoire)
+**Image:** `ollama/ollama:latest`  
+**Port:** 11434 (exposed through Traefik with a mandatory API key)
 
 | Variable | Description |
 |---|---|
-| `OLLAMA_API_KEYS` | Clé d'API (`openssl rand -hex 32`) |
-| `OLLAMA_KEEP_ALIVE` | Maintien du modèle en mémoire (`24h`) |
-| `OLLAMA_NUM_PARALLEL` | Requêtes simultanées (`2`) |
-| `OLLAMA_NUM_THREAD` | Threads CPU alloués (`8`) |
+| `OLLAMA_API_KEYS` | API key (`openssl rand -hex 32`) |
+| `OLLAMA_KEEP_ALIVE` | Keeps the model in memory (`24h`) |
+| `OLLAMA_NUM_PARALLEL` | Concurrent requests (`2`) |
+| `OLLAMA_NUM_THREAD` | CPU threads allocated (`8`) |
 
-**Volume :** `/opt/ia/ollama` → modèles IA (10–20 Go selon le modèle)
+**Volume:** `/opt/ia/ollama` → AI models (10–20 GB depending on the model)
 
-**Télécharger un modèle :**
+**Download a model:**
 ```bash
-docker exec -it ollama ollama pull qwen3:1.7b   # modèle par défaut de body-gateway
+docker exec -it ollama ollama pull qwen3:1.7b   # body-gateway's default model
 ```
 
-**Changer le modèle utilisé par body-gateway :** variable d'environnement `BRAIN_MODEL` dans Coolify.
+**Change the model used by body-gateway:** environment variable `BRAIN_MODEL` in Coolify.
 
 ---
 
-## Fournisseur du cerveau (body-gateway)
+## Brain provider (body-gateway)
 
-`body-gateway` peut faire appel à trois fournisseurs de LLM. Le choix se fait par
-la variable `BRAIN_PROVIDER`, dans Coolify. Le code est dans
-`robotics/brain/body_gateway/brain_client.py`. Quel que soit le fournisseur, le LLM
-doit répondre en JSON strict, qui est ensuite lu par `_parse_json()`.
+`body-gateway` can call three LLM providers. The choice is made with the
+`BRAIN_PROVIDER` variable, in Coolify. The code is in
+`robotics/brain/body_gateway/brain_client.py`. Whatever the provider, the LLM must
+answer in strict JSON, which is then read by `_parse_json()`.
 
-| `BRAIN_PROVIDER` | Appel | Défaut `BRAIN_URL` | Défaut `BRAIN_MODEL` |
+| `BRAIN_PROVIDER` | Call | Default `BRAIN_URL` | Default `BRAIN_MODEL` |
 |---|---|---|---|
-| `ollama` (défaut) | `POST {BRAIN_URL}/v1/chat/completions` en streaming, avec `"options": {"think": false}` | `http://localhost:11434` | `qwen3:1.7b` |
-| `openai` | le même endpoint, sans le champ `options` | `https://api.openai.com` | `gpt-4o-mini` |
-| `anthropic` | SDK officiel `anthropic`, `messages.stream()` | URL du SDK (`https://api.anthropic.com`) | `claude-haiku-4-5` |
+| `ollama` (default) | `POST {BRAIN_URL}/v1/chat/completions` streaming, with `"options": {"think": false}` | `http://localhost:11434` | `qwen3:1.7b` |
+| `openai` | the same endpoint, without the `options` field | `https://api.openai.com` | `gpt-4o-mini` |
+| `anthropic` | official `anthropic` SDK, `messages.stream()` | SDK URL (`https://api.anthropic.com`) | `claude-haiku-4-5` |
 
 | Variable | Description |
 |---|---|
-| `BRAIN_PROVIDER` | `ollama`, `openai` ou `anthropic` |
-| `BRAIN_URL` | Laisser vide pour prendre le défaut du fournisseur |
-| `BRAIN_MODEL` | Laisser vide pour prendre le défaut du fournisseur |
-| `BRAIN_API_KEY` | Clé du fournisseur. Sans valeur, c'est `OLLAMA_API_KEYS` qui est utilisée : pour `openai` ou `anthropic`, il faut donc la renseigner (`sk-...` de platform.openai.com, `sk-ant-...` de console.anthropic.com) |
-| `BRAIN_TIMEOUT` | Délai maximal en secondes entre deux morceaux du flux (défaut 120, 60 dans le compose) |
-| `BRAIN_EFFORT` | Anthropic uniquement, optionnel : `low`, `medium`, `high`… Rien n'est envoyé si la variable est vide |
+| `BRAIN_PROVIDER` | `ollama`, `openai` or `anthropic` |
+| `BRAIN_URL` | Leave empty to use the provider's default |
+| `BRAIN_MODEL` | Leave empty to use the provider's default |
+| `BRAIN_API_KEY` | Provider key. Without a value, `OLLAMA_API_KEYS` is used: for `openai` or `anthropic` it must therefore be set (`sk-...` from platform.openai.com, `sk-ant-...` from console.anthropic.com) |
+| `BRAIN_TIMEOUT` | Maximum delay in seconds between two chunks of the stream (default 120, 60 in the compose file) |
+| `BRAIN_EFFORT` | Anthropic only, optional: `low`, `medium`, `high`… Nothing is sent if the variable is empty |
 
-Sans `BRAIN_PROVIDER`, rien ne change : Ollama local et `qwen3:1.7b`, comme avant.
+Without `BRAIN_PROVIDER`, nothing changes: local Ollama and `qwen3:1.7b`, as before.
 
-Un abonnement ChatGPT ou Claude.ai ne donne pas accès à l'API. Il faut une clé API,
-facturée à l'usage.
+A ChatGPT or Claude.ai subscription does not give access to the API. An API key,
+billed by usage, is required.
 
-### Personnalité de NAO
+### NAO's personality
 
-Le prompt système commence par la personnalité de NAO : qui il est, son passé,
-sa façon de parler. Elle est lue dans `/opt/ia/nao/persona/personnalite.md` sur le
-VPS (monté en lecture seule dans body-gateway, variable `BRAIN_PERSONA_FILE`).
+The system prompt starts with NAO's personality: who it is, its past, its way of
+speaking. It is read from `/opt/ia/nao/persona/personnalite.md` on the VPS (mounted
+read-only in body-gateway, variable `BRAIN_PERSONA_FILE`).
 
-- Le fichier est relu à chaque appel du LLM : une modification s'applique au
-  message suivant, sans redémarrer body-gateway.
-- Fichier absent ou vide : body-gateway prend le texte par défaut, `DEFAULT_PERSONA`
-  dans `robotics/brain/body_gateway/persona.py`.
-- Texte libre, en français, à la deuxième personne (« Tu es NAO… »). Quelques
-  paragraphes suffisent : il est envoyé à chaque appel et compte dans les tokens.
-- Le cadre technique (JSON strict, actions possibles, règles du tchat Twitch) reste
-  dans le code, après la personnalité : le fichier ne peut pas le remplacer.
-- Le prompt du mode rêve n'utilise pas la personnalité.
+- The file is reread on every LLM call: a change applies to the next message,
+  without restarting body-gateway.
+- Missing or empty file: body-gateway uses the default text, `DEFAULT_PERSONA` in
+  `robotics/brain/body_gateway/persona.py`.
+- Free text, in French (the robot speaks French), in the second person
+  ("Tu es NAO…"). A few paragraphs are enough: it is sent on every call and counts
+  towards the tokens.
+- The technical frame (strict JSON, possible actions, Twitch chat rules) stays in
+  the code, after the personality: the file cannot replace it.
+- The dream mode prompt does not use the personality.
 
 ```bash
 mkdir -p /opt/ia/nao/persona
 nano /opt/ia/nao/persona/personnalite.md
 ```
 
-### Paramètres Anthropic
+### Anthropic parameters
 
-Ce qui est envoyé dépend du modèle. Les règles ci-dessous viennent de la documentation Anthropic d'octobre 2026.
+What is sent depends on the model. The rules below come from the Anthropic documentation of October 2026.
 
-- **temperature** : elle n'est envoyée qu'aux modèles qui l'acceptent (Haiku 4.5,
-  Sonnet 4.5 / 4.6, Opus 4.x jusqu'à 4.6). Opus 4.7 et suivants, Sonnet 5 / 5.5 et
-  Haiku 5.5 renvoient une erreur 400 avec une température non par défaut. Pour ces
-  modèles, et pour tout modèle inconnu, la valeur par défaut de l'API s'applique.
-- **thinking** : le paramètre n'est jamais envoyé. Haiku 4.5 répond alors sans
-  réflexion, ce qui équivaut au `think: false` d'Ollama. Sur Opus 5.5 et Sonnet 5.5,
-  la réflexion ne peut pas être désactivée (`disabled` renvoie une 400). Pour limiter
-  la latence, mettre `BRAIN_EFFORT=low`.
-- **effort** : Haiku 4.5 le refuse, d'où l'envoi uniquement si `BRAIN_EFFORT` est
-  renseigné. Avec Opus 5.5 et Haiku 5.5, l'effort par défaut est `medium`.
-- **structured outputs** (`output_config.format`) : non utilisés. Le format des
-  `actions` varie selon leur type, et un schéma strict imposerait de figer chaque
-  variante. La consigne JSON du prompt système et `_parse_json()` suffisent.
-- Un refus du modèle (`stop_reason: "refusal"`) est traité comme une erreur : le
-  robot passe sur sa réponse de secours.
+- **temperature**: only sent to models that accept it (Haiku 4.5, Sonnet 4.5 / 4.6,
+  Opus 4.x up to 4.6). Opus 4.7 and later, Sonnet 5 / 5.5 and Haiku 5.5 return a 400
+  error with a non-default temperature. For these models, and for any unknown model,
+  the API default applies.
+- **thinking**: the parameter is never sent. Haiku 4.5 then answers without
+  thinking, which is equivalent to Ollama's `think: false`. On Opus 5.5 and Sonnet
+  5.5, thinking cannot be disabled (`disabled` returns a 400). To limit latency, set
+  `BRAIN_EFFORT=low`.
+- **effort**: Haiku 4.5 refuses it, hence it is only sent if `BRAIN_EFFORT` is set.
+  With Opus 5.5 and Haiku 5.5, the default effort is `medium`.
+- **structured outputs** (`output_config.format`): not used. The format of the
+  `actions` varies with their type, and a strict schema would require freezing each
+  variant. The JSON instruction in the system prompt and `_parse_json()` are enough.
+- A refusal by the model (`stop_reason: "refusal"`) is treated as an error: the
+  robot falls back to its backup response.
 
-Un modèle plus récent, `claude-haiku-5-5`, coûte 0,10 $ / 0,50 $ par million de
-tokens, contre 1 $ / 5 $ pour Haiku 4.5. Sa réflexion est active par défaut : à
-essayer avec `BRAIN_EFFORT=low`.
+A more recent model, `claude-haiku-5-5`, costs $0.10 / $0.50 per million tokens,
+against $1 / $5 for Haiku 4.5. Its thinking is on by default: try it with
+`BRAIN_EFFORT=low`.
 
-### Coût
+### Cost
 
-La boucle des rêves (02 h – 06 h, un tick toutes les 300 s) fait au plus
-**48 appels par nuit**. En comptant environ 1 000 tokens d'entrée (prompt système
-et contexte capteurs) et 300 tokens de sortie par appel, l'ordre de grandeur est le
-suivant :
+The dream loop (2am – 6am, one tick every 300 s) makes at most **48 calls per
+night**. Counting about 1,000 input tokens (system prompt and sensor context) and
+300 output tokens per call, the order of magnitude is:
 
-| Modèle | Prix entrée / sortie (par million de tokens) | Par appel | Par nuit (48) | Par mois |
+| Model | Input / output price (per million tokens) | Per call | Per night (48) | Per month |
 |---|---|---|---|---|
-| `claude-haiku-4-5` | 1 $ / 5 $ | ≈ 0,0025 $ | ≈ 0,12 $ | ≈ 3,60 $ |
-| `claude-haiku-5-5` | 0,10 $ / 0,50 $ | ≈ 0,00025 $ | ≈ 0,012 $ | ≈ 0,36 $ |
-| `claude-opus-5-5` | 4 $ / 20 $, plus les tokens de réflexion | ≈ 0,01 $ ou plus | ≈ 0,50 $ ou plus | ≈ 15 $ ou plus |
+| `claude-haiku-4-5` | $1 / $5 | ≈ $0.0025 | ≈ $0.12 | ≈ $3.60 |
+| `claude-haiku-5-5` | $0.10 / $0.50 | ≈ $0.00025 | ≈ $0.012 | ≈ $0.36 |
+| `claude-opus-5-5` | $4 / $20, plus thinking tokens | ≈ $0.01 or more | ≈ $0.50 or more | ≈ $15 or more |
 
-Les conversations de jour (chat, voix, sonar, bumper) s'ajoutent à ce total, un
-appel par interaction. Ces chiffres sont des estimations, pas des mesures : le coût
-réel s'affiche dans la console du fournisseur.
+Daytime conversations (chat, voice, sonar, bumper) add to this total, one call per
+interaction. These figures are estimates, not measurements: the actual cost is shown
+in the provider's console.
 
-### Confidentialité
+### Privacy
 
-Avec `openai` ou `anthropic`, **les données quittent le VPS**. Chaque appel envoie
-au fournisseur le prompt système, le message de l'utilisateur (le texte du chat ou
-la transcription de ce qui a été dit au robot) et le contexte des capteurs
-(batterie, sonar, direction de la voix, températures moteur). Ces données suivent
-alors la politique de conservation du fournisseur. Avec `ollama`, tout reste sur le VPS.
+With `openai` or `anthropic`, **the data leaves the VPS**. Each call sends the
+provider the system prompt, the user's message (the chat text or the transcription
+of what was said to the robot) and the sensor context (battery, sonar, voice
+direction, motor temperatures). The data is then subject to the provider's retention
+policy. With `ollama`, everything stays on the VPS.
 
 ---
 
-## Open WebUI — interface de chat
+## Open WebUI — chat interface
 
-**Image :** `ghcr.io/open-webui/open-webui:main`  
-**Port :** 3000 → 8080 (exposé via Traefik)  
-**URL :** `https://chat.$DOMAIN`
+**Image:** `ghcr.io/open-webui/open-webui:main`  
+**Port:** 3000 → 8080 (exposed through Traefik)  
+**URL:** `https://chat.$DOMAIN`
 
-Accès restreint aux comptes Google autorisés via SSO (OIDC). Les inscriptions libres sont désactivées.
+Access restricted to allowed Google accounts through SSO (OIDC). Open sign-ups are disabled.
 
 | Variable | Description |
 |---|---|
-| `WEBUI_SECRET_KEY` | Secret JWT pour les sessions |
-| `WEBUI_ADMIN_EMAIL` | Email du compte administrateur |
-| `OAUTH_CLIENT_ID` | Client ID Google (console.cloud.google.com) |
-| `OAUTH_CLIENT_SECRET` | Secret Google |
-| `OLLAMA_API_KEY` | Même valeur que `OLLAMA_API_KEYS` |
+| `WEBUI_SECRET_KEY` | JWT secret for sessions |
+| `WEBUI_ADMIN_EMAIL` | Administrator account email |
+| `OAUTH_CLIENT_ID` | Google Client ID (console.cloud.google.com) |
+| `OAUTH_CLIENT_SECRET` | Google secret |
+| `OLLAMA_API_KEY` | Same value as `OLLAMA_API_KEYS` |
 
-**Volume :** `/opt/ia/webui` → agents, utilisateurs, historique des conversations
+**Volume:** `/opt/ia/webui` → agents, users, conversation history
 
-**URI de callback OAuth à déclarer dans Google Cloud Console :**
+**OAuth callback URI to declare in the Google Cloud Console:**
 ```
 https://chat.$DOMAIN/oauth/oidc/callback
 ```
 
-### NAO Brain — chat WebUI comme interface du cerveau robotique
+### NAO Brain — WebUI chat as the robotic brain's interface
 
-Le Pipe `NAO Brain` (`robotics/brain/webui/nao_pipe.py`) connecte le chat Open WebUI au **même pipeline complet** que la parole directe à NAO.
+The `NAO Brain` Pipe (`robotics/brain/webui/nao_pipe.py`) connects the Open WebUI chat to the **same full pipeline** as speaking directly to NAO.
 
-Chaque message du chat est envoyé au cerveau (`BRAIN_PROVIDER` / `BRAIN_MODEL`), sans mot de réveil : « ok nao » ne sert qu'à la voix. Le cerveau répond en langage naturel ET pilote simultanément ses corps physiques (NAO, voix de la pièce et du stream, tout corps dans `BODY_REGISTRY`) via ROS 2. Le tchat Twitch (`twitch-input`, [ADR 005](decisions/005-avatar-twitch.md)) arrive par le même endpoint `/chat`.
+Each chat message is sent to the brain (`BRAIN_PROVIDER` / `BRAIN_MODEL`), without a wake word: "ok nao" is only for voice. The brain answers in natural language AND drives its physical bodies at the same time (NAO, room and stream voices, any body in `BODY_REGISTRY`) through ROS 2. The Twitch chat (`twitch-input`, [ADR 005](decisions/005-avatar-twitch.md)) arrives through the same `/chat` endpoint.
 
 ```
 comment tu vas ?
@@ -179,10 +179,10 @@ dis bonjour et fais une révérence
 mets les LEDs en violet et assieds-toi
 ```
 
-**Flux :**
+**Flow:**
 
 ```
-Chat WebUI  ──"[message]"──►  nao_pipe.py (Pipe)
+WebUI chat  ──"[message]"──►  nao_pipe.py (Pipe)
                                             │
                               POST http://chat-relay:8095/chat
                                             │
@@ -195,89 +195,90 @@ Chat WebUI  ──"[message]"──►  nao_pipe.py (Pipe)
                     ┌───────────────────────┘
                     │
               ROS 2 topics
-              ├─ /bodies/{static_01,obs_01}/actuators/say → voix connectées
-              │    (sinon /bodies/nao_01/actuators/say : le NAO parle)
-              ├─ /bodies/nao_01/actuators/motion → geste
+              ├─ /bodies/{static_01,obs_01}/actuators/say → connected voices
+              │    (otherwise /bodies/nao_01/actuators/say: NAO speaks)
+              ├─ /bodies/nao_01/actuators/motion → gesture
               └─ /bodies/nao_01/actuators/leds   → LEDs
                     │
-              Réponse JSON retournée au chat
-              (speech + actions affichées)
+              JSON response returned to the chat
+              (speech + actions shown)
 ```
 
-**Installation du Pipe (une seule fois, compte admin) :**
+**Installing the Pipe (once, admin account):**
 
 1. `https://chat.$DOMAIN` → **Workspace → Functions → (+)**
-2. Coller le contenu de `robotics/brain/webui/nao_pipe.py`
-3. Sélectionner le type **Pipe** → Enregistrer sous **NAO Brain**
-4. Le modèle **NAO Brain** apparaît dans la liste des modèles du chat
+2. Paste the content of `robotics/brain/webui/nao_pipe.py`
+3. Select the **Pipe** type → Save as **NAO Brain**
+4. The **NAO Brain** model appears in the chat's model list
 
-**Tâches de fond d'Open WebUI** (titre, tags, suggestions de suite, requêtes de recherche) : Open WebUI les confie au modèle du chat, donc au Pipe. Depuis la version 0.8.0, le Pipe les reconnaît (argument `__task__`, ou prompt commençant par `### Task:`) et y répond lui-même par une valeur neutre : elles n'atteignent jamais `body-gateway`, NAO ne parle ni ne bouge dessus et elles n'apparaissent plus dans la régie. Pour avoir de vrais titres et tags, choisir un modèle Ollama dans **Admin Settings → Interface → Task Model (modèles externes)**.
+**Open WebUI background tasks** (title, tags, follow-up suggestions, search queries): Open WebUI hands them to the chat's model, so to the Pipe. Since version 0.8.0, the Pipe recognises them (`__task__` argument, or a prompt starting with `### Task:`) and answers them itself with a neutral value: they never reach `body-gateway`, NAO neither speaks nor moves on them and they no longer show up in the control room. To get real titles and tags, pick an Ollama model in **Admin Settings → Interface → Task Model (external models)**.
 
-Le Pipe communique avec `body-gateway` via `chat-relay:8095` (valve `body_gateway_url`) : `chat-relay` est un proxy Caddy sur `ai-network` qui relaie vers le port 8095 de l'hôte, où écoute `body-gateway` en `network_mode: host`.
+The Pipe talks to `body-gateway` through `chat-relay:8095` (valve `body_gateway_url`): `chat-relay` is a Caddy proxy on `ai-network` that relays to port 8095 of the host, where `body-gateway` listens in `network_mode: host`.
 
 ---
 
-## n8n — orchestrateur de workflows
+## n8n — workflow orchestrator
 
-**Image :** `n8nio/n8n:latest`  
-**Port :** 5678 (lié à `127.0.0.1` — non exposé publiquement)  
-**Accès :** tunnel SSH uniquement
+**Image:** `n8nio/n8n:latest`  
+**Port:** 5678 (bound to `127.0.0.1` — not exposed publicly)  
+**Access:** SSH tunnel only
 
 ```bash
 ssh -L 5678:localhost:5678 $VPS_USER@$DOMAIN
-# puis ouvrir http://localhost:5678
+# then open http://localhost:5678
 ```
 
 | Variable | Description |
 |---|---|
-| `N8N_BASIC_AUTH_PASSWORD` | Mot de passe de l'interface |
+| `N8N_BASIC_AUTH_PASSWORD` | Interface password |
 
-**Volume :** `/opt/ia/n8n` → définitions de workflows
+**Volume:** `/opt/ia/n8n` → workflow definitions
 
-**Usages typiques :**
-- Déclencher des actions sur le robot NAO via `body-gateway` (POST localhost:8095/chat)
-- Chaîner des appels LLM via Ollama
-- Automatiser des tâches sur calendrier ou événement
-
----
-
-## ChromaDB — mémoire vectorielle
-
-**Image :** `chromadb/chroma:latest`  
-**Port :** 8000 (interne uniquement — jamais exposé)
-
-Utilisé par Open WebUI pour le RAG (Retrieval-Augmented Generation). Stocke les embeddings des documents uploadés.
-
-**Volume :** `/opt/ia/chroma` → index vectoriel persistant
+**Typical uses:**
+- Trigger actions on the NAO robot through `body-gateway` (POST localhost:8095/chat)
+- Chain LLM calls through Ollama
+- Automate tasks on a schedule or an event
 
 ---
 
-## Bitterbot — agent IA autonome (désactivé)
+## ChromaDB — vector memory
 
-> Voir [ADR 003](decisions/003-ollama-direct-sans-bitterbot.md) pour le contexte complet.
+**Image:** `chromadb/chroma:latest`  
+**Port:** 8000 (internal only — never exposed)
 
-Bitterbot est commenté dans `docker-compose.yml`. `body-gateway` appelle
-**le fournisseur choisi** par `BRAIN_PROVIDER` (par défaut Ollama local, `qwen3:1.7b` — voir [Fournisseur du cerveau](#fournisseur-du-cerveau-body-gateway)).
+Used by Open WebUI for RAG (Retrieval-Augmented Generation). Stores the embeddings of uploaded documents.
 
-Ce qu'on perd sans Bitterbot : mémoire long-terme SQLite, dream engine.  
-Ce qu'on garde : tout le pipeline de contrôle physique et le chat WebUI.
-
-**Pour réactiver Bitterbot :**
-
-1. Décommenter `bitterbot-gateway` dans `docker-compose.yml`
-2. Changer dans `body-gateway` : `BRAIN_URL=http://localhost:19001`
-3. Redéployer
+**Volume:** `/opt/ia/chroma` → persistent vector index
 
 ---
 
-## Réseaux Docker
+## Bitterbot — autonomous AI agent (disabled)
+
+> See [ADR 003](decisions/003-ollama-direct-sans-bitterbot.md) for the full context.
+
+Bitterbot is commented out in `docker-compose.yml`. `body-gateway` calls **the
+provider chosen** by `BRAIN_PROVIDER` (local Ollama by default, `qwen3:1.7b` — see
+[Brain provider](#brain-provider-body-gateway)).
+
+What is lost without Bitterbot: SQLite long-term memory, dream engine.  
+What is kept: the whole physical control pipeline and the WebUI chat.
+
+**To re-enable Bitterbot:**
+
+1. Uncomment `bitterbot-gateway` in `docker-compose.yml`
+2. In `body-gateway`, change: `BRAIN_URL=http://localhost:19001`
+3. Redeploy
+
+---
+
+## Docker networks
 
 ```
 ai-network (bridge, internet)
   └── ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge, chat-relay, twitch-input
 
-bitterbot-net (bridge, internal — aucun accès internet)
-  └── (réservé pour Bitterbot — voir ADR 003)
+bitterbot-net (bridge, internal — no internet access)
+  └── (reserved for Bitterbot — see ADR 003)
 
 robotics-net (bridge, internet)
   └── rosbridge-proxy, naoqi-bridge, obs-agent

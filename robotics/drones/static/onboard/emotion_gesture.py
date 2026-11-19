@@ -1,48 +1,48 @@
 #!/usr/bin/env python3
 """
-emotion_gesture.py — Gestes appris du NAO, générés sur le drone statique (ADR 009).
+emotion_gesture.py — Learned NAO gestures, generated on the static drone (ADR 009).
 
-Le générateur de nao-emotion-motion (`nao_gesture.py` + `nao_gesture.json`) est
-pris dans le dépôt public nao-emotion-motion-dataset, à la version fixée à la
-main dans `emotion_gesture.env` (GESTURE_DATASET_REF : tag ou commit). Aucune
-mise à jour automatique : changer de modèle = changer cette ligne, puis
-« recharger » depuis la régie ou redémarrer le service.
+The nao-emotion-motion generator (`nao_gesture.py` + `nao_gesture.json`) is taken
+from the public nao-emotion-motion-dataset repository, at the version pinned by
+hand in `emotion_gesture.env` (GESTURE_DATASET_REF: tag or commit). No automatic
+update: changing the model = changing that line, then "reload" from the control
+room or restart the service.
 
-Chaîne d'un geste :
+Chain of a gesture:
 
-    /nao/emotion_gesture   ← {"id", "emotion", "intensity", "event"}  (driver NAO / régie)
-    /nao/read_angles       → {"id"}                                   (au robot)
-    /nao/joint_angles      ← {"id", "angles"}                         (posture mesurée)
-    generate(..., current_pose, from_rest, return_to="start")         (guardian compris)
+    /nao/emotion_gesture   ← {"id", "emotion", "intensity", "event"}  (NAO driver / control room)
+    /nao/read_angles       → {"id"}                                   (to the robot)
+    /nao/joint_angles      ← {"id", "angles"}                         (measured posture)
+    generate(..., current_pose, from_rest, return_to="start")         (guardian included)
     /nao/trajectory        → {"id", "names", "angles", "times", "start", "relax_end"}
     /nao/trajectory_state  ← playing | done | stopped | refused | error
-    /nao/emotion_gesture_state → l'état de chaque geste et la version en service,
-                                 plus owns_body / at_rest pour le driver NAO
+    /nao/emotion_gesture_state → the state of each gesture and the version in service,
+                                 plus owns_body / at_rest for the NAO driver
 
-Après un geste le robot reste raide à la pose de départ ; s'il ne reçoit pas de
-nouveau geste pendant GESTURE_REST_DELAY secondes, le drone envoie le retour au
-repos (validé par le guardian) et le robot se relâche à la fin.
+After a gesture the robot stays stiff in the start pose; if it receives no new
+gesture for GESTURE_REST_DELAY seconds, the drone sends the return to rest
+(validated by the guardian) and the robot relaxes at the end.
 
-    /nao/emotion_gesture_control ← {"op": "reload"} : relit emotion_gesture.env
-                                 ← {"op": "speech_offset", "ms": 150} : décalage
-                                   parole / geste, à chaud (jusqu'au prochain reload)
+    /nao/emotion_gesture_control ← {"op": "reload"}: rereads emotion_gesture.env
+                                 ← {"op": "speech_offset", "ms": 150}: speech /
+                                   gesture offset, live (until the next reload)
 
-Synchronisation avec la parole (geste et phrase d'une même réponse du LLM,
-liés par body_gateway avec un id "sync") :
+Synchronisation with speech (gesture and sentence of the same LLM answer, linked
+by body_gateway with a "sync" id):
 
     /nao/emotion_gesture   ← {..., "sync": {"id", "speech_s", "speech_s_first"}}
-    /speech_gesture_sync   ← {"kind": "speech", "sync", "speech_s"}  (durée mesurée du MP3)
-    1. le geste est généré, puis le service attend la durée mesurée de la phrase
-       (GESTURE_SPEECH_WAIT_S au plus, sinon l'estimation de body_gateway) ;
-    2. la partie expressive (départ → geste → retour au départ) est étirée ou
-       resserrée pour durer autant que la parole (GESTURE_SPEECH_SCALE_MIN/MAX ;
-       resserrée seulement si le guardian l'accepte encore) ;
-    3. /speech_gesture_sync → {"kind": "go", "sync", "at"} : le haut-parleur du
-       drone (static_drone.py) dit la phrase à `at` = début de la partie
-       expressive + GESTURE_SPEECH_OFFSET_MS.  Décalage négatif : la parole part
-       avant, le geste est envoyé plus tard d'autant si besoin.
+    /speech_gesture_sync   ← {"kind": "speech", "sync", "speech_s"}  (measured MP3 duration)
+    1. the gesture is generated, then the service waits for the measured sentence
+       duration (GESTURE_SPEECH_WAIT_S at most, otherwise body_gateway's estimate);
+    2. the expressive part (start → gesture → back to start) is stretched or
+       tightened to last as long as the speech (GESTURE_SPEECH_SCALE_MIN/MAX;
+       tightened only if the guardian still accepts it);
+    3. /speech_gesture_sync → {"kind": "go", "sync", "at"}: the drone's speaker
+       (static_drone.py) says the sentence at `at` = start of the expressive part
+       + GESTURE_SPEECH_OFFSET_MS. Negative offset: speech starts before, the
+       gesture is sent that much later if needed.
 
-Lancement :
+Run:
     python3 emotion_gesture.py
 """
 
@@ -68,8 +68,8 @@ log = logging.getLogger("emotion_gesture")
 GENERATOR_FILES = ("generator/nao_gesture.py", "generator/nao_gesture.json")
 RAW_URL = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 STRING = "std_msgs/String"
-POSE_TIMEOUT_S = 2.0      # attente de /nao/joint_angles
-END_MARGIN_S = 1.0        # marge après la fin prévue d'un geste avant de le croire fini
+POSE_TIMEOUT_S = 2.0      # wait for /nao/joint_angles
+END_MARGIN_S = 1.0        # margin after a gesture's planned end before considering it finished
 CHECK_EMOTIONS_INTENSITY = 0.5
 SYNC_TOPIC = "/speech_gesture_sync"
 MAX_OFFSET_S = 10.0       # décalage parole / geste accepté, dans un sens ou dans l'autre
@@ -84,12 +84,12 @@ class GestureError(RuntimeError):
 # ======================================================================
 
 def read_settings():
-    """Relit emotion_gesture.env (fixé à la main) puis .env (connexion rosbridge)."""
+    """Rereads emotion_gesture.env (pinned by hand), then .env (rosbridge connection)."""
     for key in ("GESTURE_DATASET_REPO", "GESTURE_DATASET_REF", "GESTURE_CACHE_DIR",
                 "GESTURE_REST_DELAY", "GESTURE_RATE_HZ", "GESTURE_SPEECH_OFFSET_MS",
                 "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_SCALE_MIN", "GESTURE_SPEECH_SCALE_MAX",
                 "GESTURE_SPEECH_WAIT_S"):
-        os.environ.pop(key, None)   # un rechargement relit le fichier, pas l'ancienne valeur
+        os.environ.pop(key, None)   # a reload rereads the file, not the old value
     load_dotenv(os.environ.get("GESTURE_ENV_FILE") or os.path.join(HERE, "emotion_gesture.env"))
     load_dotenv(os.path.join(HERE, ".env"))
     ref = _env("GESTURE_DATASET_REF")
@@ -194,7 +194,7 @@ def fit_to_speech(gen, g, speech_s, scale_min=0.7, scale_max=3.0):
 
 
 # ======================================================================
-# Récupération du générateur, à la version fixée
+# Fetching the generator, at the pinned version
 # ======================================================================
 
 def _http_get(url, timeout=30):
@@ -204,10 +204,10 @@ def _http_get(url, timeout=30):
 
 
 def fetch_generator(repo, ref, cache_dir, get=_http_get):
-    """Dossier local contenant nao_gesture.py et nao_gesture.json à la version `ref`.
+    """Local folder containing nao_gesture.py and nao_gesture.json at version `ref`.
 
-    Les fichiers sont vérifiés (sha256 de dataset.json → files) puis gardés en
-    cache, une copie par version : une version déjà vue ne demande pas de réseau.
+    The files are checked (sha256 from dataset.json → files), then kept in the
+    cache, one copy per version: a version already seen needs no network.
     """
     folder = os.path.join(cache_dir, re.sub(r"[^A-Za-z0-9._-]", "_", ref))
     marker = os.path.join(folder, "dataset.json")
@@ -242,7 +242,7 @@ def fetch_generator(repo, ref, cache_dir, get=_http_get):
 
 
 def load_library(folder):
-    """Charge nao_gesture.py de ce dossier, sous un nom de module propre à la version."""
+    """Loads nao_gesture.py from this folder, under a module name specific to the version."""
     name = "nao_gesture_" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:10]
     spec = importlib.util.spec_from_file_location(name, os.path.join(folder, "nao_gesture.py"))
     mod = importlib.util.module_from_spec(spec)
@@ -251,7 +251,7 @@ def load_library(folder):
 
 
 def check_generator(lib, gen, profile=None, tolerance=0.05):
-    """Contrôles avant mise en service : (erreurs bloquantes, avertissements, taux d'acceptation)."""
+    """Checks before putting into service: (blocking errors, warnings, acceptance rate)."""
     errors, warnings = [], []
     if not gen.emotions:
         errors.append("aucune émotion")
@@ -264,7 +264,7 @@ def check_generator(lib, gen, profile=None, tolerance=0.05):
     if any(j not in start for j in joints):
         errors.append("pose de départ incomplète")
         return errors, warnings, 0.0
-    # Poses du profil moteur du robot (régie) : elles doivent reprendre celles de la calibration.
+    # Poses of the robot's motor profile (control room): they must copy those of the calibration.
     for chain in ((profile or {}).get("chains") or {}).values():
         for pose_name in ("rest", "start"):
             ref_pose = gen.guardian.pose(pose_name)
@@ -288,7 +288,7 @@ def check_generator(lib, gen, profile=None, tolerance=0.05):
 # ======================================================================
 
 class GestureService:
-    """Reçoit les gestes demandés, les génère d'après la posture mesurée, les envoie."""
+    """Receives the requested gestures, generates them from the measured posture, sends them."""
 
     def __init__(self, bridge, settings, clock=time.monotonic, wall=time.time, sleep=time.sleep):
         self.bridge = bridge
@@ -302,13 +302,13 @@ class GestureService:
         self.version = None
         self.profile = None
         self._lock = threading.Lock()
-        self._pending = None            # dernière demande en attente (les plus anciennes sont remplacées)
+        self._pending = None            # last pending request (older ones are replaced)
         self._wake = threading.Event()
-        self._angles = {}               # id -> angles reçus
+        self._angles = {}               # id -> angles received
         self._angles_cv = threading.Condition()
         self._playing = None            # {"id", "until"}
-        self._at_start = False          # robot laissé raide à la pose de départ
-        self._rested = True             # robot au repos et relâché (dernier retour au repos fini)
+        self._at_start = False          # robot left stiff in the start pose
+        self._rested = True             # robot at rest and relaxed (last return to rest finished)
         self._last_end = 0.0
         self._stop = threading.Event()
 
@@ -335,27 +335,27 @@ class GestureService:
                  "runs": dict((k, (m or {}).get("run")) for k, m in (info.get("models") or {}).items()),
                  "emotions": info.get("emotions") or []}
         full = state in ("version_loaded", "version_refused")
-        # owns_body : le drone tient la tête et les bras (geste en cours, ou robot
-        # raide à la pose de départ en attendant le retour au repos).  Le driver NAO
-        # ne leur envoie rien tant que c'est vrai.
+        # owns_body: the drone holds the head and the arms (gesture in progress, or robot
+        # stiff in the start pose while waiting for the return to rest). The NAO driver
+        # sends them nothing while this is true.
         msg = dict(fields, id=gid, state=state, version=self.version if full else short,
                    owns_body=self._playing is not None or self._at_start, at_rest=self._rested,
                    speech_offset_ms=self.settings.get("speech_offset_ms", 0.0))
-        log.info("Geste %s : %s %s", gid, state, fields.get("reason", ""))
+        log.info("Gesture %s: %s %s", gid, state, fields.get("reason", ""))
         self.publish("/nao/emotion_gesture_state", msg)
 
-    # -- version du générateur ----------------------------------------------
+    # -- generator version ----------------------------------------------
 
     def load(self, fetch=fetch_generator):
-        """Met en service la version fixée ; garde l'ancienne si la nouvelle échoue."""
+        """Puts the pinned version into service; keeps the old one if the new one fails."""
         s = self.settings
         try:
             folder = fetch(s["repo"], s["ref"], s["cache_dir"])
             lib = load_library(folder)
             gen = lib.GestureGenerator.load(os.path.join(folder, "nao_gesture.json"))
-            # Un générateur exporté avant nao-emotion-motion#62 valide le geste brut,
-            # sans l'étape qui le rend jouable : il refuse presque tout.  Refusé ici, avec
-            # la raison, plutôt que de voir chaque geste refusé un par un.
+            # A generator exported before nao-emotion-motion#62 validates the raw gesture,
+            # without the step that makes it playable: it refuses almost everything. Refused here, with
+            # the reason, rather than seeing each gesture refused one by one.
             if not hasattr(gen, "adapt_generated"):
                 raise GestureError("générateur trop ancien : il ne rend pas les gestes jouables "
                                    "(exporter le dataset avec nao-emotion-motion#62 ou plus récent)")
@@ -446,13 +446,13 @@ class GestureService:
         p = self._playing
         if p is None:
             return False
-        if self.clock() > p["until"]:      # état de fin perdu : on ne bloque pas indéfiniment
+        if self.clock() > p["until"]:      # end state lost: do not block forever
             self._playing = None
             return False
         return True
 
     def step(self):
-        """Une itération : joue la demande en attente, ou le retour au repos dû."""
+        """One iteration: plays the pending request, or the due return to rest."""
         with self._lock:
             if self._busy():
                 return
@@ -481,8 +481,8 @@ class GestureService:
             from_rest = self._is_at_rest(gen, pose)
             emotion, intensity = req.get("emotion"), float(req.get("intensity", 0.5))
             event = req.get("event") or None
-            # Refusé : on réessaie sans l'événement, puis avec une petite variation
-            # (conseil de docs/generator-integration.md §7) ; sinon rien n'est joué.
+            # Refused: retry without the event, then with a small variation
+            # (advice from docs/generator-integration.md §7); otherwise nothing is played.
             tries = [(event, 0.0, None)] + ([(None, 0.0, None)] if event else []) + [(event, 0.05, 1)]
             for ev, variation, seed in tries:
                 g = gen.generate(emotion, intensity, event=ev, current_pose=pose, from_rest=from_rest,
@@ -517,7 +517,7 @@ class GestureService:
             self._at_start = True
 
     def back_to_rest(self):
-        """Retour au repos après un délai sans geste : validé par le guardian, puis relâché."""
+        """Return to rest after a delay without a gesture: validated by the guardian, then relaxed."""
         gen, lib = self.gen, self.lib
         gid = "rest-" + uuid.uuid4().hex[:6]
         try:
@@ -631,12 +631,12 @@ class GestureService:
             self._wake.clear()
             try:
                 self.step()
-                # version en service rappelée régulièrement (régie ouverte après coup, reconnexion)
+                # version in service repeated regularly (control room opened later, reconnection)
                 if time.monotonic() - last >= announce_every and self.bridge.connected:
                     last = time.monotonic()
                     self.state(None, "version_loaded" if self.gen is not None else "no_version")
             except Exception:
-                log.exception("Erreur dans la boucle des gestes")
+                log.exception("Error in the gesture loop")
 
     def stop(self):
         self._stop.set()
@@ -658,12 +658,12 @@ def main():
     if not url and _env("DOMAIN"):
         url = "wss://rosbridge.{}".format(_env("DOMAIN"))
     if not url:
-        raise SystemExit("ROSBRIDGE_URL ou DOMAIN manquant dans .env")
+        raise SystemExit("ROSBRIDGE_URL or DOMAIN missing from .env")
     bridge = Rosbridge(url, token, _env_float("RECONNECT_MAX_S", 30))
     service = GestureService(bridge, settings)
     service.setup()
     if not service.load():
-        log.error("Version %s refusée : aucun geste tant qu'une version valable n'est pas chargée",
+        log.error("Version %s refused: no gesture until a valid version is loaded",
                   settings["ref"])
     threading.Thread(target=service.run, daemon=True).start()
     try:

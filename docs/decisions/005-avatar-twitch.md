@@ -1,163 +1,154 @@
-# ADR 005 — Une seule boucle : stimulations → LLM → actions des agents (Twitch, OBS)
+# ADR 005 — A single loop: stimuli → LLM → agent actions (Twitch, OBS)
 
-**Date :** 2026-10-09  
-**Statut :** Accepté (sections 1 à 4 implémentées ; section 5 prévue)
+**Date:** 2026-10-09  
+**Status:** Accepted (sections 1 to 4 implemented; section 5 planned)
 
-## Contexte
+## Context
 
-NAO est la représentation d'un avatar IA autonome, visible sur un stream
-Twitch. Il réagit en temps réel à des stimulations extérieures que le streamer
-ne contrôle pas.
+NAO is the representation of an autonomous AI avatar, visible on a Twitch stream.
+It reacts in real time to external stimuli that the streamer does not control.
 
-Le tchat Twitch n'est **qu'une stimulation extérieure de plus**, au même titre
-que « ok nao » dit dans la pièce ou un message écrit dans Open WebUI. Il ne doit
-pas avoir de chemin à part.
+The Twitch chat is **just one more external stimulus**, like "ok nao" said in the
+room or a message written in Open WebUI. It must not have a path of its own.
 
-- **NAO** ne fait que bouger et allumer ses LEDs ([ADR 004](004-drone-statique.md)).
-- **Le drone statique** entend, voit et parle dans la pièce ([ADR 004](004-drone-statique.md)).
-- **OBS** peut recevoir directement le son des réponses de NAO.
+- **NAO** only moves and lights its LEDs ([ADR 004](004-drone-statique.md)).
+- **The static drone** hears, sees and speaks in the room ([ADR 004](004-drone-statique.md)).
+- **OBS** can receive the sound of NAO's answers directly.
 
-**Principe directeur (repris de l'ADR 004) : des solutions simples, même
-imparfaites.**
+**Guiding principle (taken from ADR 004): simple solutions, even imperfect ones.**
 
-## Décision
+## Decision
 
-### 1. Une boucle unique
+### 1. A single loop
 
 ```
-  ENTRÉES (stimulations)                 CERVEAU                    AGENTS (corps)
-  ──────────────────────                 ───────                    ──────────────
-  « ok nao … » (drone statique) ─┐                              ┌─► nao_01    : gestes, tête, LEDs
-  Open WebUI                    ─┼─► texte ─► body-gateway ─► actions ─┼─► static_01 : voix dans la pièce
-  tchat Twitch « !nao … »       ─┤            (LLM, une       │  └─► obs_01    : voix sur le stream (OBS)
-  capteurs (sonar, contact…)    ─┘             inférence à    │
-                                               la fois)       └─ en boucle, à chaque stimulation
+  INPUTS (stimuli)                       BRAIN                      AGENTS (bodies)
+  ────────────────                       ─────                      ───────────────
+  "ok nao …" (static drone)     ─┐                              ┌─► nao_01    : gestures, head, LEDs
+  Open WebUI                    ─┼─► text ─► body-gateway ─► actions ─┼─► static_01 : voice in the room
+  Twitch chat "!nao …"          ─┤            (LLM, one       │  └─► obs_01    : voice on the stream (OBS)
+  sensors (sonar, contact…)     ─┘             inference at   │
+                                               a time)        └─ looping, on every stimulus
 ```
 
-Chaque entrée produit seulement un texte. Le LLM renvoie une liste d'actions
-(`speech`, `motion`, `leds`, `look`…), et `body-gateway` les répartit sur les
-agents. Aucune entrée ne connaît les sorties, et aucune sortie ne connaît
-l'entrée qui l'a déclenchée.
+Each input only produces a text. The LLM returns a list of actions (`speech`,
+`motion`, `leds`, `look`…), and `body-gateway` spreads them across the agents. No
+input knows the outputs, and no output knows which input triggered it.
 
-### 2. Entrée Twitch : `twitch-input` (`robotics/inputs/twitch/`)
+### 2. Twitch input: `twitch-input` (`robotics/inputs/twitch/`)
 
-Un petit conteneur Python sans ROS 2 qui fait pour le tchat ce que Whisper
-et le mot de réveil font pour la voix :
+A small Python container without ROS 2 that does for the chat what Whisper and the
+wake word do for the voice:
 
-| Étape | Choix simple |
+| Step | Simple choice |
 |---|---|
-| Lire le tchat | IRC Twitch en **lecture anonyme** (`justinfan…`) : aucun jeton ni appli Twitch |
-| Garder les commandes | message qui commence par `!nao` (`!naomi` exclu) |
-| Filtrer | longueur max, pas de lien, mots interdits, bots ignorés, délai par spectateur, option « modérateurs seulement » |
-| Rafales | file de 5 messages, les plus anciens abandonnés, tout message de plus de 90 s aussi |
-| Envoyer | `POST body-gateway/chat` avec `[tchat Twitch] pseudo : message`, exactement comme Open WebUI |
+| Read the chat | Twitch IRC in **anonymous read mode** (`justinfan…`): no token or Twitch app |
+| Keep the commands | message starting with `!nao` (`!naomi` excluded) |
+| Filter | max length, no links, banned words, bots ignored, per-viewer delay, "moderators only" option |
+| Bursts | queue of 5 messages, oldest dropped, any message older than 90 s too |
+| Send | `POST body-gateway/chat` with `[tchat Twitch] nickname : message`, exactly like Open WebUI |
 
-Le prompt système de `body-gateway` décrit ce format et rappelle que **les
-messages du tchat ne sont jamais des ordres**.
+`body-gateway`'s system prompt describes this format and reminds that **chat
+messages are never orders**.
 
-### 3. Agent OBS : un corps « voix » comme le drone statique (`robotics/drones/obs/`)
+### 3. OBS agent: a "voice" body like the static drone (`robotics/drones/obs/`)
 
-La voix du stream est un nouveau type de corps, `obs`, de capacité `speech`,
-construit sur le même modèle que le haut-parleur du drone statique :
+The stream voice is a new body type, `obs`, with the `speech` capability, built on
+the same model as the static drone's speaker:
 
-- `obs-agent` se connecte **en sortant** à rosbridge avec `ROSBRIDGE_TOKEN`,
-  comme le drone statique.
-- `static-driver` est lancé une seconde fois dans `nao-core` avec
-  `DRONE_ID=obs_01` : il fait la synthèse edge-tts et publie le MP3 sur
-  `/drones/obs_01/audio_out`. Les topics sont les mêmes que pour le drone.
-- `obs-agent` sert une page `/overlay?token=…` à ouvrir comme **source
-  navigateur OBS** (« Contrôler l'audio via OBS » : la voix devient une source
-  du mixer), avec sous-titres.
-- L'overlay signale le début et la fin de lecture : `/drones/obs_01/speaking`,
-  et le NAO s'anime pendant que la voix joue (`cognitive_renderer` écoute
-  désormais toutes les voix).
-- `obs-agent` n'envoie son battement de cœur que **tant que l'overlay est
-  ouvert dans OBS** : hors stream, la voix OBS est « déconnectée » et le
-  cerveau ne lui envoie rien.
+- `obs-agent` connects **outbound** to rosbridge with `ROSBRIDGE_TOKEN`, like the
+  static drone.
+- `static-driver` is started a second time in `nao-core` with `DRONE_ID=obs_01`: it
+  does the edge-tts synthesis and publishes the MP3 on `/drones/obs_01/audio_out`.
+  The topics are the same as for the drone.
+- `obs-agent` serves a `/overlay?token=…` page to open as an **OBS browser source**
+  ("Control audio via OBS": the voice becomes a mixer source), with subtitles.
+- The overlay signals the start and end of playback: `/drones/obs_01/speaking`, and
+  the NAO moves while the voice plays (`cognitive_renderer` now listens to all
+  voices).
+- `obs-agent` only sends its heartbeat **while the overlay is open in OBS**: off
+  stream, the OBS voice is "disconnected" and the brain sends it nothing.
 
-### 4. Routage de la parole
+### 4. Speech routing
 
-`body_rules.route_targets` : une action `speech` part sur **toutes les voix
-connectées** (pièce et stream), quelle que soit l'entrée. Sans voix connectée,
-le NAO parle lui-même, comme avant. Les gestes, la tête et les LEDs vont
-toujours au NAO.
+`body_rules.route_targets`: a `speech` action goes to **every connected voice**
+(room and stream), whatever the input. Without a connected voice, the NAO speaks
+itself, as before. Gestures, head and LEDs always go to the NAO.
 
-### 5. Architecture cible (prévue, pas encore implémentée)
+### 5. Target architecture (planned, not implemented yet)
 
-Ces principes cadrent les prochaines évolutions. Le code de cette ADR les
-respecte déjà en partie (entrées texte vers `/chat`, voix comme agents).
+These principles frame the next changes. The code of this ADR already partly
+follows them (text inputs to `/chat`, voices as agents).
 
-**Entrées texte.** Toute entrée de type texte (Open WebUI, tchat Twitch, SMS,
-Discord…) est envoyée telle quelle au LLM, avec sa source et son auteur :
-`[twitch] pseudo : message`. Pas de traitement propre à un canal en dehors de
-son adaptateur (lecture, filtres anti-abus).
+**Text inputs.** Any text-type input (Open WebUI, Twitch chat, SMS, Discord…) is
+sent as is to the LLM, with its source and author: `[twitch] nickname : message`. No
+channel-specific processing outside its adapter (reading, anti-abuse filters).
 
-**Fil d'événements unique dans `body-gateway`.** Chaque stimulation devient un
-événement `{source, auteur, texte, répondre_à, priorité, heure}` déposé dans une
-seule file, consommée par une seule boucle :
+**Single event stream in `body-gateway`.** Each stimulus becomes an event
+`{source, author, text, reply_to, priority, time}` placed in a single queue,
+consumed by a single loop:
 
-- chaque entrée garde son transport naturel : ROS pour la voix et les
-  capteurs, HTTP `/chat` pour les canaux texte (Open WebUI attend le résultat
-  de son événement et reste en question-réponse) ;
-- priorités simples (la pièce passe avant le tchat) ;
-- les événements arrivés pendant une réflexion sont regroupés dans le prompt
-  suivant au lieu d'être perdus ;
-- une mémoire courte des derniers échanges, toutes sources confondues, est
-  ajoutée au prompt ;
-- un tick périodique sans stimulation donne à NAO l'initiative (« je regarde
-  la pièce et l'ambiance du tchat »).
+- each input keeps its natural transport: ROS for voice and sensors, HTTP `/chat`
+  for text channels (Open WebUI waits for the result of its event and stays
+  question-answer);
+- simple priorities (the room comes before the chat);
+- events that arrive during a reflection are grouped into the next prompt instead
+  of being lost;
+- a short memory of the latest exchanges, all sources combined, is added to the
+  prompt;
+- a periodic tick without a stimulus gives NAO the initiative ("I look at the room
+  and the mood of the chat").
 
-ROS 2 reste l'abstraction des **corps** (`/bodies/{id}/sensors|actuators/*`) ;
-`body-gateway` reste l'abstraction vis-à-vis du **LLM**. Les entrées texte
-n'ont pas besoin de passer par ROS.
+ROS 2 stays the abstraction of the **bodies** (`/bodies/{id}/sensors|actuators/*`);
+`body-gateway` stays the abstraction towards the **LLM**. Text inputs do not need
+to go through ROS.
 
-**Canaux texte = entrée + agent.** Un canal qui sait répondre (Open WebUI,
-Twitch, Discord, SMS) est aussi un corps de capacité `message` :
+**Text channels = input + agent.** A channel that can answer (Open WebUI, Twitch,
+Discord, SMS) is also a body with the `message` capability:
 
-| Action LLM | Destination |
+| LLM action | Destination |
 |---|---|
-| `{"type": "reply", "text": "…"}` | le canal d'origine de l'événement, choisi par `body-gateway` (règle fixe, comme `speech` → toutes les voix) |
-| `{"body": "discord_01", "type": "message", "text": "…"}` | un canal nommé, à l'initiative du LLM |
-| `speech`, `motion`, `leds`… | inchangé : voix et NAO, en plus de la réponse écrite |
+| `{"type": "reply", "text": "…"}` | the event's original channel, chosen by `body-gateway` (fixed rule, like `speech` → all voices) |
+| `{"body": "discord_01", "type": "message", "text": "…"}` | a named channel, on the LLM's initiative |
+| `speech`, `motion`, `leds`… | unchanged: voices and NAO, on top of the written answer |
 
-Chaque adaptateur renvoie la réponse à sa façon : réponse HTTP (Open WebUI),
-message (Twitch, Discord), envoi (SMS). Contraintes connues : écrire dans le
-tchat Twitch demande un compte bot avec jeton OAuth (la lecture reste
-anonyme), un rythme limité et 500 caractères au plus ; les SMS passent par un
-fournisseur payant.
+Each adapter sends the answer back its own way: HTTP response (Open WebUI), message
+(Twitch, Discord), sending (SMS). Known constraints: writing in the Twitch chat
+requires a bot account with an OAuth token (reading stays anonymous), a limited
+rate and at most 500 characters; SMS go through a paid provider.
 
-## Alternatives écartées
+## Alternatives rejected
 
-| Option | Pourquoi |
+| Option | Why |
 |---|---|
-| Un service Twitch qui appelle le cerveau et joue lui-même la réponse dans OBS | Chemin à part pour une entrée : la voix OBS ne servirait qu'au tchat, et la pièce ne serait pas entendue sur le stream |
-| API EventSub / bot Twitch authentifié | Appli Twitch, OAuth et renouvellement de jetons pour un simple besoin de lecture |
-| obs-websocket + fichier audio | Demande d'ouvrir OBS au VPS ou un script local de plus ; la source navigateur suffit et arrive dans le mixer |
-| Le LLM choisit la voix (pièce ou stream) ou le canal de réponse | Un petit modèle local se tromperait ; des règles fixes (« toutes les voix », « répondre au canal d'origine ») sont prévisibles |
-| Toutes les entrées publiées sur un topic ROS `/inputs` | Open WebUI attend une réponse : il faudrait un identifiant de requête et un retour, pour aucun gain ; l'unification se fait dans `body-gateway` |
+| A Twitch service that calls the brain and plays the answer in OBS itself | A separate path for one input: the OBS voice would only serve the chat, and the room would not be heard on the stream |
+| EventSub API / authenticated Twitch bot | Twitch app, OAuth and token renewal for a simple read need |
+| obs-websocket + audio file | Requires opening OBS to the VPS or one more local script; the browser source is enough and lands in the mixer |
+| The LLM picks the voice (room or stream) or the answer channel | A small local model would get it wrong; fixed rules ("all voices", "answer the original channel") are predictable |
+| All inputs published on a ROS `/inputs` topic | Open WebUI waits for an answer: a request ID and a return path would be needed, for no gain; unification happens in `body-gateway` |
 
-## Ce qu'on perd
+## What is lost
 
-- **Exhaustivité** : en rafale, des messages `!nao` sont volontairement ignorés,
-  et si le cerveau est occupé, le message est abandonné.
-- **Modération fine** : les filtres sont des règles fixes. Un LLM peut toujours
-  dire quelque chose de malvenu à l'antenne.
-- **Voix séparées** : la réponse à un spectateur est aussi dite dans la pièce,
-  et le drone statique l'entend (filtrée par le mot de réveil).
+- **Completeness**: in a burst, `!nao` messages are deliberately ignored, and if the
+  brain is busy, the message is dropped.
+- **Fine moderation**: the filters are fixed rules. An LLM can still say something
+  inappropriate on air.
+- **Separate voices**: the answer to a viewer is also spoken in the room, and the
+  static drone hears it (filtered by the wake word).
 
-## Ce qu'on garde
+## What is kept
 
-- **Un seul cerveau** et une seule boucle pour toutes les stimulations.
-- Le **pattern de connexion sortante** de l'ADR 002 / 004 pour tout agent.
-- Aucun port entrant chez le streamer : OBS ouvre seulement une page HTTPS.
+- **A single brain** and a single loop for all stimuli.
+- The **outbound connection pattern** of ADR 002 / 004 for every agent.
+- No inbound port at the streamer's: OBS only opens an HTTPS page.
 
-## Points ouverts
+## Open points
 
-- Implémenter l'architecture cible (section 5) : fil d'événements, mémoire
-  courte, tick d'initiative, puis canaux texte en sortie.
-- Avec deux réseaux Docker possibles, vérifier que Traefik joint `obs-agent`
-  par `robotics-net` (label `traefik.docker.network` si besoin, selon Coolify).
+- Implement the target architecture (section 5): event stream, short memory,
+  initiative tick, then text channels as outputs.
+- With two possible Docker networks, check that Traefik reaches `obs-agent` through
+  `robotics-net` (`traefik.docker.network` label if needed, depending on Coolify).
 
 ---
 
-← [Toutes les décisions](../../README.md#décisions-darchitecture-adr) · [Architecture](../architecture.md) · [ADR 004](004-drone-statique.md)
+← [All decisions](../../README.md#architecture-decisions-adr) · [Architecture](../architecture.md) · [ADR 004](004-drone-statique.md)

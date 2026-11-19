@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 """
-generate_clips_fr.py — Voix de synthèse françaises pour entraîner « ok nao ».
+generate_clips_fr.py — French synthetic voices to train "ok nao".
 
-Le générateur d'openWakeWord (piper-sample-generator) ne parle qu'anglais : ce
-script le remplace pour l'étape --generate_clips. Il écrit des WAV 16 kHz mono
-dans les quatre dossiers attendus par openwakeword.train :
+openWakeWord's generator (piper-sample-generator) only speaks English: this
+script replaces it for the --generate_clips step. It writes 16 kHz mono WAVs
+into the four folders expected by openwakeword.train:
 
-    <out>/positive_train  <out>/positive_test     « ok nao » sous toutes ses formes
-    <out>/negative_train  <out>/negative_test     mots proches (« ok », « nao »,
+    <out>/positive_train  <out>/positive_test     "ok nao" in all its forms
+    <out>/negative_train  <out>/negative_test     close words (« ok », « nao »,
                                                   « cacao », « ok non »…)
 
-Deux sources, chacune facultative :
-  - edge-tts : toutes les voix fr-* (France, Canada, Belgique, Suisse), débit
-    et hauteur variés. Demande Internet.
-  - Piper : voix françaises locales, dont fr_FR-mls-medium (125 locuteurs).
-    Téléchargées dans --piper-dir au premier usage.
+Two sources, each optional:
+  - edge-tts: all fr-* voices (France, Canada, Belgium, Switzerland), varied
+    rate and pitch. Needs the Internet.
+  - Piper: local French voices, including fr_FR-mls-medium (125 speakers).
+    Downloaded into --piper-dir on first use.
 
-Les phrases tirées pour le test viennent de voix absentes de l'entraînement :
-le score de test dit alors comment le modèle réagit à une voix inconnue.
+The sentences drawn for the test come from voices absent from training: the
+test score then tells how the model reacts to an unknown voice.
 
-Usage (voir models/README.md) :
+Usage (see models/README.md):
     pip install edge-tts piper-tts scipy numpy
     python generate_clips_fr.py --out sortie/ok_nao --n-train 3000 --n-test 300
 
-Dépendance système : ffmpeg (décodage des MP3 d'edge-tts).
+System dependency: ffmpeg (decoding edge-tts MP3s).
 """
 
 import argparse
@@ -41,11 +41,11 @@ import numpy as np
 
 RATE = 16000
 
-# Façons d'écrire le mot de réveil : la ponctuation change l'intonation.
+# Ways of writing the wake word: punctuation changes the intonation.
 POSITIVE = ["ok nao", "OK Nao.", "Ok, Nao !", "Ok Nao ?", "okay nao", "Okay, Nao.",
             "Ok Nao,", "OK NAO !", "ok, nao..."]
 
-# Ce qui ressemble à « ok nao » sans l'être, et quelques phrases courantes.
+# What sounds like "ok nao" without being it, and a few common sentences.
 NEGATIVE = ["ok", "Nao.", "le Nao", "Nao, tu m'entends ?", "ok non", "Ok, no.", "ok nono",
             "ok néo", "ok noé", "ok nano", "ok Léo", "ok Marco", "ok Google", "OK Bruno",
             "cacao", "chaos", "Ciao !", "et oh", "oh non", "ah non", "au niveau",
@@ -95,11 +95,11 @@ def mp3_to_pcm(mp3):
 
 
 # ----------------------------------------------------------------------
-# Plan : (texte, voix) répartis entre entraînement et test
+# Plan: (text, voice) split between training and test
 # ----------------------------------------------------------------------
 
 class Plan:
-    """Répartit les voix entre entraînement (~90 %) et test (~10 %)."""
+    """Splits the voices between training (~90 %) and test (~10 %)."""
 
     def __init__(self, voices, seed):
         rnd = random.Random(seed)
@@ -111,7 +111,7 @@ class Plan:
 
 
 def jobs(plan, texts, n_train, n_test, rnd):
-    """[(dossier, texte, voix)] : n_train clips d'entraînement, n_test de test."""
+    """[(folder, text, voice)]: n_train training clips, n_test test clips."""
     out = [("train", rnd.choice(texts), rnd.choice(plan.train)) for _ in range(n_train)]
     out += [("test", rnd.choice(texts), rnd.choice(plan.test)) for _ in range(n_test)]
     return out
@@ -163,7 +163,7 @@ async def edge_generate(todo, out, kind, rnd, concurrency=8):
 # ----------------------------------------------------------------------
 
 def piper_load(names, data_dir):
-    """[(nom, PiperVoice)] ; télécharge les voix absentes."""
+    """[(name, PiperVoice)]; downloads the missing voices."""
     from piper import PiperVoice
     os.makedirs(data_dir, exist_ok=True)
     loaded = []
@@ -175,12 +175,12 @@ def piper_load(names, data_dir):
         if os.path.isfile(path):
             loaded.append((name, PiperVoice.load(path)))
         else:
-            print("Voix Piper {} indisponible, ignorée".format(name), file=sys.stderr)
+            print("Piper voice {} unavailable, skipped".format(name), file=sys.stderr)
     return loaded
 
 
 def piper_speakers(loaded):
-    """Un « locuteur » = (indice de voix, speaker_id)."""
+    """A "speaker" = (voice index, speaker_id)."""
     return [(i, s) for i, (_, v) in enumerate(loaded)
             for s in range(max(1, v.config.num_speakers))]
 
@@ -208,13 +208,13 @@ def piper_generate(todo, loaded, out, kind, rnd):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", required=True, help="dossier <output_dir>/<model_name> du YAML")
-    ap.add_argument("--n-train", type=int, default=3000, help="clips positifs (et négatifs) d'entraînement")
-    ap.add_argument("--n-test", type=int, default=300, help="clips positifs (et négatifs) de test")
+    ap.add_argument("--out", required=True, help="<output_dir>/<model_name> folder from the YAML")
+    ap.add_argument("--n-train", type=int, default=3000, help="positive (and negative) training clips")
+    ap.add_argument("--n-test", type=int, default=300, help="positive (and negative) test clips")
     ap.add_argument("--edge-share", type=float, default=0.5,
-                    help="part des clips faite par edge-tts (le reste par Piper)")
-    ap.add_argument("--no-edge", action="store_true", help="sans edge-tts (hors ligne)")
-    ap.add_argument("--no-piper", action="store_true", help="sans Piper")
+                    help="share of clips made by edge-tts (the rest by Piper)")
+    ap.add_argument("--no-edge", action="store_true", help="without edge-tts (offline)")
+    ap.add_argument("--no-piper", action="store_true", help="without Piper")
     ap.add_argument("--piper-dir", default="piper-voices")
     ap.add_argument("--piper-voices", default=",".join(PIPER_VOICES))
     ap.add_argument("--seed", type=int, default=1)
@@ -237,7 +237,7 @@ def main():
 
     if n_edge[0] + n_edge[1]:
         voices = asyncio.run(edge_voices())
-        print("edge-tts : {} voix françaises".format(len(voices)))
+        print("edge-tts: {} French voices".format(len(voices)))
         plan = Plan(voices, args.seed)
         for kind, texts in (("positive", POSITIVE), ("negative", NEGATIVE)):
             asyncio.run(edge_generate(jobs(plan, texts, *n_edge, rnd), args.out, kind, rnd))
