@@ -1,154 +1,153 @@
-# Drone statique — programme embarqué
+# Static drone — onboard program
 
-Programme Python 3 qui transforme un petit ordinateur Linux posé dans la pièce
-en **oreilles, yeux et voix** du robot ([ADR 004](../../../../docs/decisions/004-drone-statique.md)).
-Il ouvre une connexion WebSocket **sortante** vers rosbridge sur le VPS, comme
-le NAO ([ADR 002](../../../../docs/decisions/002-nao-websocket-bridge.md)) :
-aucun port à ouvrir côté maison.
+Python 3 program that turns a small Linux computer placed in the room into the
+robot's **ears, eyes and voice** ([ADR 004](../../../../docs/decisions/004-drone-statique.md)).
+It opens an **outbound** WebSocket connection to rosbridge on the VPS, like the NAO
+([ADR 002](../../../../docs/decisions/002-nao-websocket-bridge.md)): no port to open
+at home.
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `static_drone.py` | Programme principal |
-| `direction.py` | Calcul de la direction du son (numpy seul, testable sans matériel) |
-| `wakeword.py` | Mot de réveil local avec openWakeWord (`WAKE_MODE=local`) |
-| [`models/`](models/README.md) | Modèle « ok nao » : où le mettre, comment l'entraîner (notebook Colab) |
-| `tests/test_direction.py` | Tests unitaires de `direction.py` |
-| `.env.example` | Configuration d'exemple, à copier en `.env` |
-| `requirements.txt` | Dépendances Python |
-| `requirements-wakeword.txt` | openWakeWord, à installer avec `--no-deps` |
-| `static-drone.service` | Service systemd, pour un démarrage automatique plus tard |
-| `static-drone-user.service` | Service systemd utilisateur, pour un PC Ubuntu de bureau (accès au son de la session) |
-| `tests/test_camera.py` | Tests unitaires du choix de la caméra et de la fréquence audio |
-| `tests/test_wakeword.py` | Tests unitaires du détecteur de mot de réveil (sans openWakeWord) |
-| [`pc-portable-ubuntu.md`](pc-portable-ubuntu.md) | **Installation sur un PC portable Ubuntu** (webcam + micro) |
-| `setup-ubuntu.sh` | Installation automatique sur Ubuntu (idempotente), voir [pc-portable-ubuntu.md](pc-portable-ubuntu.md#installation-automatique) |
-| `setup-lib.sh` | Fonctions communes aux scripts d'installation |
-| `nao-relay/` | Relais du NAO : le NAO passe par le drone pour joindre le VPS ([installation](nao-relay/README.md), [ADR 006](../../../../docs/decisions/006-nao-via-drone-statique.md)) |
-| `emotion_gesture.py` | Gestes appris du NAO : génère les gestes émotionnels sur le drone et les envoie au robot (voir [Gestes appris](#gestes-appris-du-nao)) |
-| `emotion_gesture.env.example` | Version du générateur à utiliser, à copier en `emotion_gesture.env` |
-| `emotion-gesture-user.service` | Service systemd utilisateur du générateur de gestes |
-| `tests/test_emotion_gesture.py` | Tests du service de gestes (sans réseau ni robot) |
+| `static_drone.py` | Main program |
+| `direction.py` | Sound direction computation (numpy only, testable without hardware) |
+| `wakeword.py` | Local wake word with openWakeWord (`WAKE_MODE=local`) |
+| [`models/`](models/README.md) | "ok nao" model: where to put it, how to train it (Colab notebook) |
+| `tests/test_direction.py` | Unit tests for `direction.py` |
+| `.env.example` | Example configuration, to copy to `.env` |
+| `requirements.txt` | Python dependencies |
+| `requirements-wakeword.txt` | openWakeWord, to install with `--no-deps` |
+| `static-drone.service` | systemd service, for automatic start later |
+| `static-drone-user.service` | systemd user service, for a desktop Ubuntu PC (access to the session's sound) |
+| `tests/test_camera.py` | Unit tests for the camera choice and the audio sample rate |
+| `tests/test_wakeword.py` | Unit tests for the wake word detector (without openWakeWord) |
+| [`pc-portable-ubuntu.md`](pc-portable-ubuntu.md) | **Installation on an Ubuntu laptop** (webcam + microphone) |
+| `setup-ubuntu.sh` | Automatic installation on Ubuntu (idempotent), see [pc-portable-ubuntu.md](pc-portable-ubuntu.md#automatic-installation) |
+| `setup-lib.sh` | Functions shared by the installation scripts |
+| `nao-relay/` | NAO relay: the NAO goes through the drone to reach the VPS ([installation](nao-relay/README.md), [ADR 006](../../../../docs/decisions/006-nao-via-drone-statique.md)) |
+| `emotion_gesture.py` | Learned NAO gestures: generates the emotional gestures on the drone and sends them to the robot (see [Learned gestures](#learned-nao-gestures)) |
+| `emotion_gesture.env.example` | Generator version to use, to copy to `emotion_gesture.env` |
+| `emotion-gesture-user.service` | systemd user service for the gesture generator |
+| `tests/test_emotion_gesture.py` | Tests for the gesture service (no network, no robot) |
 
 ## Topics
 
-`{id}` vaut `DRONE_ID` (défaut `static_01`).
+`{id}` is `DRONE_ID` (default `static_01`).
 
-| Topic | Sens | Type | Contenu |
+| Topic | Direction | Type | Content |
 |---|---|---|---|
-| `/drones/{id}/status` | → VPS | `std_msgs/String` | JSON toutes les 30 s : `capabilities`, `mics`, `respeaker`, `aec`, `direction_mode`, `wake_mode`, `camera_hfov_deg`, `speaking`, `uptime_s` |
-| `/drones/{id}/audio` | → VPS | `std_msgs/String` | JSON `{"wav": base64, "azimuth_deg": angle ou null, "direction_source": "respeaker\|loudest_mic\|image\|none"}`, plus `"wake": "local"` et `"wake_score"` pour la phrase qui suit un mot de réveil détecté sur le drone |
-| `/drones/{id}/wake` | → VPS | `std_msgs/String` | `WAKE_MODE=local` : JSON `{"model", "score", "threshold"}` dès que « ok nao » est entendu |
-| `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | MP3 en base64 (comme `/nao/audio_out`) |
-| `/drones/{id}/speaking` | → VPS | `std_msgs/Bool` | `true` au début de la lecture, `false` à la fin |
+| `/drones/{id}/status` | → VPS | `std_msgs/String` | JSON every 30 s: `capabilities`, `mics`, `respeaker`, `aec`, `direction_mode`, `wake_mode`, `camera_hfov_deg`, `speaking`, `uptime_s` |
+| `/drones/{id}/audio` | → VPS | `std_msgs/String` | JSON `{"wav": base64, "azimuth_deg": angle or null, "direction_source": "respeaker\|loudest_mic\|image\|none"}`, plus `"wake": "local"` and `"wake_score"` for the sentence following a wake word detected on the drone |
+| `/drones/{id}/wake` | → VPS | `std_msgs/String` | `WAKE_MODE=local`: JSON `{"model", "score", "threshold"}` as soon as "ok nao" is heard |
+| `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | base64 MP3 (like `/nao/audio_out`) |
+| `/drones/{id}/speaking` | → VPS | `std_msgs/Bool` | `true` at the start of playback, `false` at the end |
 | `/drones/{id}/image` | → VPS | `std_msgs/String` | JSON `{"jpeg": base64, "width", "height", "reason": "periodic\|request"}` |
-| `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Demande une image tout de suite |
+| `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Requests an image right away |
 
-Les angles sont en degrés : **0 = axe de la caméra, positif = à droite**,
-entre -180 et 180.
+Angles are in degrees: **0 = camera axis, positive = to the right**, between -180
+and 180.
 
-## Gestes appris du NAO
+## Learned NAO gestures
 
-`emotion_gesture.py` fait tourner, sur le drone, le générateur de gestes appris
-par [nao-emotion-motion](https://github.com/Monolithoid/nao-emotion-motion).
-Le robot ne fait que jouer la trajectoire reçue (module `trajectory` de
-`nao_ws_bridge.py`), rien de lourd ne tourne sur le NAO.
+`emotion_gesture.py` runs, on the drone, the gesture generator learned by
+[nao-emotion-motion](https://github.com/Monolithoid/nao-emotion-motion). The robot
+only plays the trajectory it receives (`trajectory` module of `nao_ws_bridge.py`),
+nothing heavy runs on the NAO.
 
-**Version du modèle.** Le générateur (`generator/nao_gesture.py` +
-`generator/nao_gesture.json`) vient du dépôt public
-`nao-emotion-motion-dataset`, à la version écrite **à la main** dans
-`emotion_gesture.env` :
+**Model version.** The generator (`generator/nao_gesture.py` +
+`generator/nao_gesture.json`) comes from the public `nao-emotion-motion-dataset`
+repository, at the version written **by hand** in `emotion_gesture.env`:
 
 ```bash
 cp emotion_gesture.env.example emotion_gesture.env
-# puis mettre un tag ou un commit complet :
+# then set a tag or a full commit:
 # GESTURE_DATASET_REF=v2026-11-18
 ```
 
-Le service ne suit jamais `main` de lui-même. Les fichiers sont vérifiés
-(sha256 de `dataset.json`) et gardés en cache par version. Pour changer de
-modèle : modifier `GESTURE_DATASET_REF`, puis publier `{"op": "reload"}` sur
-`/nao/emotion_gesture_control` (bouton de la régie) ou redémarrer le service.
-Si la nouvelle version est refusée (fichiers invalides, aucun geste accepté
-depuis la pose de départ), l'ancienne reste en service.
+The service never follows `main` on its own. The files are checked (sha256 from
+`dataset.json`) and cached per version. To change the model: edit
+`GESTURE_DATASET_REF`, then publish `{"op": "reload"}` on
+`/nao/emotion_gesture_control` (control room button) or restart the service. If the
+new version is refused (invalid files, no gesture accepted from the start pose), the
+old one stays in service.
 
-**Générateur requis.** Le générateur doit rendre les gestes jouables avant le
-guardian, comme l'interface de nao-emotion-motion (`playable.py`) : c'est le
-cas des exports faits avec nao-emotion-motion#62 ou plus récent. Le drone ne
-refait pas cette étape. Une version plus ancienne du dataset est refusée au
-chargement, avec la raison dans `/nao/emotion_gesture_state` (visible dans la
-régie), et l'ancienne version reste en service. Un geste refusé par le
-guardian est réessayé sans l'événement, puis avec une petite variation (le
-champ `retry` le signale) ; sinon rien n'est joué.
+**Required generator.** The generator must make gestures playable before the
+guardian, like the nao-emotion-motion interface (`playable.py`): this is the case
+for exports made with nao-emotion-motion#62 or later. The drone does not redo this
+step. An older dataset version is refused at load time, with the reason in
+`/nao/emotion_gesture_state` (visible in the control room), and the old version
+stays in service. A gesture refused by the guardian is retried without the event,
+then with a small variation (the `retry` field says so); otherwise nothing is
+played.
 
-**Lancement.**
+**Starting it.**
 
 ```bash
-python3 emotion_gesture.py                 # à la main
+python3 emotion_gesture.py                 # by hand
 cp emotion-gesture-user.service ~/.config/systemd/user/
 systemctl --user enable --now emotion-gesture-user
 ```
 
-La connexion rosbridge est lue dans le `.env` du drone. Seul numpy est
-nécessaire (déjà dans `requirements.txt`).
+The rosbridge connection is read from the drone's `.env`. Only numpy is needed
+(already in `requirements.txt`).
 
 **Topics.**
 
-| Topic | Sens | Contenu |
+| Topic | Direction | Content |
 |---|---|---|
-| `/nao/emotion_gesture` | ← driver, régie | `{"id", "emotion", "intensity", "event"}` ; `event` = `null` ou `{"azimuth_deg", "elevation_deg", "distance_m"}` dans le repère du torse du robot (azimut positif = à gauche, l'inverse du drone) |
-| `/nao/emotion_gesture_control` | ← régie | `{"op": "reload"}` : relit `emotion_gesture.env` |
-| `/nao/read_angles` | → robot | `{"id"}` : demande la posture mesurée |
+| `/nao/emotion_gesture` | ← driver, control room | `{"id", "emotion", "intensity", "event"}`; `event` = `null` or `{"azimuth_deg", "elevation_deg", "distance_m"}` in the robot's torso frame (azimuth positive = to the left, the opposite of the drone) |
+| `/nao/emotion_gesture_control` | ← control room | `{"op": "reload"}`: rereads `emotion_gesture.env` |
+| `/nao/read_angles` | → robot | `{"id"}`: asks for the measured posture |
 | `/nao/joint_angles` | ← robot | `{"id", "angles": {joint: rad}}` |
 | `/nao/trajectory` | → robot | `{"id", "names", "angles", "times", "start", "relax_end"}` |
 | `/nao/trajectory_state` | ← robot | `{"id", "state": "playing\|done\|stopped\|refused\|error", "reason"}` |
-| `/nao/emotion_gesture_state` | → VPS | état de chaque geste (`sent`, `refused`, `replaced`, `robot_playing`, `robot_done`…), la version en service (`version_loaded`, `version_refused`), et `owns_body` / `at_rest` : le driver NAO ne bouge pas la tête ni les bras tant que `owns_body` est vrai |
+| `/nao/emotion_gesture_state` | → VPS | state of each gesture (`sent`, `refused`, `replaced`, `robot_playing`, `robot_done`…), the version in service (`version_loaded`, `version_refused`), and `owns_body` / `at_rest`: the NAO driver does not move the head or the arms while `owns_body` is true |
 
-Après un geste, le robot reste raide à la pose de départ. Sans nouveau geste
-pendant `GESTURE_REST_DELAY` secondes (3 par défaut), le drone envoie le
-retour au repos, validé lui aussi par le guardian, et le robot se relâche à la
-fin. Une demande qui arrive pendant un geste attend la fin de celui-ci ; une
-demande plus récente remplace celle qui attendait.
+After a gesture, the robot stays stiff in the start pose. Without a new gesture for
+`GESTURE_REST_DELAY` seconds (3 by default), the drone sends the return to rest,
+also validated by the guardian, and the robot relaxes at the end. A request that
+arrives during a gesture waits for it to finish; a more recent request replaces the
+one that was waiting.
 
-## Direction du son
+## Sound direction
 
-Règle fixe de l'ADR 004, choisie au démarrage selon le matériel :
+Fixed rule from ADR 004, chosen at startup according to the hardware:
 
-1. **ReSpeaker USB 4 micros** branché → `respeaker` : moyenne des `DOAANGLE`
-   lus pendant la parole, plus `DOA_OFFSET`.
-2. Sinon, **au moins 2 micros** déclarés dans `MICS` → `loudest_mic` : angle du
-   micro dont l'énergie pendant la parole est la plus forte.
-3. Sinon, **webcam** → `image` : x moyen des pixels qui ont bougé pendant la
-   parole, `angle = (x / largeur − 0.5) × CAMERA_HFOV`.
-4. Sinon → `none` (`azimuth_deg` vaut `null`).
+1. **ReSpeaker USB 4 mics** plugged in → `respeaker`: average of the `DOAANGLE`
+   values read during speech, plus `DOA_OFFSET`.
+2. Otherwise, **at least 2 microphones** declared in `MICS` → `loudest_mic`: angle of
+   the microphone with the highest energy during speech.
+3. Otherwise, **webcam** → `image`: mean x of the pixels that moved during speech,
+   `angle = (x / width − 0.5) × CAMERA_HFOV`.
+4. Otherwise → `none` (`azimuth_deg` is `null`).
 
-Si la méthode ne donne rien pour une phrase (pas de mouvement, par exemple),
-le message part quand même avec `direction_source: "none"`.
+If the method gives nothing for a sentence (no motion, for example), the message is
+still sent with `direction_source: "none"`.
 
-## Matériel
+## Hardware
 
-- Un **PC Ubuntu** (22.04 ou plus) ou un **Raspberry Pi 5** sous Raspberry Pi
-  OS 64 bits (Bookworm).
-- Pour entendre, l'un des deux :
-  - un **ReSpeaker USB Mic Array v2.0** (4 micros, détection de parole et
-    direction intégrées) ;
-  - un ou plusieurs **micros USB**. Pour la direction par micro le plus fort,
-    il faut que les micros arrivent comme **canaux d'une même entrée** (micro
-    stéréo USB, petite interface audio à 2 entrées…).
-- Une **webcam USB**.
-- Un **haut-parleur** : sur la prise jack du ReSpeaker (annulation d'écho), ou
-  sur la sortie audio / un haut-parleur USB.
+- An **Ubuntu PC** (22.04 or later) or a **Raspberry Pi 5** running Raspberry Pi OS
+  64-bit (Bookworm).
+- To hear, one of the two:
+  - a **ReSpeaker USB Mic Array v2.0** (4 mics, built-in speech detection and
+    direction);
+  - one or more **USB microphones**. For loudest-mic direction, the microphones must
+    show up as **channels of the same input** (USB stereo mic, small 2-input audio
+    interface…).
+- A **USB webcam**.
+- A **speaker**: on the ReSpeaker's jack output (echo cancellation), or on the audio
+  output / a USB speaker.
 
-## Installation pas à pas
+## Step-by-step installation
 
-Sur un **PC portable Ubuntu** avec webcam et micro, suivre plutôt
-[pc-portable-ubuntu.md](pc-portable-ubuntu.md) (choix du micro et de la
-webcam, service utilisateur, mise en veille).
-Le script `setup-ubuntu.sh` fait cette installation automatiquement.
+On an **Ubuntu laptop** with a webcam and a microphone, follow
+[pc-portable-ubuntu.md](pc-portable-ubuntu.md) instead (microphone and webcam
+choice, user service, sleep). The `setup-ubuntu.sh` script does that installation
+automatically.
 
-### 1. Système
+### 1. System
 
-Sur le Pi, installer Raspberry Pi OS 64 bits avec Raspberry Pi Imager et
-activer SSH. Puis, sur le Pi ou le PC Ubuntu :
+On the Pi, install Raspberry Pi OS 64-bit with Raspberry Pi Imager and enable SSH.
+Then, on the Pi or the Ubuntu PC:
 
 ```bash
 sudo apt update
@@ -166,21 +165,21 @@ python3 -m venv .venv
 .venv/bin/pip install --no-deps -r requirements-wakeword.txt
 ```
 
-openWakeWord s'installe sans ses dépendances (déjà dans `requirements.txt`) :
-sinon pip réclame `tflite-runtime`, introuvable pour Python 3.12 (Ubuntu
-24.04), et se rabat sur une vieille version.
+openWakeWord is installed without its dependencies (already in `requirements.txt`):
+otherwise pip asks for `tflite-runtime`, which cannot be found for Python 3.12
+(Ubuntu 24.04), and falls back to an old version.
 
-Raspberry Pi OS interdit `pip install` hors environnement virtuel : passer par
-`.venv` comme ci-dessus.
+Raspberry Pi OS forbids `pip install` outside a virtual environment: use `.venv` as
+above.
 
-### 3. Droits sur le matériel
+### 3. Hardware permissions
 
 ```bash
 sudo usermod -aG audio,video,plugdev $USER
 ```
 
-Pour que le programme lise le ReSpeaker sans `sudo`, ajouter une règle udev
-(identifiants USB `2886:0018`, ceux de `tuning.py` de Seeed) :
+For the program to read the ReSpeaker without `sudo`, add a udev rule (USB IDs
+`2886:0018`, those of Seeed's `tuning.py`):
 
 ```bash
 echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="0018", MODE="0666"' \
@@ -188,124 +187,119 @@ echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="0018", MODE="0
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Se déconnecter puis se reconnecter (ou redémarrer) pour que les groupes
-s'appliquent.
+Log out and back in (or reboot) for the groups to apply.
 
-### 4. Vérifier le matériel
+### 4. Check the hardware
 
 ```bash
-lsusb                                   # le ReSpeaker apparaît en 2886:0018
-arecord -l                              # entrées audio
-aplay -l                                # sorties audio
-.venv/bin/python -m sounddevice         # entrées vues par le programme
+lsusb                                   # the ReSpeaker shows up as 2886:0018
+arecord -l                              # audio inputs
+aplay -l                                # audio outputs
+.venv/bin/python -m sounddevice         # inputs seen by the program
 ls /dev/video*                          # webcam
-mpg123 -q un_fichier.mp3                # test du haut-parleur
+mpg123 -q some_file.mp3                 # speaker test
 ```
 
-Le ReSpeaker existe avec deux firmwares : 1 canal (audio traité) ou 6 canaux
-(canal 0 traité, canaux 1 à 4 bruts, canal 5 lecture). Les deux conviennent :
-le programme enregistre le canal 0.
+The ReSpeaker exists with two firmwares: 1 channel (processed audio) or 6 channels
+(channel 0 processed, channels 1 to 4 raw, channel 5 playback). Both work: the
+program records channel 0.
 
-### 5. Configurer
+### 5. Configure
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-À renseigner au minimum :
+To fill in at least:
 
-- `ROSBRIDGE_URL` (ex. `wss://rosbridge.mondomaine.fr`) ou `DOMAIN` ;
-- `ROSBRIDGE_TOKEN` : la même valeur que sur le VPS.
+- `ROSBRIDGE_URL` (e.g. `wss://rosbridge.mydomain.com`) or `DOMAIN`;
+- `ROSBRIDGE_TOKEN`: the same value as on the VPS.
 
-Selon le matériel :
+Depending on the hardware:
 
-- **ReSpeaker** : rien à faire, il est détecté. Si le haut-parleur est sur sa
-  prise jack, mettre `RESPEAKER_AEC=1` et diriger la lecture vers lui, par
-  exemple `PLAYER_CMD=mpg123 -q -a hw:ArrayUAC10,0 -` (nom de carte donné par
-  `aplay -l`).
-- **Plusieurs micros** : `MICS=gauche:-60,droite:60` (un `nom:angle` par
-  canal, dans l'ordre des canaux) et, si besoin, `AUDIO_INPUT_DEVICE` avec le
-  nom ou l'index affiché par `python -m sounddevice`. Si l'entrée refuse
-  `SAMPLE_RATE` (16 kHz), sa fréquence par défaut est utilisée.
-- **Caméra** : `CAMERA_INDEX` = index, chemin (`/dev/video2`) ou nom partiel
-  affiché par `v4l2-ctl --list-devices` ; `CAMERA_HFOV` = champ de vision
-  horizontal de la webcam (défaut 66°).
+- **ReSpeaker**: nothing to do, it is detected. If the speaker is on its jack output,
+  set `RESPEAKER_AEC=1` and send playback to it, for example
+  `PLAYER_CMD=mpg123 -q -a hw:ArrayUAC10,0 -` (card name given by `aplay -l`).
+- **Several microphones**: `MICS=gauche:-60,droite:60` (one `name:angle` per channel,
+  in channel order) and, if needed, `AUDIO_INPUT_DEVICE` with the name or index shown
+  by `python -m sounddevice`. If the input refuses `SAMPLE_RATE` (16 kHz), its
+  default rate is used.
+- **Camera**: `CAMERA_INDEX` = index, path (`/dev/video2`) or partial name shown by
+  `v4l2-ctl --list-devices`; `CAMERA_HFOV` = horizontal field of view of the webcam
+  (default 66°).
 
-### 6. Lancer à la main
+### 6. Run by hand
 
 ```bash
 .venv/bin/python static_drone.py
 ```
 
-Le journal doit afficher la méthode de direction retenue puis
-`Connecté à wss://…`. Parler devant les micros : une ligne
-`Audio envoyé : … angle … (…)` apparaît à chaque phrase. `Ctrl+C` pour arrêter.
+The log must show the chosen direction method, then `Connected to wss://…`. Speak in
+front of the microphones: an `Audio sent: … angle … (…)` line appears for each
+sentence. `Ctrl+C` to stop.
 
-Pour plus de détails : `LOG_LEVEL=DEBUG .venv/bin/python static_drone.py`.
+For more details: `LOG_LEVEL=DEBUG .venv/bin/python static_drone.py`.
 
-### 7. Réglages
+### 7. Tuning
 
-- **Seuil de volume** (sans ReSpeaker) : lancer avec `LOG_LEVEL=DEBUG`, se
-  taire, puis parler, et placer `RMS_THRESHOLD` entre les deux. Trop bas : le
-  bruit de fond déclenche l'enregistrement ; trop haut : les phrases sont
-  coupées.
-- **Orientation** : se placer bien en face de la caméra et parler. L'angle doit
-  être proche de 0. Sinon, ajuster `DOA_OFFSET` de l'écart observé. Si l'angle
-  augmente quand on va vers la gauche, mettre `DOA_INVERT=1` (ReSpeaker).
-- **Écho** : sans annulation d'écho, l'écoute est coupée pendant la lecture et
-  `PLAYBACK_TAIL_S` secondes après.
+- **Volume threshold** (without ReSpeaker): run with `LOG_LEVEL=DEBUG`, stay silent,
+  then speak, and set `RMS_THRESHOLD` between the two. Too low: background noise
+  triggers recording; too high: sentences are cut.
+- **Orientation**: stand right in front of the camera and speak. The angle must be
+  close to 0. Otherwise, adjust `DOA_OFFSET` by the observed gap. If the angle
+  increases when you move to the left, set `DOA_INVERT=1` (ReSpeaker).
+- **Echo**: without echo cancellation, listening is cut during playback and
+  `PLAYBACK_TAIL_S` seconds after.
 
-### « Ok nao » : sur le drone ou sur le VPS
+### "Ok nao": on the drone or on the VPS
 
-`WAKE_MODE` dans `.env` choisit où le mot de réveil est reconnu.
+`WAKE_MODE` in `.env` chooses where the wake word is recognised.
 
-**`WAKE_MODE=local` (recommandé)** : comme une enceinte connectée, le drone
-écoute en continu et reconnaît « ok nao » lui-même avec
-[openWakeWord](https://github.com/dscripka/openWakeWord). Il garde en
-mémoire les dernières `WAKE_PRE_ROLL_S` secondes (0,5 s) : au mot de réveil,
-l'enregistrement part de là, pour ne pas couper « ok nao quelle heure… » dit
-d'une traite. Il attend ensuite le début de la phrase (jusqu'à
-`WAKE_LISTEN_S`, 5 s) et s'arrête après `SILENCE_S` de silence. Seule cette
-phrase part au VPS, marquée `"wake": "local"` : body-gateway ne la refiltre
-pas. Plus rapide (Whisper ne transcrit que les questions) et plus fiable
-(Whisper n'a plus à reconnaître un « ok nao » isolé).
+**`WAKE_MODE=local` (recommended)**: like a smart speaker, the drone listens
+continuously and recognises "ok nao" itself with
+[openWakeWord](https://github.com/dscripka/openWakeWord). It keeps the last
+`WAKE_PRE_ROLL_S` seconds (0.5 s) in memory: on the wake word, recording starts from
+there, so as not to cut "ok nao quelle heure…" said in one go. It then waits for the
+start of the sentence (up to `WAKE_LISTEN_S`, 5 s) and stops after `SILENCE_S` of
+silence. Only that sentence goes to the VPS, marked `"wake": "local"`: body-gateway
+does not filter it again. Faster (Whisper only transcribes questions) and more
+reliable (Whisper no longer has to recognise an isolated "ok nao").
 
-- Modèle : `WAKE_MODEL=ok_nao` charge `models/ok_nao.onnx`, à entraîner une
-  fois ([models/README.md](models/README.md), notebook Colab). Pour essayer
-  avant : `WAKE_MODEL=hey_jarvis` et dire « hey Jarvis ».
-- Seuil : `WAKE_THRESHOLD` (0,5). Avec `LOG_LEVEL=DEBUG`, le journal affiche
-  le score max de chaque seconde (`Score « ok_nao » max sur 1 s : 0.83`) :
-  le placer entre le score du bruit de la pièce et celui de « ok nao ».
-- Charge : quelques millisecondes de calcul toutes les 80 ms, sur PC comme
-  sur Raspberry Pi 5.
+- Model: `WAKE_MODEL=ok_nao` loads `models/ok_nao.onnx`, to train once
+  ([models/README.md](models/README.md), Colab notebook). To try before that:
+  `WAKE_MODEL=hey_jarvis` and say "hey Jarvis".
+- Threshold: `WAKE_THRESHOLD` (0.5). With `LOG_LEVEL=DEBUG`, the log shows the max
+  score of each second (`Max score for "ok_nao" over 1 s: 0.83`): set it between the
+  score of the room noise and that of "ok nao".
+- Load: a few milliseconds of computation every 80 ms, on a PC as on a Raspberry Pi 5.
 
-**`WAKE_MODE=server` (défaut, sans modèle)** : le drone envoie chaque phrase
-au VPS, Whisper la transcrit, puis body-gateway cherche « ok nao » dedans. Le
-plus fiable est alors de tout dire d'une traite : « ok nao, quelle heure
-est-il ? ». En deux fois, attendre `j'écoute` avant la question. Si Whisper
-écrit le mot de réveil autrement (« Ok, now », …), ajouter cette orthographe
-à `WAKE_ALIASES` côté VPS (body-gateway).
+**`WAKE_MODE=server` (default, no model)**: the drone sends every sentence to the
+VPS, Whisper transcribes it, then body-gateway looks for "ok nao" in it. The most
+reliable is then to say it all in one go: « ok nao, quelle heure est-il ? ». In two
+steps, wait for `j'écoute` before the question. If Whisper writes the wake word
+differently ("Ok, now", …), add that spelling to `WAKE_ALIASES` on the VPS side
+(body-gateway).
 
-La régie montre ce qui s'est passé :
+The control room shows what happened:
 
-| Dans la régie | Sens |
+| In the control room | Meaning |
 |---|---|
-| `mot de réveil, j'écoute : ok nao sur le drone (ok_nao, score 0.83)` | `local` : le drone a entendu « ok nao », la phrase suivante part au LLM |
-| `mot de réveil, j'écoute : …` | `server` : « ok nao » seul, la phrase suivante (dans les 10 s) part au LLM |
-| carte voix avec la question | la question est partie au LLM |
-| `ignoré (sans mot de réveil) : …` | `server` : Whisper n'a pas reconnu « ok nao » : le texte dit ce qu'il a compris |
-| rien | le drone n'a rien envoyé : voir son journal (`Trop court, ignoré`, `Rien entendu après le mot de réveil`, score sous le seuil) |
+| `mot de réveil, j'écoute : ok nao sur le drone (ok_nao, score 0.83)` | `local`: the drone heard "ok nao", the next sentence goes to the LLM |
+| `mot de réveil, j'écoute : …` | `server`: "ok nao" alone, the next sentence (within 10 s) goes to the LLM |
+| voice card with the question | the question went to the LLM |
+| `ignoré (sans mot de réveil) : …` | `server`: Whisper did not recognise "ok nao": the text says what it understood |
+| nothing | the drone sent nothing: see its log (`Too short, ignored`, `Nothing heard after the wake word`, score under the threshold) |
 
-Le résultat arrive après `SILENCE_S` de silence plus le temps de Whisper
-sur le VPS (affiché dans le journal de static-driver : `STT [static_01] (1.8 s)`).
+The result arrives after `SILENCE_S` of silence plus the Whisper time on the VPS
+(shown in the static-driver log: `STT [static_01] (1.8 s)`).
 
-### 8. Démarrage automatique (plus tard)
+### 8. Automatic start (later)
 
-Sur un PC Ubuntu de bureau, utiliser plutôt le service utilisateur
-([pc-portable-ubuntu.md, étape 9](pc-portable-ubuntu.md#9-automatic-start)).
+On a desktop Ubuntu PC, use the user service instead
+([pc-portable-ubuntu.md, step 9](pc-portable-ubuntu.md#9-automatic-start)).
 
-Sur le Pi, adapter `User` et les chemins de `static-drone.service`, puis :
+On the Pi, adapt `User` and the paths in `static-drone.service`, then:
 
 ```bash
 sudo cp static-drone.service /etc/systemd/system/
@@ -314,28 +308,27 @@ sudo systemctl enable --now static-drone
 journalctl -u static-drone -f
 ```
 
-### 9. Relais du NAO (ADR 006)
+### 9. NAO relay (ADR 006)
 
-Le NAO ne sait pas faire de TLS : il envoie ses requêtes au drone, qui les
-relaie vers le VPS en `wss://` et ajoute le jeton (relais Caddy). Voir
+The NAO cannot do TLS: it sends its requests to the drone, which relays them to the
+VPS over `wss://` and adds the token (Caddy relay). See
 [nao-relay/README.md](nao-relay/README.md).
 
 ## Tests
 
-Sans matériel, avec numpy seulement (`test_wakeword.py` demande aussi scipy) :
+Without hardware, with numpy only (`test_wakeword.py` also needs scipy):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-## Limites connues
+## Known limitations
 
-- Hors connexion, les messages audio et image sont perdus (pas de file
-  d'attente) ; la reconnexion est automatique (1 s, puis jusqu'à
-  `RECONNECT_MAX_S`).
-- La direction par l'image suit le **mouvement**, pas forcément la personne
-  qui parle, et reste bornée au champ de la caméra.
-- `loudest_mic` ne gère qu'une entrée audio à plusieurs canaux, pas plusieurs
-  micros USB séparés.
-- Côté VPS, `body-gateway` ne connaît pas encore le corps `static` (voir les
-  conséquences de l'ADR 004).
+- While offline, audio and image messages are lost (no queue); reconnection is
+  automatic (1 s, then up to `RECONNECT_MAX_S`).
+- Image-based direction follows **motion**, not necessarily the person speaking, and
+  stays bounded to the camera's field.
+- `loudest_mic` only handles one multi-channel audio input, not several separate USB
+  microphones.
+- On the VPS side, `body-gateway` does not know the `static` body yet (see the
+  consequences of ADR 004).
