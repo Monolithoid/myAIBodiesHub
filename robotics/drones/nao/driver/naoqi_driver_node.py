@@ -15,6 +15,8 @@ Command flow (brain → NAO):
   /bodies/{id}/actuators/leds    → /nao/leds     (std_msgs/String JSON)
   /bodies/{id}/actuators/posture → /nao/gesture  (std_msgs/String)
   /bodies/{id}/actuators/move    → /nao/cmd_vel  (geometry_msgs/Twist)
+  /bodies/{id}/actuators/gesture → /nao/emotion_gesture (learned gesture, played
+                                   by the static drone, ADR 009)
   /naoqi/leds                    → /nao/leds      (from cognitive_renderer)
   /naoqi/motion                  → /nao/motion    (from cognitive_renderer)
   /naoqi/stiffness               → /nao/stiffness (from cognitive_renderer via energy_state)
@@ -26,6 +28,9 @@ Sensor flow (NAO → brain):
                → /bodies/{id}/sensors/motor_ranges (JSON {chain: {joint: [min, max]}} —
                  allowed ranges given to the LLM, re-published every 15 s)
   /nao/audio   → Whisper STT → /bodies/{id}/sensors/speech
+  /nao/emotion_gesture_state
+               → /bodies/{id}/sensors/gesture_emotions (JSON list of the emotions
+                 the drone's gesture generator knows, [] = none, every 15 s)
 
 Environment variables:
   ROBOT_ID           body identifier, default "nao_01"
@@ -52,6 +57,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -97,6 +103,7 @@ class NAOqiDriverNode(Node):
         self.pub_sonar        = self.create_publisher(Range,   f"{ns}/sensors/sonar",   10)
         self.pub_connected    = self.create_publisher(Bool,    f"{ns}/connected",       10)
         self.pub_ranges       = self.create_publisher(String,  f"{ns}/sensors/motor_ranges", 10)
+        self.pub_gesture_emotions = self.create_publisher(String, f"{ns}/sensors/gesture_emotions", 10)
 
         # ── Publishers: commands → NAO (via rosbridge → nao_ws_bridge) ───────
         self.pub_nao_speech     = self.create_publisher(String, "/nao/speech",     10)
@@ -106,6 +113,7 @@ class NAOqiDriverNode(Node):
         self.pub_nao_leds       = self.create_publisher(String, "/nao/leds",       10)
         self.pub_nao_motion     = self.create_publisher(String, "/nao/motion",     10)
         self.pub_nao_stiffness  = self.create_publisher(String, "/nao/stiffness",  10)
+        self.pub_nao_emotion_gesture = self.create_publisher(String, "/nao/emotion_gesture", 10)
 
         # ── Subscribers: actuator commands from body_gateway ─────────────────
         self.create_subscription(String, f"{ns}/actuators/say",     self._on_say,     10)
@@ -113,6 +121,7 @@ class NAOqiDriverNode(Node):
         self.create_subscription(String, f"{ns}/actuators/leds",    self._on_leds,    10)
         self.create_subscription(String, f"{ns}/actuators/posture", self._on_posture, 10)
         self.create_subscription(String, f"{ns}/actuators/move",    self._on_move,    10)
+        self.create_subscription(String, f"{ns}/actuators/gesture", self._on_gesture, 10)
 
         # ── Subscribers: cognitive_renderer → same physical channels ─────────
         self.create_subscription(String, "/naoqi/leds",      self._on_naoqi_leds,      10)
@@ -136,6 +145,11 @@ class NAOqiDriverNode(Node):
 
         # ── Subscriber: NAO audio → Whisper STT ──────────────────────────────
         self.create_subscription(String, "/nao/audio", self._on_audio, 10)
+
+        # ── Learned gestures (static drone, ADR 009) ──────────────────────────
+        self.create_subscription(String, "/nao/emotion_gesture_state", self._on_gesture_state, 10)
+        self._gesture_emotions: list[str] = []
+        self._gesture_seen = 0.0   # last /nao/emotion_gesture_state (drone alive)
 
         # ── Timer: detect NAO disconnection every 15 s ────────────────────────
         self.create_timer(15.0, self._check_connection)
@@ -246,8 +260,13 @@ class NAOqiDriverNode(Node):
         self.pub_connected.publish(msg)
 
     def _publish_ranges(self):
-        """Allowed ranges of the motor profile, for the LLM prompt ({} = not calibrated)."""
+        """Allowed ranges of the motor profile, for the LLM prompt ({} = not calibrated),
+        and the emotions of the learned gestures ([] = no generator on the drone)."""
         self.pub_ranges.publish(String(data=json.dumps(self._motion.ranges())))
+        # The drone re-announces its version every 30 s: older than 90 s, it is gone.
+        alive = time.time() - self._gesture_seen < 90.0
+        emotions = self._gesture_emotions if alive and self._motion.chains else []
+        self.pub_gesture_emotions.publish(String(data=json.dumps(emotions)))
 
     # ─────────────────────────────────────────────────────────────────────────
     # NAO audio → Whisper STT → /bodies/{id}/sensors/speech
@@ -384,8 +403,53 @@ class NAOqiDriverNode(Node):
         """Send what the motion policy allows now (orders and returns to rest)."""
         if not self._connected:
             return
+        order = self._motion.take_gesture(time.time())
+        if order is not None:
+            self.get_logger().info(f"[{ROBOT_ID}] → /nao/emotion_gesture : {order}")
+            self.pub_nao_emotion_gesture.publish(String(data=json.dumps(order)))
         for cmd in self._motion.take(time.time()):
             self.pub_nao_motion.publish(String(data=json.dumps(cmd)))
+
+    def _on_gesture(self, msg: String):
+        """Learned gesture from body_gateway: {"emotion", "intensity", "event"}."""
+        try:
+            data = json.loads(msg.data)
+            order = {"id": "g-" + uuid.uuid4().hex[:6],
+                     "emotion": str(data["emotion"]),
+                     "intensity": max(0.0, min(1.0, float(data.get("intensity", 0.5))))}
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            self.get_logger().error(f"gesture JSON invalide: {e}")
+            return
+        if isinstance(data.get("event"), dict):
+            order["event"] = data["event"]
+        if self._gesture_emotions and order["emotion"] not in self._gesture_emotions:
+            self.get_logger().warn(f"[{ROBOT_ID}] geste refusé : émotion inconnue {order['emotion']!r}")
+            return
+        ok, why = self._motion.request_gesture(order, time.time())
+        if not ok:
+            self.get_logger().warn(f"[{ROBOT_ID}] geste {order['emotion']!r} refusé : {why}")
+
+    def _on_gesture_state(self, msg: String):
+        """State of the drone's gesture service: who holds the body, known emotions."""
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(data, dict):
+            return
+        self._gesture_seen = time.time()
+        version = data.get("version") or {}
+        emotions = version.get("emotions") or (version.get("info") or {}).get("emotions")
+        if data.get("state") == "no_version":
+            self._gesture_emotions = []
+        elif isinstance(emotions, list):
+            self._gesture_emotions = [str(e) for e in emotions]
+        if "owns_body" in data:
+            self._motion.gesture_state(bool(data["owns_body"]), bool(data.get("at_rest")),
+                                       time.time(), data.get("id"))
+        if data.get("state") in ("refused", "robot_refused", "robot_error"):
+            self.get_logger().warn(f"[{ROBOT_ID}] geste {data.get('id')} : {data.get('state')} "
+                                   f"{data.get('reason', '')}")
 
     def _on_leds(self, msg: String):
         self.get_logger().info(f"[{ROBOT_ID}] → /nao/leds")

@@ -24,6 +24,10 @@ aucun port à ouvrir côté maison.
 | `setup-ubuntu.sh` | Installation automatique sur Ubuntu (idempotente), voir [pc-portable-ubuntu.md](pc-portable-ubuntu.md#installation-automatique) |
 | `setup-lib.sh` | Fonctions communes aux scripts d'installation |
 | `nao-relay/` | Relais du NAO : le NAO passe par le drone pour joindre le VPS ([installation](nao-relay/README.md), [ADR 006](../../../../docs/decisions/006-nao-via-drone-statique.md)) |
+| `emotion_gesture.py` | Gestes appris du NAO : génère les gestes émotionnels sur le drone et les envoie au robot (voir [Gestes appris](#gestes-appris-du-nao)) |
+| `emotion_gesture.env.example` | Version du générateur à utiliser, à copier en `emotion_gesture.env` |
+| `emotion-gesture-user.service` | Service systemd utilisateur du générateur de gestes |
+| `tests/test_emotion_gesture.py` | Tests du service de gestes (sans réseau ni robot) |
 
 ## Topics
 
@@ -41,6 +45,69 @@ aucun port à ouvrir côté maison.
 
 Les angles sont en degrés : **0 = axe de la caméra, positif = à droite**,
 entre -180 et 180.
+
+## Gestes appris du NAO
+
+`emotion_gesture.py` fait tourner, sur le drone, le générateur de gestes appris
+par [nao-emotion-motion](https://github.com/Monolithoid/nao-emotion-motion).
+Le robot ne fait que jouer la trajectoire reçue (module `trajectory` de
+`nao_ws_bridge.py`), rien de lourd ne tourne sur le NAO.
+
+**Version du modèle.** Le générateur (`generator/nao_gesture.py` +
+`generator/nao_gesture.json`) vient du dépôt public
+`nao-emotion-motion-dataset`, à la version écrite **à la main** dans
+`emotion_gesture.env` :
+
+```bash
+cp emotion_gesture.env.example emotion_gesture.env
+# puis mettre un tag ou un commit complet :
+# GESTURE_DATASET_REF=v2026-11-18
+```
+
+Le service ne suit jamais `main` de lui-même. Les fichiers sont vérifiés
+(sha256 de `dataset.json`) et gardés en cache par version. Pour changer de
+modèle : modifier `GESTURE_DATASET_REF`, puis publier `{"op": "reload"}` sur
+`/nao/emotion_gesture_control` (bouton de la régie) ou redémarrer le service.
+Si la nouvelle version est refusée (fichiers invalides, aucun geste accepté
+depuis la pose de départ), l'ancienne reste en service.
+
+**Générateur requis.** Le générateur doit rendre les gestes jouables avant le
+guardian, comme l'interface de nao-emotion-motion (`playable.py`) : c'est le
+cas des exports faits avec nao-emotion-motion#62 ou plus récent. Le drone ne
+refait pas cette étape. Une version plus ancienne du dataset est refusée au
+chargement, avec la raison dans `/nao/emotion_gesture_state` (visible dans la
+régie), et l'ancienne version reste en service. Un geste refusé par le
+guardian est réessayé sans l'événement, puis avec une petite variation (le
+champ `retry` le signale) ; sinon rien n'est joué.
+
+**Lancement.**
+
+```bash
+python3 emotion_gesture.py                 # à la main
+cp emotion-gesture-user.service ~/.config/systemd/user/
+systemctl --user enable --now emotion-gesture-user
+```
+
+La connexion rosbridge est lue dans le `.env` du drone. Seul numpy est
+nécessaire (déjà dans `requirements.txt`).
+
+**Topics.**
+
+| Topic | Sens | Contenu |
+|---|---|---|
+| `/nao/emotion_gesture` | ← driver, régie | `{"id", "emotion", "intensity", "event"}` ; `event` = `null` ou `{"azimuth_deg", "elevation_deg", "distance_m"}` dans le repère du torse du robot (azimut positif = à gauche, l'inverse du drone) |
+| `/nao/emotion_gesture_control` | ← régie | `{"op": "reload"}` : relit `emotion_gesture.env` |
+| `/nao/read_angles` | → robot | `{"id"}` : demande la posture mesurée |
+| `/nao/joint_angles` | ← robot | `{"id", "angles": {joint: rad}}` |
+| `/nao/trajectory` | → robot | `{"id", "names", "angles", "times", "start", "relax_end"}` |
+| `/nao/trajectory_state` | ← robot | `{"id", "state": "playing\|done\|stopped\|refused\|error", "reason"}` |
+| `/nao/emotion_gesture_state` | → VPS | état de chaque geste (`sent`, `refused`, `replaced`, `robot_playing`, `robot_done`…), la version en service (`version_loaded`, `version_refused`), et `owns_body` / `at_rest` : le driver NAO ne bouge pas la tête ni les bras tant que `owns_body` est vrai |
+
+Après un geste, le robot reste raide à la pose de départ. Sans nouveau geste
+pendant `GESTURE_REST_DELAY` secondes (3 par défaut), le drone envoie le
+retour au repos, validé lui aussi par le guardian, et le robot se relâche à la
+fin. Une demande qui arrive pendant un geste attend la fin de celui-ci ; une
+demande plus récente remplace celle qui attendait.
 
 ## Direction du son
 

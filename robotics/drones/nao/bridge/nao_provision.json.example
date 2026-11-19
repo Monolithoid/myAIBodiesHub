@@ -10,7 +10,7 @@
     "volume": 50
   },
   "bridge": {
-    "modules": ["led", "motion", "stiffness", "gesture", "stop"],
+    "modules": ["led", "motion", "stiffness", "gesture", "stop", "trajectory"],
     "audio_capture": false,
     "motion_limits": {
       "max_speed": 0.3,

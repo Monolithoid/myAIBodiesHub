@@ -62,6 +62,7 @@ For a NAO without a drone, see [SSL / WSS](#ssl--wss).
 - **VAD audio capture** — records speech after wake word, publishes WAV on `/nao/audio`
 - **TTS method negotiation** — announces `mp3` or `text` to the VPS on connect
 - **Motion bounds** — hard angle, speed, stiffness and walk bounds before ALMotion; motion decisions live in the NAO driver (see [Motion bounds](#motion-bounds-robot-side))
+- **Trajectory player** — module `trajectory`: plays a learned gesture computed on the static drone (`/nao/trajectory`), after checking joints, hardware ranges and the measured start posture; `/nao/stop` interrupts it (see [static drone: learned gestures](../robotics/drones/static/onboard/README.md#gestes-appris-du-nao))
 - **Post-flash provisioning** — applies autonomous life state, language, volume from JSON,
   plus the bridge's default modules and audio capture (`"bridge"` section)
 
@@ -107,12 +108,12 @@ listening and the camera. The NAO only renders emotions with its motors and LEDs
 
 This is the default: the audio modules and audio capture are off unless
 asked for, so the robot does not spend CPU on ALSpeechRecognition (wake word)
-or TTS playback. Add `--modules led,motion,stiffness,gesture,stop` to also
-turn `move` off:
+or TTS playback. Add `--modules led,motion,stiffness,gesture,stop,trajectory` to also
+turn `move` off (`trajectory` plays the learned gestures computed on the static drone):
 
 ```bash
 python nao_ws_bridge.py --vps ws://DRONE_IP:9090/ \
-    --modules led,motion,stiffness,gesture,stop
+    --modules led,motion,stiffness,gesture,stop,trajectory
 ```
 
 or, with the same values in the `"bridge"` section of `nao_provision.json`
@@ -133,7 +134,7 @@ default), either with `--modules ...,speech,audio_out --audio-capture` or with:
 
 ```json
 "bridge": {
-  "modules": ["led", "motion", "stiffness", "gesture", "stop", "speech", "audio_out"],
+  "modules": ["led", "motion", "stiffness", "gesture", "stop", "trajectory", "speech", "audio_out"],
   "audio_capture": true
 }
 ```
@@ -306,7 +307,9 @@ python nao_ws_bridge.py --vps ws://DRONE_IP:9090/ --tts-method text
 | `/nao/gesture` | `std_msgs/String` | `gesture` | `ALRobotPosture.goToPosture()` |
 | `/nao/leds` | `std_msgs/String` (JSON) | `led` | `ALLeds.fadeRGB(name, r, g, b, duration)` |
 | `/nao/motion` | `std_msgs/String` (JSON) | `motion` | `ALMotion.angleInterpolationWithSpeed()` |
-| `/nao/stop` | `std_msgs/Empty` | `stop` | `ALMotion.stopMove()` |
+| `/nao/stop` | `std_msgs/Empty` | `stop` | `ALMotion.stopMove()`, and stops a playing trajectory (posture held) |
+| `/nao/trajectory` | `std_msgs/String` (JSON) | `trajectory` | `ALMotion.post.angleInterpolation()` — `{"id", "names", "angles", "times", "start", "relax_end"}`, sent by the static drone's `emotion_gesture.py` |
+| `/nao/read_angles` | `std_msgs/String` (JSON) | *(always active)* | `{"id"}` — reply on `/nao/joint_angles` |
 | `/nao/shutdown` | `std_msgs/Empty` | *(always active)* | Clean bridge shutdown |
 | `/nao/calibration` | `std_msgs/String` (JSON) | *(always active)* | Calibration step from the régie, `{"op": "start", "chain": "rarm"}` … |
 | `/nao/components` | `std_msgs/String` (JSON) | *(always active)* | NAOqi component on/off from the régie, `{"name": "breath", "enabled": false}` |
@@ -329,6 +332,8 @@ python nao_ws_bridge.py --vps ws://DRONE_IP:9090/ --tts-method text
 | `/nao/audio` | `std_msgs/String` (base64 WAV) | Captured speech after wake word | On demand |
 | `/nao/capabilities` | `std_msgs/String` (JSON) | `{"tts_method": "mp3", "launch_pose": {...}, "motor_profile": {...}}` — TTS negotiation, angles read at launch, motor profile (`null` = not calibrated) | On connect, after a calibration |
 | `/nao/calibration_state` | `std_msgs/String` (JSON) | calibration step, live angles, pending and saved profile | After each step, every 0.5 s during a calibration |
+| `/nao/joint_angles` | `std_msgs/String` (JSON) | `{"id", "angles": {joint: rad}}` — measured posture | On `/nao/read_angles` |
+| `/nao/trajectory_state` | `std_msgs/String` (JSON) | `{"id", "state": "playing\|done\|stopped\|refused\|error", "reason"}` | During a trajectory |
 | `/nao/components_state` | `std_msgs/String` (JSON) | each NAOqi component: on/off, NAOqi error | On connect, after a switch |
 
 ---
@@ -388,10 +393,24 @@ Every `/nao/motion`, `/nao/gesture` and `/nao/cmd_vel` order goes through
   blocked for `posture_block` seconds after a change, and during a walk; a
   posture is refused while walking, a walk during a posture change; a
   zero-velocity `move` is only sent to stop a walk in progress.
+- **Learned gestures** ([ADR 009](decisions/009-gestes-appris.md)):
+  `/bodies/{id}/actuators/gesture` (`{"emotion", "intensity", "event"}`, from
+  `body-gateway` or the régie) is refused during a posture or a walk, with a hot
+  chain, or for an emotion the drone's generator does not know. Accepted, it
+  drops the pending targets, waits for the current steps to end, then goes out
+  on `/nao/emotion_gesture` to the static drone, which computes and plays it.
+  While the drone holds the body (`owns_body` in `/nao/emotion_gesture_state`,
+  gesture playing or robot held at the start pose), no `/nao/motion`, posture
+  or walk order leaves. The drone gives the body back at rest; given back
+  elsewhere, or silent for `gesture_timeout` seconds, the chains go back to
+  rest through the start pose.
 
 The driver publishes the ranges on `/bodies/{id}/sensors/motor_ranges`
 (`{chain: {joint: [min, max]}}`, every 15 s): `body-gateway` writes them in the
-LLM prompt. The LLM never sees the rest and start poses.
+LLM prompt. The LLM never sees the rest and start poses. It also publishes the
+emotions known by the drone's gesture generator on
+`/bodies/{id}/sensors/gesture_emotions` (JSON list, `[]` = no generator, every
+15 s): `body-gateway` then offers the `gesture` action.
 
 Joint max velocities (no-load motor speed 11 900 rpm ÷ gearbox ratio,
 Aldebaran H25 motors doc): 8.29 rad/s for HeadYaw, ShoulderPitch, ElbowYaw;
@@ -412,6 +431,8 @@ Settings: the `MOTION_LIMITS` environment variable (JSON) overrides these defaul
 | `joints_while_busy` | false | accept joint moves during a posture change or walk |
 | `rest_return` | true | go back to the rest pose when idle |
 | `rest_delay` | 3 s | idle time after the last step before the return |
+| `gestures` | true | accept learned gestures (static drone, ADR 009) |
+| `gesture_timeout` | 60 s | without news from the drone, the driver takes the chains back |
 
 Tests without ROS 2: `cd robotics/drones/nao/driver && python3 -m unittest discover -s tests -v`.
 

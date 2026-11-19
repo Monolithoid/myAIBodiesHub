@@ -12,6 +12,8 @@ reads ROS topics:
   /emotion_state          (String)       ← curious | neutral | excited | uncertain
   /nao/calibration_state  (String JSON)  ← nao_ws_bridge: calibration, motor profile
   /nao/components_state   (String JSON)  ← nao_ws_bridge: NAOqi components on/off
+  /nao/emotion_gesture_state (String JSON) ← static drone emotion_gesture.py: learned
+                                           gestures, generator version in service
 
 The page is /?token=REGIE_TOKEN.  It receives the last events at once, then
 the new ones over Server-Sent Events.  Any other ROS tool (Lichtblick, rqt,
@@ -25,6 +27,13 @@ head and each arm) and switches the NAOqi components.  Its buttons POST to
   /nao/calibration        (String JSON)  → calibration step, {"op": ...}
   /nao/components         (String JSON)  → {"name": ..., "enabled": bool}
 
+and plays or reloads the learned gestures (ADR 009):
+
+  /bodies/{NAO_ID}/actuators/gesture (String JSON) → {"emotion", "intensity"}, through
+                                         the NAO driver (heat, chains reserved)
+  /nao/emotion_gesture_control (String JSON) → {"op": "reload"}: the static drone
+                                         re-reads emotion_gesture.env
+
 Environment variables:
   ROSBRIDGE_URL     default ws://rosbridge-proxy:80
   ROSBRIDGE_TOKEN   bearer token checked by rosbridge-proxy (required)
@@ -33,6 +42,7 @@ Environment variables:
   OBS_TOKEN         secret in the overlay URL, same as obs-agent (optional)
   HTTP_PORT         page port, default 8097
   HISTORY           events kept for a page opened later, default 300
+  NAO_ID            NAO body id for the gesture test button, default nao_01
 """
 
 import collections
@@ -57,6 +67,7 @@ if OBS_URL and "://" not in OBS_URL:
 OBS_TOKEN       = os.environ.get("OBS_TOKEN", "")
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8097"))
 HISTORY         = int(os.environ.get("HISTORY", "300"))
+NAO_ID          = os.environ.get("NAO_ID", "nao_01")
 
 PAGE_HTML = pathlib.Path(__file__).with_name("regie.html")
 ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
@@ -65,7 +76,9 @@ ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
 ICONS = {"/favicon.svg": "image/svg+xml", "/favicon.ico": "image/x-icon",
          "/apple-touch-icon.png": "image/png"}
 # What the robot page may publish, and where.
-COMMAND_TOPICS = {"calibration": "/nao/calibration", "components": "/nao/components"}
+COMMAND_TOPICS = {"calibration": "/nao/calibration", "components": "/nao/components",
+                  "gesture": f"/bodies/{NAO_ID}/actuators/gesture",
+                  "gesture_control": "/nao/emotion_gesture_control"}
 
 
 def log(text: str):
@@ -184,7 +197,7 @@ class Hub:
 
 
 HUB = Hub(HISTORY)
-# Robot page: only the latest state of each kind (calibration, components).
+# Robot page: only the latest state of each kind (calibration, components, gestures).
 ROBOT_HUB = Hub(0)
 ROBOT_STATE: dict[str, dict] = {}
 LINK = {"kind": "link", "t": 0.0, "up": False}
@@ -346,6 +359,7 @@ def main():
     BRIDGE.subscribe("/emotion_state", "std_msgs/String", on_state("emotion"))
     BRIDGE.subscribe("/nao/calibration_state", "std_msgs/String", on_robot_state("calibration"))
     BRIDGE.subscribe("/nao/components_state", "std_msgs/String", on_robot_state("components"))
+    BRIDGE.subscribe("/nao/emotion_gesture_state", "std_msgs/String", on_robot_state("gestures"))
     for topic in COMMAND_TOPICS.values():
         BRIDGE.advertise(topic)
     threading.Thread(target=BRIDGE.run_forever, daemon=True).start()

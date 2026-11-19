@@ -38,11 +38,14 @@
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .muted { color: var(--muted); }
   .status { margin: 10px 0; padding: 8px 10px; border-radius: 6px; background: #1e242c; }
-  .status .err { color: var(--err); }
+  .status .err, #gVersion .err { color: var(--err); }
   ol.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
   ol.steps li { border-top: 1px solid var(--line); padding-top: 10px; }
   ol.steps .what { font-weight: 600; }
   ol.steps .how { color: var(--muted); margin: 2px 0 6px; }
+  select { background: #1e242c; color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 5px 8px; font: inherit; }
+  code { color: var(--accent); }
   input[type=number] { width: 80px; background: #1e242c; color: var(--text); border: 1px solid var(--line);
                        border-radius: 6px; padding: 5px 8px; font: inherit; }
   .table-wrap { overflow-x: auto; margin-top: 12px; }
@@ -135,6 +138,19 @@
     <div id="components" class="muted">En attente du robot…</div>
     <h2 style="margin-top:18px">Profil enregistré</h2>
     <div id="profile" class="muted">—</div>
+  </section>
+  <section>
+    <h2>Gestes appris</h2>
+    <div class="muted" style="margin-bottom:8px">Calculés sur le drone statique (nao-emotion-motion), joués par le robot.
+      La version se change dans <code>emotion_gesture.env</code> sur le drone, puis « Recharger ».</div>
+    <div id="gVersion" class="muted">En attente du drone…</div>
+    <div class="row" style="margin-top:10px">
+      <select id="gEmotion"></select>
+      <label class="muted">intensité <input id="gIntensity" type="number" min="0" max="1" step="0.1" value="0.6"></label>
+      <button id="gPlay" class="primary" disabled>Jouer</button>
+      <button id="gReload">Recharger la version</button>
+    </div>
+    <div id="gLast" class="status muted">—</div>
   </section>
 </main>
 <div id="toast"></div>
@@ -281,6 +297,45 @@ function renderComponents(state) {
   }
 }
 
+// ── Learned gestures ───────────────────────────────────────────────────────
+
+const G_STATE = { sent: "envoyé au robot", refused: "refusé", replaced: "remplacé par un plus récent",
+                  robot_playing: "en cours", robot_done: "fini", robot_stopped: "arrêté",
+                  robot_refused: "refusé par le robot", robot_error: "erreur du robot",
+                  version_loaded: "version en service", version_refused: "version refusée",
+                  no_version: "aucune version en service" };
+
+function renderGestures(st) {
+  const v = st.version || {};
+  const emotions = v.emotions || (v.info || {}).emotions || [];
+  const ver = document.getElementById("gVersion");
+  ver.textContent = "";
+  ver.append(h("div", "", "Version : " + (v.ref || "aucune") +
+                          (v.acceptance !== undefined ? ` · ${Math.round(v.acceptance * 100)} % acceptés au test` : "")));
+  const runs = v.runs || Object.fromEntries(Object.entries((v.info || {}).models || {}).map(([k, m]) => [k, (m || {}).run]));
+  if (Object.keys(runs).length) ver.append(h("div", "", "Modèles : " + Object.entries(runs).map(([k, r]) => `${k} ${r ?? "?"}`).join(" · ")));
+  for (const w of v.warnings || []) ver.append(h("div", "err", w));
+  const sel = document.getElementById("gEmotion");
+  if (emotions.length && sel.options.length !== emotions.length) {
+    const keep = sel.value;
+    sel.textContent = "";
+    for (const e of emotions) sel.append(h("option", "", e));
+    if (emotions.includes(keep)) sel.value = keep;
+  }
+  document.getElementById("gPlay").disabled = !emotions.length;
+  const last = document.getElementById("gLast");
+  last.textContent = "";
+  last.append(h("span", "", (st.id ? st.id + " · " : "") + (G_STATE[st.state] || st.state)));
+  if (st.emotion) last.append(h("span", "muted", ` · ${st.emotion} ${st.intensity ?? ""}`));
+  if (st.reason) last.append(h("div", "err", st.reason));
+  if (st.state === "version_refused" && st.candidate) last.append(h("div", "err", "Candidate : " + (st.candidate.ref || "?")));
+}
+
+document.getElementById("gPlay").onclick = () => send("gesture", {
+  emotion: document.getElementById("gEmotion").value,
+  intensity: Math.max(0, Math.min(1, parseFloat(document.getElementById("gIntensity").value) || 0.5)) });
+document.getElementById("gReload").onclick = () => send("gesture_control", { op: "reload" });
+
 // ── Events ─────────────────────────────────────────────────────────────────
 
 function handle(ev) {
@@ -290,6 +345,7 @@ function handle(ev) {
     if (ev.up) { send("calibration", { op: "status" }); send("components", { op: "status" }); }
   } else if (ev.kind === "calibration") renderCalibration(ev.value);
   else if (ev.kind === "components") renderComponents(ev.value);
+  else if (ev.kind === "gestures") renderGestures(ev.value);
 }
 
 const source = new EventSource("robot-stream?token=" + encodeURIComponent(token));

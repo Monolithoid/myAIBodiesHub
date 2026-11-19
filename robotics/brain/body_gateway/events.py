@@ -75,6 +75,8 @@ def action_detail(action: dict) -> str:
         return action.get("color", "")
     if kind == "move":
         return f"x={action.get('x', 0)} y={action.get('y', 0)} θ={action.get('theta', 0)}"
+    if kind == "gesture":
+        return f"{action.get('emotion', '')} {action.get('intensity', '')}".strip()
     if kind == "look":
         return f"yaw={action.get('yaw', 0)}"
     return ""

@@ -127,5 +127,34 @@ class TestDirection(unittest.TestCase):
         self.assertIn("non calibré", body_rules.motor_ranges_label({}))
         self.assertIn("non calibré", body_rules.motor_ranges_label({"head": {}}))
 
+class TestLearnedGestures(unittest.TestCase):
+
+    def test_label(self):
+        self.assertIn("indisponibles", body_rules.gestures_label([]))
+        text = body_rules.gestures_label(["joie", "peur"])
+        self.assertIn("joie, peur", text)
+        self.assertIn('"gesture"', text)
+
+    def test_order(self):
+        self.assertEqual(body_rules.gesture_order({"emotion": "joie", "intensity": 1.4}, ["joie"]),
+                         {"emotion": "joie", "intensity": 1.0})
+        self.assertIsNone(body_rules.gesture_order({"emotion": "colère"}, ["joie"]))
+        self.assertIsNone(body_rules.gesture_order({}, ["joie"]))
+        # Sans intensité : celle de l'énergie de la réponse.
+        self.assertEqual(body_rules.gesture_order({"emotion": "joie"}, ["joie"], "high")["intensity"], 0.7)
+        self.assertEqual(body_rules.gesture_order({"emotion": "joie", "intensity": "x"}, [])["intensity"], 0.5)
+
+    def test_event_from_voice(self):
+        self.assertIsNone(body_rules.gesture_event(None))
+        # Drone : positif à droite ; générateur : positif à gauche du robot.
+        self.assertEqual(body_rules.gesture_event(30.0), {"azimuth_deg": -30.0, "elevation_deg": 0.0})
+        self.assertEqual(body_rules.gesture_event(-20.0, 5.0)["azimuth_deg"], 25.0)
+        self.assertEqual(body_rules.gesture_event(-170.0)["azimuth_deg"], 90.0)
+
+    def test_nao_routes_gestures(self):
+        self.assertEqual(body_rules.route_targets({"type": "gesture", "body": "nao_01"}, REGISTRY, {}),
+                         ["nao_01"])
+
+
 if __name__ == "__main__":
     unittest.main()

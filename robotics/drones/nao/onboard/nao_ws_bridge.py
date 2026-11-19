@@ -110,12 +110,15 @@ _MODULE_TOPICS = {
     "stop":      ("/nao/stop",       "std_msgs/Empty"),
     "audio_out": ("/nao/audio_out",  "std_msgs/String"),
     "stiffness": ("/nao/stiffness",  "std_msgs/String"),
+    # learned gestures, generated and validated on the static drone (ADR 009)
+    "trajectory": ("/nao/trajectory", "std_msgs/String"),
 }
 # System topics always subscribed regardless of module filtering
 _SYSTEM_TOPICS = [
     ("/nao/shutdown",    "std_msgs/Empty"),
     ("/nao/calibration", "std_msgs/String"),   # calibration steps, from the régie
     ("/nao/components",  "std_msgs/String"),   # NAOqi components on/off, from the régie
+    ("/nao/read_angles", "std_msgs/String"),   # measured angles asked by the static drone
 ]
 ALL_MODULES = frozenset(_MODULE_TOPICS.keys())
 # Voice modules are opt-in: since ADR 004 the static drone speaks for the NAO.
@@ -1061,6 +1064,8 @@ class NaoBridge(object):
         self._components = {}   # name -> {"enabled", "ok", "error"}
         self._calib = None      # calibration in progress, see _calibration()
         self._calib_lock = threading.Lock()
+        self._traj = None       # learned gesture being played, see _trajectory()
+        self._traj_lock = threading.Lock()
 
     def _get_tts_method(self):
         """Return the effective TTS method, or None when the NAO does not speak.
@@ -1336,7 +1341,8 @@ class NaoBridge(object):
 
         # Advertise topics published by this bridge
         advertised = ["/nao/status", "/nao/capabilities",
-                      "/nao/calibration_state", "/nao/components_state"]
+                      "/nao/calibration_state", "/nao/components_state",
+                      "/nao/joint_angles", "/nao/trajectory_state"]
         if self._audio_capture_enabled:
             advertised.append("/nao/audio")
         for topic in advertised:
@@ -1439,7 +1445,21 @@ class NaoBridge(object):
                 float(payload.get("b", 0.0)),
             )
         elif topic == "/nao/stop" and "stop" in self._modules:
+            self._stop_trajectory()
             self._stop_move()
+        elif topic in ("/nao/read_angles", "/nao/trajectory"):
+            if topic == "/nao/trajectory" and "trajectory" not in self._modules:
+                return
+            try:
+                payload = json.loads(data.get("data", "{}"))
+            except ValueError:
+                return
+            if not isinstance(payload, dict):
+                return
+            if topic == "/nao/read_angles":
+                self._read_angles(payload)
+            else:
+                self._trajectory(payload)
         elif topic == "/nao/shutdown":
             # Always handled regardless of module filtering
             print("[bridge] /nao/shutdown received — clean shutdown.", file=sys.stderr)
@@ -1672,6 +1692,150 @@ class NaoBridge(object):
             self._motion_seq[grp] = seq
             if rest_in is not None and self._limits["rest_limp"]:
                 self._spawn(self._release_at_rest, grp, seq, rest_in)
+
+    # ------------------------------------------------------------------
+    # Learned gestures (ADR 009): the static drone generates and validates
+    # them; the robot only reports its angles and plays what it receives.
+    # ------------------------------------------------------------------
+    #
+    # /nao/read_angles {"id"}  -> /nao/joint_angles {"id", "angles": {joint: rad}}
+    # /nao/trajectory {"id", "names", "angles", "times", "relax_end"}: arguments of
+    #     ALMotion.angleInterpolation (absolute angles, times from now, the
+    #     first point excluded) plus "start" {joint: rad}, the posture the
+    #     drone planned from.  Refused if a joint is unknown or a leg, outside
+    #     its hardware range, being calibrated, or if the measured posture is
+    #     more than "tolerance" (0.05 rad) away from "start".
+    # Progress on /nao/trajectory_state {"id", "state", "reason"}:
+    #     refused | playing | done | stopped | error.
+
+    def _read_angles(self, payload):
+        names = sorted(_JOINT_HW_LIMITS)
+        motion = self._proxy("ALMotion")
+        try:
+            angles = motion.getAngles(names, True) if motion else [0.0] * len(names)
+        except Exception as e:
+            print("[trajectory] angles non lus : {}".format(e), file=sys.stderr)
+            return
+        self._publish("/nao/joint_angles", {
+            "id": payload.get("id"), "t": time.time(),
+            "angles": dict((n, round(float(a), 5)) for n, a in zip(names, angles))})
+
+    def _trajectory_state(self, tid, state, reason=None):
+        msg = {"id": tid, "state": state}
+        if reason:
+            msg["reason"] = reason
+            print("[trajectory] {} {} : {}".format(tid, state, reason), file=sys.stderr)
+        self._publish("/nao/trajectory_state", msg)
+
+    def _check_trajectory(self, payload):
+        """(names, angles, times, groups) or raises ValueError(reason)."""
+        names = [str(n) for n in payload.get("names") or []]
+        angles, times = payload.get("angles"), payload.get("times")
+        if not names or not isinstance(angles, list) or not isinstance(times, list) \
+                or len(angles) != len(names) or len(times) != len(names):
+            raise ValueError("format")
+        groups = set()
+        out_a, out_t = [], []
+        for n, a_list, t_list in zip(names, angles, times):
+            grp = _JOINT_TO_GROUP.get(n)
+            if grp is None or grp == "legs" or n not in _JOINT_HW_LIMITS:
+                raise ValueError("articulation refusee : {}".format(n))
+            if not a_list or len(a_list) != len(t_list):
+                raise ValueError("format : {}".format(n))
+            lo, hi = _joint_range(n, self._limits)
+            a_list = [float(a) for a in a_list]
+            t_list = [float(t) for t in t_list]
+            if any(a != a or a < lo - 1e-6 or a > hi + 1e-6 for a in a_list):
+                raise ValueError("hors plage materielle : {}".format(n))
+            if t_list[0] <= 0 or any(b <= a for a, b in zip(t_list, t_list[1:])):
+                raise ValueError("temps non croissants : {}".format(n))
+            groups.add(grp)
+            out_a.append(a_list)
+            out_t.append(t_list)
+        calib = self._calib_chain()
+        if calib in groups:
+            raise ValueError("chaine en calibrage : {}".format(calib))
+        start = payload.get("start") or {}
+        tol = float(payload.get("tolerance", 0.05))
+        motion = self._proxy("ALMotion")
+        if motion and start:
+            measured = motion.getAngles(names, True)
+            far = [n for n, m in zip(names, measured)
+                   if n in start and abs(float(m) - float(start[n])) > tol]
+            if far:
+                raise ValueError("posture differente du depart prevu : {}".format(", ".join(far)))
+        return names, out_a, out_t, groups
+
+    def _trajectory(self, payload):
+        tid = payload.get("id")
+        try:
+            names, angles, times, groups = self._check_trajectory(payload)
+        except Exception as e:
+            self._trajectory_state(tid, "refused", str(e))
+            return
+        with self._traj_lock:
+            if self._traj is not None:
+                self._trajectory_state(tid, "refused", "geste deja en cours")
+                return
+            self._traj = {"id": tid, "task": None, "stopped": False}
+        motion = self._proxy("ALMotion")
+        # stiffness on without a jump, and no pending return-to-rest release
+        for grp in sorted(groups):
+            self._motion_seq[grp] = self._motion_seq.get(grp, 0) + 1
+            try:
+                if motion:
+                    self._hold_here(motion, [j for j in names if _JOINT_TO_GROUP.get(j) == grp])
+            except Exception as e:
+                print("[trajectory] raideur {} : {}".format(grp, e), file=sys.stderr)
+            with self._stiffness_lock:
+                self._limp.discard(grp)
+                self._stiffness_enabled.add(grp)
+        self._trajectory_state(tid, "playing")
+        self._spawn(self._play_trajectory, tid, names, angles, times, groups,
+                    bool(payload.get("relax_end")))
+
+    def _play_trajectory(self, tid, names, angles, times, groups, relax_end):
+        motion = self._proxy("ALMotion")
+        state, reason = "done", None
+        try:
+            if motion is None:
+                print("[MOCK] trajectoire {} : {} articulations, {:.1f} s".format(
+                    tid, len(names), max(t[-1] for t in times)), file=sys.stderr)
+            else:
+                # post: asynchronous NAOqi call, so that /nao/stop can stop the task
+                task = motion.post.angleInterpolation(names, angles, times, True)
+                with self._traj_lock:
+                    if self._traj is not None:
+                        self._traj["task"] = task
+                motion.wait(task, 0)
+        except Exception as e:
+            state, reason = "error", str(e)
+        with self._traj_lock:
+            stopped = self._traj is not None and self._traj["stopped"]
+            self._traj = None
+        if stopped:
+            state = "stopped"   # the posture is held (see _stop_trajectory)
+        elif state == "done" and relax_end:
+            for grp in sorted(groups):
+                self._go_limp(grp)
+        self._trajectory_state(tid, state, reason)
+
+    def _stop_trajectory(self):
+        """Stop a learned gesture and hold the measured posture (no return to rest)."""
+        with self._traj_lock:
+            traj = self._traj
+            if traj is None:
+                return
+            traj["stopped"] = True
+            task = traj["task"]
+        motion = self._proxy("ALMotion")
+        if motion is None:
+            return
+        try:
+            if task is not None:
+                motion.stop(task)
+        except Exception as e:
+            print("[trajectory] arret : {}".format(e), file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Calibration of the motor profile (driven from the régie)

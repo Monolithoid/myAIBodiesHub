@@ -1,0 +1,27 @@
+# Service systemd « utilisateur » des gestes appris du NAO (ADR 009), à côté
+# de static-drone. Installation :
+#   mkdir -p ~/.config/systemd/user
+#   cp emotion-gesture-user.service ~/.config/systemd/user/emotion-gesture.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now emotion-gesture
+#   journalctl --user -u emotion-gesture -f
+#
+# %h = dossier personnel. Adapter le chemin si le dépôt n'est pas dans ~/ia-agent.
+# emotion_gesture.env (version du générateur) et .env (rosbridge) sont lus par
+# le programme lui-même.
+
+[Unit]
+Description=Gestes appris du NAO (générateur nao-emotion-motion)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ia-agent/robotics/drones/static/onboard
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/ia-agent/robotics/drones/static/onboard/.venv/bin/python emotion_gesture.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
