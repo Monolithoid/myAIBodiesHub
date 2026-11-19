@@ -1,116 +1,116 @@
-# Récapitulatif des containers
+# Container overview
 
-Vue synthétique de tous les containers du projet, leurs rôles, et leurs échanges d'informations.
+Summary view of all the project's containers, their roles and how they exchange information.
 
 ---
 
-## Tableau récapitulatif
+## Summary table
 
-| Dénomination | Description & Rôle | Containers en entrée → informations & format | Containers en sortie → informations & format |
+| Name | Description & role | Incoming containers → information & format | Outgoing containers → information & format |
 |---|---|---|---|
-| **ollama** | Moteur d'inférence LLM local. Sert les modèles de langage (ex. `qwen2.5:7b`) via une API REST compatible OpenAI. | `open-webui` → requêtes de complétion (HTTP/JSON, OpenAI chat format) ; `n8n` → requêtes d'inférence (HTTP/JSON) ; `body-gateway` → prompts système + messages (HTTP/JSON, OpenAI chat format) | `open-webui` ← tokens générés (HTTP/JSON, streaming SSE) ; `n8n` ← texte généré (HTTP/JSON) ; `body-gateway` ← réponse LLM (HTTP/JSON) |
-| **open-webui** | Interface web de chat et de gestion des agents. Authentification Google OAuth. Accessible publiquement via Traefik sur `chat.$DOMAIN`. | `ollama` ← tokens générés (HTTP/JSON SSE) ; `chromadb` ← chunks vectoriels pertinents (HTTP/JSON) ; `chat-relay` ← réponses du body-gateway (HTTP/JSON) | `ollama` → requêtes de complétion (HTTP/JSON) ; `chromadb` → textes à indexer ou requêtes de similarité (HTTP/JSON) ; `chat-relay` → messages utilisateur (HTTP/JSON) |
-| **n8n** | Orchestrateur de workflows d'automatisation. Accessible uniquement via tunnel SSH. | `ollama` ← texte généré (HTTP/JSON) | `ollama` → requêtes d'inférence (HTTP/JSON) |
-| **chromadb** | Base de données vectorielle pour la mémoire RAG (Retrieval-Augmented Generation). Jamais exposée publiquement. | `open-webui` → textes à vectoriser ou requêtes de similarité (HTTP/JSON, protocole ChromaDB) | `open-webui` ← vecteurs / chunks correspondants (HTTP/JSON) |
-| **whisper-asr** | Service de transcription vocale (Speech-to-Text) basé sur OpenAI Whisper. Langue par défaut : français. | `nao-core` → fichiers audio captés par le micro du NAO ou du drone statique (HTTP multipart/form-data, WAV) | `nao-core` ← texte transcrit (HTTP/JSON) |
-| **naoqi-bridge** | Pont HTTP entre l'écosystème Docker et le SDK NAOqi (Python 2.7). Tourne en mode mock si le robot n'est pas connecté. | `nao-core` → commandes motrices / requêtes de statut (HTTP/JSON) | `nao-core` ← statut du robot, confirmations (HTTP/JSON) ; NAO physique ← commandes qi SDK (réseau local, protocole NAOqi binaire) |
-| **nao-core** | Container ROS 2 (Humble) regroupant quatre nœuds (cinq processus) : `naoqi_driver` (pont topics ↔ NAO, audio → Whisper, parole → edge-tts), `cognitive_renderer` (état cognitif → LEDs / tête), `motion_engine` (synthèse biomécanique émotion → mouvement) et `static_driver` (pont `/drones/{id}/*` ↔ `/bodies/{id}/*` du drone statique, mêmes Whisper et edge-tts via `robotics/shared/speech_services.py` ; lancé une seconde fois avec `OBS_DRONE_ID` pour la voix du stream, ADR 005). | `whisper-asr` ← texte transcrit (HTTP/JSON) ; `naoqi-bridge` ← statut robot (HTTP/JSON) ; ROS 2 DDS ← commandes publiées par body-gateway, topics `/nao/*` et `/drones/{id}/*` venus de rosbridge | `whisper-asr` → audio WAV (HTTP multipart) ; `naoqi-bridge` → commandes et requêtes (HTTP/JSON) ; ROS 2 DDS → données capteurs `/bodies/{id}/sensors/*` (parole, direction de la voix, image) ; ROS 2 DDS → `/nao/*` et `/drones/{id}/audio_out` (MP3) vers rosbridge |
-| **body-gateway** | Nœud ROS 2 (Humble) faisant office de cerveau central. Une seule boucle pour toutes les entrées (voix, Open WebUI, tchat Twitch, capteurs — ADR 005). Route les inférences LLM vers les corps physiques (ROS 2) avec une table par type d'action (parole → toutes les voix connectées : drone statique et voix OBS, sinon le NAO ; gestes / tête / LEDs → NAO), tourne la tête du NAO vers la voix, gère les cycles de rêve (2h–6h) et expose un endpoint HTTP de chat. | ROS 2 DDS ← données capteurs des corps (`/bodies/{id}/sensors/*`, topics ROS 2) ; `ollama` ← réponses LLM (HTTP/JSON) ; `chat-relay` → textes d'Open WebUI et de `twitch-input` (HTTP/JSON, `POST /chat`) | `ollama` → prompts système + historique (HTTP/JSON, OpenAI chat format) ; ROS 2 DDS → commandes motrices / parole (topics ROS 2) ; ROS 2 DDS → état cognitif (topic `/cognitive_state`) ; `open-webui` / `twitch-input` via `chat-relay` ← réponses chat (HTTP/JSON, port 8095) |
-| **ros2-bridge** | Serveur rosbridge (ROS 2 Humble). Expose le bus ROS 2 (DDS domaine 42) en WebSocket pour clients externes. | NAO / drone statique / obs-agent / clients externes ← messages ROS 2 encapsulés (WebSocket, protocole rosbridge JSON) | ROS 2 DDS → messages traduits vers les nœuds internes (topics ROS 2) |
-| **rosbridge-proxy** | Reverse-proxy Caddy. Fait le pont entre l'extérieur (TLS via Traefik) et le ros2-bridge en mode host. | Traefik → connexions WebSocket entrantes (WSS 443, WS 80 pour le NAO) ; exige `Authorization: Bearer $ROSBRIDGE_TOKEN` | `ros2-bridge` (host) ← connexions WebSocket (WS, port 9090) |
-| **chat-relay** | Reverse-proxy Caddy léger. Rend le body-gateway (réseau host) accessible depuis l'ai-network pour open-webui et twitch-input. | `open-webui`, `twitch-input` → requêtes HTTP de chat (HTTP/JSON, port 8095) | `body-gateway` (host) ← requêtes HTTP relayées (HTTP/JSON, port 8095) |
-| **twitch-input** | Entrée tchat Twitch (ADR 005). Lit le tchat en IRC anonyme, garde les messages `!nao …`, les filtre (longueur, liens, mots interdits, délai par spectateur, option modérateurs seulement) et les envoie un par un au cerveau. Refuse de démarrer sans `TWITCH_CHANNEL`. | Twitch → messages du tchat (IRC sur TLS, `irc.chat.twitch.tv:6697`) ; `chat-relay` ← réponse du cerveau (HTTP/JSON, ignorée) | `chat-relay` → `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` (HTTP/JSON, `POST /chat`) |
-| **obs-agent** | Voix de NAO sur le stream (ADR 005) : corps `obs_01` de capacité `speech`. Client rosbridge comme le drone statique ; sert l'overlay `https://<domaine obs-agent>/overlay?token=$OBS_TOKEN` (domaine choisi dans Coolify), à ouvrir comme source navigateur OBS. N'est « connecté » que tant que l'overlay est ouvert. | `rosbridge-proxy` ← `/drones/obs_01/audio_out` (MP3 base64) et `/bodies/obs_01/actuators/say` (sous-titre) ; OBS → ouverture de l'overlay (HTTPS via Traefik) | `rosbridge-proxy` → `/drones/obs_01/status` (battement de cœur) et `/drones/obs_01/speaking` (Bool) ; OBS ← overlay HTML + audio (mixer OBS) |
-| **regie** | Régie (ADR 007) : page `https://<domaine regie>/?token=$REGIE_TOKEN` (domaine choisi dans Coolify) qui montre en direct chaque entrée, la décision du LLM et les actions routées vers les corps. Client rosbridge en lecture seule. | `rosbridge-proxy` ← `/events` (JSON publié par body-gateway), `/cognitive_state`, `/emotion_state` | navigateur ← page HTML + flux SSE (HTTPS via Traefik) |
-| **bitterbot-gateway** *(désactivé)* | Agent autonome avec mémoire long-terme (SQLite) et moteur de rêves. Désactivé depuis l'ADR 003 au profit d'appels directs Ollama depuis body-gateway. | `ollama` ← texte généré (HTTP/JSON) | `ollama` → requêtes d'inférence (HTTP/JSON) |
+| **ollama** | Local LLM inference engine. Serves language models (e.g. `qwen2.5:7b`) through an OpenAI-compatible REST API. | `open-webui` → completion requests (HTTP/JSON, OpenAI chat format); `n8n` → inference requests (HTTP/JSON); `body-gateway` → system prompts + messages (HTTP/JSON, OpenAI chat format) | `open-webui` ← generated tokens (HTTP/JSON, SSE streaming); `n8n` ← generated text (HTTP/JSON); `body-gateway` ← LLM response (HTTP/JSON) |
+| **open-webui** | Web interface for chat and agent management. Google OAuth authentication. Publicly reachable through Traefik at `chat.$DOMAIN`. | `ollama` ← generated tokens (HTTP/JSON SSE); `chromadb` ← relevant vector chunks (HTTP/JSON); `chat-relay` ← body-gateway responses (HTTP/JSON) | `ollama` → completion requests (HTTP/JSON); `chromadb` → texts to index or similarity queries (HTTP/JSON); `chat-relay` → user messages (HTTP/JSON) |
+| **n8n** | Automation workflow orchestrator. Reachable only through an SSH tunnel. | `ollama` ← generated text (HTTP/JSON) | `ollama` → inference requests (HTTP/JSON) |
+| **chromadb** | Vector database for RAG memory (Retrieval-Augmented Generation). Never exposed publicly. | `open-webui` → texts to vectorise or similarity queries (HTTP/JSON, ChromaDB protocol) | `open-webui` ← matching vectors / chunks (HTTP/JSON) |
+| **whisper-asr** | Speech transcription (Speech-to-Text) service based on OpenAI Whisper. Default language: French. | `nao-core` → audio files captured by the NAO's or the static drone's microphone (HTTP multipart/form-data, WAV) | `nao-core` ← transcribed text (HTTP/JSON) |
+| **naoqi-bridge** | HTTP bridge between the Docker ecosystem and the NAOqi SDK (Python 2.7). Runs in mock mode if the robot is not connected. | `nao-core` → motor commands / status requests (HTTP/JSON) | `nao-core` ← robot status, confirmations (HTTP/JSON); physical NAO ← qi SDK commands (local network, binary NAOqi protocol) |
+| **nao-core** | ROS 2 (Humble) container grouping four nodes (five processes): `naoqi_driver` (topics ↔ NAO bridge, audio → Whisper, speech → edge-tts), `cognitive_renderer` (cognitive state → LEDs / head), `motion_engine` (biomechanical synthesis emotion → movement) and `static_driver` (bridge `/drones/{id}/*` ↔ `/bodies/{id}/*` for the static drone, same Whisper and edge-tts through `robotics/shared/speech_services.py`; started a second time with `OBS_DRONE_ID` for the stream voice, ADR 005). | `whisper-asr` ← transcribed text (HTTP/JSON); `naoqi-bridge` ← robot status (HTTP/JSON); ROS 2 DDS ← commands published by body-gateway, `/nao/*` and `/drones/{id}/*` topics coming from rosbridge | `whisper-asr` → WAV audio (HTTP multipart); `naoqi-bridge` → commands and requests (HTTP/JSON); ROS 2 DDS → sensor data `/bodies/{id}/sensors/*` (speech, voice direction, image); ROS 2 DDS → `/nao/*` and `/drones/{id}/audio_out` (MP3) to rosbridge |
+| **body-gateway** | ROS 2 (Humble) node acting as the central brain. A single loop for all inputs (voice, Open WebUI, Twitch chat, sensors — ADR 005). Routes LLM inferences to the physical bodies (ROS 2) with a table per action type (speech → all connected voices: static drone and OBS voice, otherwise NAO; gestures / head / LEDs → NAO), turns the NAO's head towards the voice, handles dream cycles (2am–6am) and exposes an HTTP chat endpoint. | ROS 2 DDS ← body sensor data (`/bodies/{id}/sensors/*`, ROS 2 topics); `ollama` ← LLM responses (HTTP/JSON); `chat-relay` → texts from Open WebUI and `twitch-input` (HTTP/JSON, `POST /chat`) | `ollama` → system prompts + history (HTTP/JSON, OpenAI chat format); ROS 2 DDS → motor / speech commands (ROS 2 topics); ROS 2 DDS → cognitive state (`/cognitive_state` topic); `open-webui` / `twitch-input` via `chat-relay` ← chat responses (HTTP/JSON, port 8095) |
+| **ros2-bridge** | rosbridge server (ROS 2 Humble). Exposes the ROS 2 bus (DDS domain 42) over WebSocket for external clients. | NAO / static drone / obs-agent / external clients ← wrapped ROS 2 messages (WebSocket, rosbridge JSON protocol) | ROS 2 DDS → messages translated to the internal nodes (ROS 2 topics) |
+| **rosbridge-proxy** | Caddy reverse proxy. Bridges the outside (TLS through Traefik) and the ros2-bridge in host mode. | Traefik → incoming WebSocket connections (WSS 443, WS 80 for the NAO); requires `Authorization: Bearer $ROSBRIDGE_TOKEN` | `ros2-bridge` (host) ← WebSocket connections (WS, port 9090) |
+| **chat-relay** | Lightweight Caddy reverse proxy. Makes body-gateway (host network) reachable from ai-network for open-webui and twitch-input. | `open-webui`, `twitch-input` → HTTP chat requests (HTTP/JSON, port 8095) | `body-gateway` (host) ← relayed HTTP requests (HTTP/JSON, port 8095) |
+| **twitch-input** | Twitch chat input (ADR 005). Reads the chat over anonymous IRC, keeps `!nao …` messages, filters them (length, links, banned words, per-viewer delay, moderators-only option) and sends them one by one to the brain. Refuses to start without `TWITCH_CHANNEL`. | Twitch → chat messages (IRC over TLS, `irc.chat.twitch.tv:6697`); `chat-relay` ← brain response (HTTP/JSON, ignored) | `chat-relay` → `{"text": "[tchat Twitch] nickname : message", "robot_id"}` (HTTP/JSON, `POST /chat`) |
+| **obs-agent** | NAO's voice on the stream (ADR 005): body `obs_01` with the `speech` capability. A rosbridge client like the static drone; serves the overlay `https://<obs-agent domain>/overlay?token=$OBS_TOKEN` (domain chosen in Coolify), to open as an OBS browser source. Only "connected" while the overlay is open. | `rosbridge-proxy` ← `/drones/obs_01/audio_out` (base64 MP3) and `/bodies/obs_01/actuators/say` (subtitle); OBS → overlay opening (HTTPS through Traefik) | `rosbridge-proxy` → `/drones/obs_01/status` (heartbeat) and `/drones/obs_01/speaking` (Bool); OBS ← HTML overlay + audio (OBS mixer) |
+| **regie** | Control room (ADR 007): page `https://<regie domain>/?token=$REGIE_TOKEN` (domain chosen in Coolify) showing live each input, the LLM decision and the actions routed to the bodies. Read-only rosbridge client. | `rosbridge-proxy` ← `/events` (JSON published by body-gateway), `/cognitive_state`, `/emotion_state` | browser ← HTML page + SSE stream (HTTPS through Traefik) |
+| **bitterbot-gateway** *(disabled)* | Autonomous agent with long-term memory (SQLite) and a dream engine. Disabled since ADR 003 in favour of direct Ollama calls from body-gateway. | `ollama` ← generated text (HTTP/JSON) | `ollama` → inference requests (HTTP/JSON) |
 
 ---
 
-## Flux de données par cas d'usage
+## Data flows per use case
 
-### Conversation vocale avec le robot NAO
+### Voice conversation with the NAO robot
 
 ```
-Micro NAO
-  └─► nao-core/naoqi_driver (audio PCM)
+NAO microphone
+  └─► nao-core/naoqi_driver (PCM audio)
         └─► whisper-asr (WAV → HTTP multipart)
-              └─► nao-core/naoqi_driver (texte transcrit ← JSON)
-                    └─► body-gateway (topic ROS 2 /bodies/{id}/sensors/speech)
+              └─► nao-core/naoqi_driver (transcribed text ← JSON)
+                    └─► body-gateway (ROS 2 topic /bodies/{id}/sensors/speech)
                           └─► ollama (prompt → HTTP/JSON)
-                                └─► body-gateway (réponse ← JSON)
-                                      ├─► nao-core/naoqi_driver (commande parole → topic ROS 2)
-                                      │     └─► NAO physique (TTS via naoqi-bridge)
-                                      └─► nao-core/cognitive_renderer (état cognitif → topic /cognitive_state)
-                                            └─► NAO physique (LEDs / animations)
+                                └─► body-gateway (response ← JSON)
+                                      ├─► nao-core/naoqi_driver (speech command → ROS 2 topic)
+                                      │     └─► physical NAO (TTS through naoqi-bridge)
+                                      └─► nao-core/cognitive_renderer (cognitive state → /cognitive_state topic)
+                                            └─► physical NAO (LEDs / animations)
 ```
 
-### Conversation vocale via le drone statique (ADR 004)
+### Voice conversation through the static drone (ADR 004)
 
 ```
-Micros du drone statique (Raspberry Pi / PC)
-  └─► rosbridge-proxy → ros2-bridge (/drones/{id}/audio : WAV + angle, JSON)
+Static drone microphones (Raspberry Pi / PC)
+  └─► rosbridge-proxy → ros2-bridge (/drones/{id}/audio: WAV + angle, JSON)
         └─► nao-core/static_driver
               ├─► body-gateway (/bodies/{id}/sensors/sound_direction)
-              │     └─► nao-core/naoqi_driver (HeadYaw vers la voix) → NAO
+              │     └─► nao-core/naoqi_driver (HeadYaw towards the voice) → NAO
               └─► whisper-asr (WAV → HTTP multipart)
-                    └─► body-gateway (/bodies/{id}/sensors/speech, mot de réveil « ok nao »)
-                          └─► ollama (prompt + « [voix : 30° à gauche] »)
+                    └─► body-gateway (/bodies/{id}/sensors/speech, wake word "ok nao")
+                          └─► ollama (prompt + "[voix : 30° à gauche]")
                                 └─► body-gateway
-                                      ├─► nao-core/static_driver (parole → edge-tts)
-                                      │     └─► /drones/{id}/audio_out (MP3) → haut-parleur du drone
-                                      └─► nao-core/naoqi_driver (gestes, LEDs) → NAO
+                                      ├─► nao-core/static_driver (speech → edge-tts)
+                                      │     └─► /drones/{id}/audio_out (MP3) → drone speaker
+                                      └─► nao-core/naoqi_driver (gestures, LEDs) → NAO
 ```
 
-Sans drone statique connecté, la parole repart vers le NAO comme avant.
+Without a connected static drone, speech goes back to the NAO as before.
 
-### Tchat Twitch et voix du stream (ADR 005)
+### Twitch chat and stream voice (ADR 005)
 
 ```
-Tchat Twitch « !nao … »
-  └─► twitch-input (filtres, un message à la fois)
-        └─► chat-relay → body-gateway (POST /chat, « [tchat Twitch] pseudo : message »)
-              └─► ollama → liste d'actions
+Twitch chat "!nao …"
+  └─► twitch-input (filters, one message at a time)
+        └─► chat-relay → body-gateway (POST /chat, "[tchat Twitch] nickname : message")
+              └─► ollama → list of actions
                     ├─► nao-core/static_driver (DRONE_ID=obs_01, edge-tts)
                     │     └─► /drones/obs_01/audio_out (MP3) → rosbridge → obs-agent
-                    │           └─► overlay ouvert dans OBS → mixer OBS → stream
-                    ├─► nao-core/static_driver (static_01) → haut-parleur de la pièce
-                    └─► nao-core/naoqi_driver (gestes, LEDs) → NAO
+                    │           └─► overlay open in OBS → OBS mixer → stream
+                    ├─► nao-core/static_driver (static_01) → room speaker
+                    └─► nao-core/naoqi_driver (gestures, LEDs) → NAO
 ```
 
-La parole part sur toutes les voix connectées, quelle que soit l'entrée : une
-réponse à « ok nao » est aussi entendue sur le stream si l'overlay est ouvert.
+Speech goes out on every connected voice, whatever the input: an answer to
+"ok nao" is also heard on the stream if the overlay is open.
 
-### Chat utilisateur via navigateur
+### User chat through a browser
 
 ```
-Navigateur
+Browser
   └─► open-webui (HTTPS / Traefik)
-        ├─► ollama (inférence → HTTP/JSON SSE)
+        ├─► ollama (inference → HTTP/JSON SSE)
         ├─► chromadb (RAG → HTTP/JSON)
-        └─► chat-relay → body-gateway (chat physique → HTTP/JSON :8095)
+        └─► chat-relay → body-gateway (physical chat → HTTP/JSON :8095)
 ```
 
-### Connexion NAO / drone statique → rosbridge (entrée de commandes externes)
+### NAO / static drone → rosbridge connection (external command input)
 
 ```
-NAO, drone statique ou obs-agent (WebSocket sortant)
-  └─► Traefik (WS :80 pour le NAO, WSS :443)
-        └─► rosbridge-proxy (Caddy :80, vérifie le jeton)
+NAO, static drone or obs-agent (outbound WebSocket)
+  └─► Traefik (WS :80 for the NAO, WSS :443)
+        └─► rosbridge-proxy (Caddy :80, checks the token)
               └─► ros2-bridge (host :9090)
-                    └─► ROS 2 DDS (domaine 42)
+                    └─► ROS 2 DDS (domain 42)
                           └─► nao-core / body-gateway
 ```
 
-`obs-agent` tourne sur le VPS : il joint directement `rosbridge-proxy:80` par
-`robotics-net`, sans passer par Traefik, mais avec le même jeton.
+`obs-agent` runs on the VPS: it reaches `rosbridge-proxy:80` directly over
+`robotics-net`, without going through Traefik, but with the same token.
 
 ---
 
-## Réseaux Docker
+## Docker networks
 
-| Réseau | Type | Containers membres | Accès internet |
+| Network | Type | Member containers | Internet access |
 |---|---|---|---|
-| `ai-network` | bridge | ollama, open-webui, n8n, chromadb, naoqi-bridge, whisper-asr, chat-relay, twitch-input | oui |
-| `bitterbot-net` | bridge (interne) | *(réservé bitterbot-gateway)* | non |
-| `robotics-net` | bridge | rosbridge-proxy, naoqi-bridge, obs-agent, regie | oui |
-| host | — | ros2-bridge, nao-core, body-gateway | via hôte |
+| `ai-network` | bridge | ollama, open-webui, n8n, chromadb, naoqi-bridge, whisper-asr, chat-relay, twitch-input | yes |
+| `bitterbot-net` | bridge (internal) | *(reserved for bitterbot-gateway)* | no |
+| `robotics-net` | bridge | rosbridge-proxy, naoqi-bridge, obs-agent, regie | yes |
+| host | — | ros2-bridge, nao-core, body-gateway | through the host |

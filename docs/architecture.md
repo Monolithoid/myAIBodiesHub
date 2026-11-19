@@ -1,103 +1,103 @@
-# Architecture — Stack IA personnelle unifiée
+# Architecture — Unified personal AI stack
 
 ## Vision
 
-Une seule IA avec des capacités modulaires.  
-Le découpage en containers est une décision de scalabilité, pas de séparation fonctionnelle.
+A single AI with modular capabilities.  
+Splitting into containers is a scalability decision, not a functional separation.
 
 ## Infrastructure
 
-- **VPS Ubuntu** — ~24 GB RAM, sans GPU, géré via Coolify
-- **Tous les services** tournent en containers Docker
-- **Un seul `docker-compose.yml`** à la racine du monorepo
+- **Ubuntu VPS** — ~24 GB RAM, no GPU, managed through Coolify
+- **All services** run in Docker containers
+- **A single `docker-compose.yml`** at the root of the monorepo
 
-## Structure du monorepo
+## Monorepo layout
 
 ```
 ia-agent/
 ├── core/
-│   └── bitterbot/           → Dockerfile + config de l'agent Bitterbot
+│   └── bitterbot/           → Dockerfile + config of the Bitterbot agent
 ├── robotics/
-│   ├── brain/               → Cerveau générique, indépendant du type de drone
-│   │   ├── body_gateway/    → Cerveau ROS 2 : LLM ↔ corps robotiques
-│   │   ├── ros2_bridge/     → Dockerfile rosbridge_server WebSocket
-│   │   └── webui/           → Pipe Open WebUI (nao_pipe.py)
+│   ├── brain/               → Generic brain, independent of the drone type
+│   │   ├── body_gateway/    → ROS 2 brain: LLM ↔ robotic bodies
+│   │   ├── ros2_bridge/     → rosbridge_server WebSocket Dockerfile
+│   │   └── webui/           → Open WebUI pipe (nao_pipe.py)
 │   ├── inputs/
-│   │   └── twitch/          → Entrée tchat Twitch « !nao » → body-gateway (ADR 005)
-│   ├── shared/              → Classes partagées (RobotBridgeBase)
+│   │   └── twitch/          → Twitch chat input "!nao" → body-gateway (ADR 005)
+│   ├── shared/              → Shared classes (RobotBridgeBase)
 │   └── drones/
 │       ├── nao/
-│       │   ├── onboard/     → nao_ws_bridge.py (script exécuté SUR le robot)
-│       │   ├── bridge/      → HTTP bridge Flask vers NAO (container naoqi-bridge)
-│       │   ├── driver/      → Nœud ROS 2 : /bodies/*/actuators/* → /nao/*
-│       │   ├── cognitive_renderer/ → Nœud ROS 2 : état cognitif → LEDs / tête
-│       │   ├── motion_engine/ → Package ROS 2 : synthèse biomécanique (émotion → mouvement)
-│       │   └── core/        → Dockerfile + entrypoint du container nao-core
-│       ├── static/          → Drone statique (ADR 004) : onboard/ (Raspberry Pi / PC) + driver/ (nœud ROS 2 VPS)
-│       ├── obs/             → Voix de NAO sur le stream : overlay OBS (ADR 005)
-│       └── quadcopter/      → Réservé
+│       │   ├── onboard/     → nao_ws_bridge.py (script run ON the robot)
+│       │   ├── bridge/      → Flask HTTP bridge to NAO (naoqi-bridge container)
+│       │   ├── driver/      → ROS 2 node: /bodies/*/actuators/* → /nao/*
+│       │   ├── cognitive_renderer/ → ROS 2 node: cognitive state → LEDs / head
+│       │   ├── motion_engine/ → ROS 2 package: biomechanical synthesis (emotion → movement)
+│       │   └── core/        → Dockerfile + entrypoint of the nao-core container
+│       ├── static/          → Static drone (ADR 004): onboard/ (Raspberry Pi / PC) + driver/ (VPS ROS 2 node)
+│       ├── obs/             → NAO's voice on the stream: OBS overlay (ADR 005)
+│       └── quadcopter/      → Reserved
 ├── docs/
-│   ├── architecture.md      → ce fichier
+│   ├── architecture.md      → this file
 │   └── decisions/           → ADR (Architecture Decision Records)
-├── tests/                   → test-chain.sh, diagnostics NAO, faux drone statique
-├── .github/workflows/       → CI/CD GitHub Actions
-├── setup-vps.sh             → préparation du VPS
-└── docker-compose.yml       → composition complète
+├── tests/                   → test-chain.sh, NAO diagnostics, fake static drone
+├── .github/workflows/       → GitHub Actions CI/CD
+├── setup-vps.sh             → VPS preparation
+└── docker-compose.yml       → full composition
 ```
 
-## Documentation liée
+## Related documentation
 
-- [Récapitulatif des containers](containers-overview.md) — tableau détaillé des échanges entre containers
-- [Stack IA](ia-stack.md) — configuration de chaque service IA
-- [Bridge IA / ROS 2 / NAO](bridge-ia-ros2-nao.md) — couche robotique
+- [Container overview](containers-overview.md) — detailed table of the exchanges between containers
+- [AI stack](ia-stack.md) — configuration of each AI service
+- [AI / ROS 2 / NAO bridge](bridge-ia-ros2-nao.md) — robotics layer
 - [ADR 001](decisions/001-ros2-over-ros1.md) · [ADR 002](decisions/002-nao-websocket-bridge.md) · [ADR 003](decisions/003-ollama-direct-sans-bitterbot.md) · [ADR 004](decisions/004-drone-statique.md) · [ADR 005](decisions/005-avatar-twitch.md)
 
 ---
 
-## Services Docker
+## Docker services
 
-| Container | Rôle | Port | Accès |
+| Container | Role | Port | Access |
 |---|---|---|---|
-| `ollama` | Moteur LLM | 11434 | Public (API key) |
-| `open-webui` | Interface chat / agents | 3000→8080 | Public (Google SSO) |
-| `n8n` | Orchestrateur de workflows | 5678 | SSH tunnel |
-| `chromadb` | Mémoire vectorielle | 8000 | Interne uniquement |
-| `whisper-asr` | Transcription vocale (STT) | 9000 | Interne uniquement |
-| `naoqi-bridge` | HTTP bridge Python 2.7 → SDK NAOqi | 8090 | Interne (host) |
-| `nao-core` | ROS 2 Humble : naoqi_driver + cognitive_renderer + motion_engine + static_driver (×2 : drone statique et voix OBS) | — | host network |
-| `body-gateway` | Cerveau ROS 2 : LLM ↔ corps robotiques | 8095 | host network |
+| `ollama` | LLM engine | 11434 | Public (API key) |
+| `open-webui` | Chat / agents interface | 3000→8080 | Public (Google SSO) |
+| `n8n` | Workflow orchestrator | 5678 | SSH tunnel |
+| `chromadb` | Vector memory | 8000 | Internal only |
+| `whisper-asr` | Speech transcription (STT) | 9000 | Internal only |
+| `naoqi-bridge` | Python 2.7 HTTP bridge → NAOqi SDK | 8090 | Internal (host) |
+| `nao-core` | ROS 2 Humble: naoqi_driver + cognitive_renderer + motion_engine + static_driver (×2: static drone and OBS voice) | — | host network |
+| `body-gateway` | ROS 2 brain: LLM ↔ robotic bodies | 8095 | host network |
 | `ros2-bridge` | rosbridge_server WebSocket | 9090 | host network |
-| `rosbridge-proxy` | Proxy Caddy : Traefik → ros2-bridge | 80 | robotics-net |
-| `chat-relay` | Proxy Caddy : ai-network → body-gateway | 8095 | ai-network |
-| `twitch-input` | Entrée tchat Twitch « !nao » → body-gateway | — | ai-network |
-| `obs-agent` | Voix de NAO sur le stream (overlay OBS, corps `obs_01`) | 8096 | Public (`obs.$DOMAIN`, jeton) |
-| `regie` | Régie : flux `/events` en direct (entrées, décisions du LLM, actions) | 8097 | Public (`regie.$DOMAIN`, jeton) |
-| `bitterbot-gateway` *(désactivé)* | Agent IA avec mémoire long-terme | 19001 | SSH tunnel |
+| `rosbridge-proxy` | Caddy proxy: Traefik → ros2-bridge | 80 | robotics-net |
+| `chat-relay` | Caddy proxy: ai-network → body-gateway | 8095 | ai-network |
+| `twitch-input` | Twitch chat input "!nao" → body-gateway | — | ai-network |
+| `obs-agent` | NAO's voice on the stream (OBS overlay, body `obs_01`) | 8096 | Public (`obs.$DOMAIN`, token) |
+| `regie` | Control room: live `/events` stream (inputs, LLM decisions, actions) | 8097 | Public (`regie.$DOMAIN`, token) |
+| `bitterbot-gateway` *(disabled)* | AI agent with long-term memory | 19001 | SSH tunnel |
 
-## Réseaux Docker
+## Docker networks
 
 ```
 ai-network (bridge, internet)
   └── ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge, chat-relay, twitch-input
 
-bitterbot-net (bridge, internal — aucun accès internet)
-  └── (réservé bitterbot-gateway — voir ADR 003)
+bitterbot-net (bridge, internal — no internet access)
+  └── (reserved for bitterbot-gateway — see ADR 003)
 
 robotics-net (bridge, internet)
   └── rosbridge-proxy, naoqi-bridge, obs-agent, regie
 
 host network
-  └── nao-core, body-gateway, ros2-bridge  (DDS ROS 2 domaine 42)
+  └── nao-core, body-gateway, ros2-bridge  (ROS 2 DDS domain 42)
 ```
 
-## Architecture robotique NAO
+## NAO robotics architecture
 
-Toutes les entrées suivent la même boucle (voir [ADR 005](decisions/005-avatar-twitch.md)) :
-voix « ok nao », Open WebUI, tchat Twitch et capteurs produisent un texte ;
-`body-gateway` appelle le LLM et répartit la liste d'actions sur les corps.
+All inputs follow the same loop (see [ADR 005](decisions/005-avatar-twitch.md)):
+the "ok nao" voice, Open WebUI, Twitch chat and sensors produce a text;
+`body-gateway` calls the LLM and spreads the list of actions across the bodies.
 
 ```
-Open WebUI (chat)          twitch-input (« !nao … » du tchat Twitch)
+Open WebUI (chat)          twitch-input ("!nao …" from Twitch chat)
   │  POST http://chat-relay:8095/chat  ◄──┘
   ▼
 chat-relay (Caddy, ai-network → host)
@@ -108,28 +108,28 @@ body-gateway (ROS 2 Humble, host network, :8095)
   ├─► ollama (LLM)
   │
   │  ROS 2 DDS domain 42
-  ├─► /cognitive_state → nao-core/cognitive_renderer (LEDs + tête)
+  ├─► /cognitive_state → nao-core/cognitive_renderer (LEDs + head)
   ├─► /bodies/{static_01,obs_01}/actuators/say → nao-core/static_driver (edge-tts)
-  │         └─► /drones/{id}/audio_out → haut-parleur de la pièce / overlay OBS (obs-agent)
+  │         └─► /drones/{id}/audio_out → room speaker / OBS overlay (obs-agent)
   └─► /bodies/{id}/actuators/* → nao-core/naoqi_driver
                                         │  HTTP localhost:8090
                                         ▼
                                   naoqi-bridge (Python 2.7)
-                                        │  qi SDK (mock si NAO absent)
+                                        │  qi SDK (mock if NAO absent)
                                         ▼
-                                  NAO physique
+                                  physical NAO
 
 NAO robot
   └── nao_ws_bridge.py (Python 2.7)
-        └─► WebSocket sortant ws://IP_DU_DRONE:9090 (réseau local, sans jeton)
-              └─► relais du drone statique (Caddy, ADR 006) : wss://rosbridge.$DOMAIN + jeton
+        └─► outbound WebSocket ws://DRONE_IP:9090 (local network, no token)
+              └─► static drone relay (Caddy, ADR 006): wss://rosbridge.$DOMAIN + token
                     └─► rosbridge-proxy (Caddy) → ros2-bridge (host :9090)
                     └─► ROS 2 DDS domain 42
 ```
 
-### Topics ROS 2
+### ROS 2 topics
 
-| Topic | Type | Direction | Action NAO |
+| Topic | Type | Direction | NAO action |
 |---|---|---|---|
 | `/nao/speech` | `std_msgs/String` | VPS → NAO | `ALTextToSpeech.say()` |
 | `/nao/audio_out` | `std_msgs/String` (base64 MP3) | VPS → NAO | `ALAudioPlayer.playFile()` |
@@ -138,13 +138,13 @@ NAO robot
 | `/nao/leds` | `std_msgs/String` (JSON) | VPS → NAO | `ALLeds.fadeRGB()` |
 | `/nao/motion` | `std_msgs/String` (JSON) | VPS → NAO | `ALMotion.angleInterpolationWithSpeed()` |
 | `/nao/stop` | `std_msgs/Empty` | VPS → NAO | `ALMotion.stopMove()` |
-| `/nao/status` | `std_msgs/String` (JSON) | NAO → VPS | Batterie (heartbeat 30 s) |
-| `/nao/audio` | `std_msgs/String` (base64 WAV) | NAO → VPS | Parole capturée (wake word) |
+| `/nao/status` | `std_msgs/String` (JSON) | NAO → VPS | Battery (30 s heartbeat) |
+| `/nao/audio` | `std_msgs/String` (base64 WAV) | NAO → VPS | Captured speech (wake word) |
 
-## Extensibilité drones
+## Drone extensibility
 
-L'architecture rosbridge est directement extensible aux drones.
-PX4, DJI (ROS 2 SDK) et Parrot (Anafi SDK) ont tous des drivers ROS 2.
-Il suffit d'ajouter un script bridge côté drone et un nouvel ID dans `BODY_REGISTRY` (le préfixe de l'ID donne le type : `static…`, `obs…`, sinon NAO — voir `body_rules.py`).
+The rosbridge architecture extends directly to drones.
+PX4, DJI (ROS 2 SDK) and Parrot (Anafi SDK) all have ROS 2 drivers.
+All it takes is a bridge script on the drone side and a new ID in `BODY_REGISTRY` (the ID prefix gives the type: `static…`, `obs…`, otherwise NAO — see `body_rules.py`).
 
-Premier cas : le drone statique Raspberry Pi 5 (capture audio, vidéo, sortie audio), qui laisse au NAO le seul rendu émotif — voir [ADR 004](decisions/004-drone-statique.md). Deuxième cas : la voix du stream `obs_01`, un corps « parole » joué dans le mixer OBS — voir [ADR 005](decisions/005-avatar-twitch.md).
+First case: the Raspberry Pi 5 static drone (audio capture, video, audio output), which leaves NAO with emotional rendering only — see [ADR 004](decisions/004-drone-statique.md). Second case: the stream voice `obs_01`, a "speech" body played in the OBS mixer — see [ADR 005](decisions/005-avatar-twitch.md).
