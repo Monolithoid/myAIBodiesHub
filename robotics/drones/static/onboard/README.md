@@ -42,6 +42,7 @@ at home.
 | `/drones/{id}/audio_out` | ← VPS | `std_msgs/String` | base64 MP3 (like `/nao/audio_out`), or JSON `{"mp3", "sync", "speech_s"}` for a sentence waiting for a NAO gesture ([synchronisation](#speech--gesture-synchronisation)) |
 | `/speech_gesture_sync` | ← drone, VPS | `std_msgs/String` | `{"kind": "go", "sync", "at", "in_s"}`: start time of sentence `sync` (0 = right away); `in_s` = the same as a delay, for the OBS voice |
 | `/drones/{id}/speaking` | → VPS | `std_msgs/Bool` | `true` at the start of playback, `false` at the end |
+| `/drones/{id}/event` | → VPS, gesture service | `std_msgs/String` | `{"kind": "sound"\|"motion", "azimuth_deg"}`: a sound segment heard, or a movement starting after `MOTION_EVENT_QUIET_S` quiet seconds ([reflex](#reflex)) |
 | `/drones/{id}/image` | → VPS | `std_msgs/String` | JSON `{"jpeg": base64, "width", "height", "reason": "periodic\|request"}` |
 | `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Requests an image right away |
 
@@ -154,6 +155,25 @@ way: `obs_agent` holds the sentence until the same start, plus `OBS_SPEECH_OFFSE
 (its own environment, 0 by default) to match the camera latency on the stream. As its
 clock is not the drone's, it uses `in_s` (delay from the moment the message is sent).
 `SPEECH_GESTURE_SYNC=0` in `body_gateway`'s environment turns the whole mechanism off.
+
+### Reflex
+
+The gesture service also reacts, without the LLM, to what happens in front of
+the NAO. `static_drone.py` publishes each sound segment it hears and each
+movement the camera starts to see on `/drones/{id}/event`, with its direction.
+When the robot is at rest and calm for `GESTURE_REFLEX_COOLDOWN_S` seconds, the
+service asks the NAO driver (`/bodies/{nao}/actuators/gesture`, `"reflex": true`)
+for a short gesture of the generator toward the event: `GESTURE_REFLEX_SOUND`
+(`surprise:0.3`) or `GESTURE_REFLEX_MOTION` (`calme:0.3`). The driver checks heat,
+posture and walk as for any gesture.
+
+- A gesture asked by the LLM stops a reflex in progress (`/nao/stop`) and starts
+  from the measured posture; a reflex never replaces nor delays an LLM gesture.
+- With `LLM_MOTION=0` on the VPS (`body_gateway`), the LLM no longer sends
+  `motion` / `look` and `body_gateway` no longer turns the head toward each voice:
+  NAO only moves through learned gestures, by reflex or asked by the LLM (which
+  gets the voice direction as its `event`).
+- `GESTURE_REFLEX=0` turns the reflex off.
 
 ## Sound direction
 

@@ -36,6 +36,10 @@ CAPABILITY_LABELS: dict[str, str] = {
     "nao":    "gestes, tête, LEDs (motion, gesture, look, leds, move)",
 }
 
+# LLM_MOTION=0: the NAO only moves through learned gestures.
+CAPABILITY_LABEL_NAO_GESTURES = "gestes appris, LEDs (gesture, leds)"
+RAW_MOTION_ACTIONS = ("motion", "look")
+
 # Bodies that only give NAO a voice: "speech" goes to every connected one.
 VOICE_TYPES = ("static", "obs")
 
@@ -59,7 +63,7 @@ def bodies_of_type(registry: list[str], kind: str) -> list[str]:
     return [b for b in registry if body_type(b) == kind]
 
 
-def describe_bodies(registry: list[str], speaker: str) -> str:
+def describe_bodies(registry: list[str], speaker: str, motion: bool = True) -> str:
     """Lines '- id : capacités' injected in the system prompt.
 
     A NAO that is the speaking body (no voice body connected) also gets "parler".
@@ -67,6 +71,8 @@ def describe_bodies(registry: list[str], speaker: str) -> str:
     lines = []
     for b in registry:
         label = CAPABILITY_LABELS[body_type(b)]
+        if body_type(b) == "nao" and not motion:
+            label = CAPABILITY_LABEL_NAO_GESTURES
         if b == speaker and not is_voice(b):
             label = f"parler, {label}"
         lines.append(f"- {b} : {label}")
@@ -288,8 +294,16 @@ def motor_ranges_label(ranges: dict) -> str:
 ENERGY_INTENSITY = {"very-low": 0.15, "low": 0.3, "medium": 0.5, "high": 0.7, "very-high": 0.9}
 
 
-def gestures_label(emotions: list) -> str:
+def gestures_label(emotions: list, motion: bool = True) -> str:
     """Prompt lines for the "gesture" action; empty list = not available."""
+    if not emotions and not motion:
+        return ("Gestes appris : indisponibles pour l'instant, NAO ne bouge pas : "
+                "n'envoie que \"speech\" et \"leds\".")
+    if not motion:
+        return ("Gestes appris (tête, bras et mains ensemble, appris sur ce NAO) : "
+                "action {\"type\": \"gesture\", \"emotion\": <une de : "
+                + ", ".join(str(e) for e in emotions)
+                + ">, \"intensity\": 0.0 à 1.0}. Un seul geste par réponse.")
     if not emotions:
         return ("Gestes appris : indisponibles pour l'instant, n'envoie pas d'action "
                 "\"gesture\".")

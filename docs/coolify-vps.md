@@ -117,7 +117,7 @@ Optional variables (defaults in `docker-compose.yml`, whose header describes eac
 | Group | Variables |
 |---|---|
 | Brain ([AI stack](ia-stack.md#brain-provider-body-gateway)) | `BRAIN_PROVIDER`, `BRAIN_URL`, `BRAIN_MODEL`, `BRAIN_API_KEY`, `BRAIN_EFFORT`, `BRAIN_TIMEOUT` (personality: file `/opt/ia/nao/persona/personnalite.md`) |
-| Bodies | `NAO_ROBOT_ID`, `STATIC_DRONE_ID`, `OBS_DRONE_ID` (empty = body disabled), `NAO_HEAD_YAW_OFFSET`, `NAO_SPEAKING_SYNC`, `SPEECH_GESTURE_SYNC`, `SPEECH_CHARS_PER_S` |
+| Bodies | `NAO_ROBOT_ID`, `STATIC_DRONE_ID`, `OBS_DRONE_ID` (empty = body disabled), `NAO_HEAD_YAW_OFFSET`, `NAO_SPEAKING_SYNC`, `SPEECH_GESTURE_SYNC`, `SPEECH_CHARS_PER_S`, `LLM_MOTION` |
 | Voice | `WAKE_WORD`, `WAKE_WINDOW_S`, `LISTEN_DURATION`, `ASR_MODEL`, `TTS_VOICE` |
 | Control room | `OBS_URL`: `obs-agent` domain (e.g. `obs.$DOMAIN`, `https://` added if missing), for the control room's "OBS : overlay voix" link |
 | Twitch | `TWITCH_COMMAND_PREFIX`, `TWITCH_USER_COOLDOWN_S`, `TWITCH_MIN_INTERVAL_S`, `TWITCH_BLOCKLIST`, `TWITCH_MODS_ONLY` |

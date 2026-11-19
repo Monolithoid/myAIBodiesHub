@@ -193,5 +193,22 @@ class TestSpeechGestureSync(unittest.TestCase):
             self.ACTIONS, REGISTRY, {"nao_01": True, "static_01": False}, ["joie"], "s"))
 
 
+
+class TestGesturesOnly(unittest.TestCase):
+    """LLM_MOTION=0: NAO only moves through learned gestures."""
+
+    def test_nao_label(self):
+        text = body_rules.describe_bodies(REGISTRY, "static_01", motion=False)
+        self.assertIn("nao_01 : gestes appris", text)
+        self.assertNotIn("motion", text)
+
+    def test_gestures_label(self):
+        text = body_rules.gestures_label(["joie"], motion=False)
+        self.assertIn("joie", text)
+        self.assertNotIn('"motion"', text)
+        self.assertIn("NAO ne bouge pas", body_rules.gestures_label([], motion=False))
+        self.assertIn('"motion"', body_rules.gestures_label(["joie"]))    # default unchanged
+
+
 if __name__ == "__main__":
     unittest.main()

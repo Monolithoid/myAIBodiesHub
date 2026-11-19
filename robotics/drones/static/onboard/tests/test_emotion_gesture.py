@@ -116,7 +116,7 @@ class FakeBridge(object):
         self.subs[topic] = cb
 
     def publish(self, topic, msg):
-        data = json.loads(msg["data"])
+        data = json.loads(msg.get("data", "{}"))
         self.out.append((topic, data))
         if topic == "/nao/read_angles":
             self.subs["/nao/joint_angles"]({"data": json.dumps({"id": data["id"], "angles": self.pose})})
@@ -421,6 +421,70 @@ class TestFitToSpeech(unittest.TestCase):
             self.assertTrue(0.9 <= scale < 0.92, scale)
         finally:
             _Gen.guardian.min_window = 0.0
+
+
+class TestReflex(Base):
+    """What the drone perceives (sound, motion) -> short gesture, through the NAO driver."""
+
+    REFLEX = {"reflex": True, "reflex_cooldown_s": 20.0,
+              "reflex_gestures": {"sound": ("peur", 0.3), "motion": ("joie", 0.2)}}
+
+    def asked(self):
+        return [d for t, d in self.bridge.out if t == "/bodies/nao_01/actuators/gesture"]
+
+    def test_sound_asks_a_reflex_through_the_driver(self):
+        s = self.service(**self.REFLEX)
+        self.now[0] += 100
+        s.on_event({"kind": "sound", "azimuth_deg": 30.0})
+        (order,) = self.asked()
+        self.assertEqual(order, {"emotion": "peur", "intensity": 0.3, "reflex": True,
+                                 "event": {"azimuth_deg": -30.0, "elevation_deg": 0.0}})
+        s.on_event({"kind": "motion", "azimuth_deg": None})          # cooldown
+        self.assertEqual(len(self.asked()), 1)
+        self.now[0] += 25
+        s.on_event({"kind": "motion", "azimuth_deg": None})
+        self.assertEqual(self.asked()[-1], {"emotion": "joie", "intensity": 0.2, "reflex": True})
+
+    def test_no_reflex_when_off_unknown_or_busy(self):
+        s = self.service(**dict(self.REFLEX, reflex=False))
+        self.now[0] += 100
+        s.on_event({"kind": "sound", "azimuth_deg": 0.0})
+        s = self.service(**dict(self.REFLEX, reflex_gestures={"sound": ("inconnue", 0.3)}))
+        self.now[0] += 100
+        s.on_event({"kind": "sound", "azimuth_deg": 0.0})
+        s = self.service(**self.REFLEX)
+        self.now[0] += 100
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5})     # asked by the LLM
+        s.on_event({"kind": "sound", "azimuth_deg": 0.0})
+        self.assertEqual(self.asked(), [])
+
+    def test_llm_gesture_stops_a_reflex(self):
+        s = self.service(**self.REFLEX)
+        s.on_request({"id": "r", "emotion": "peur", "intensity": 0.3, "reflex": True})
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["r"])
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.6})
+        s.step()
+        self.assertEqual(sum(1 for t, _ in self.bridge.out if t == "/nao/stop"), 1)
+        s.step()                                                     # waits for "stopped"
+        self.assertEqual(sum(1 for t, _ in self.bridge.out if t == "/nao/stop"), 1)
+        self.bridge.robot("r", "stopped")
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["r", "a"])
+
+    def test_reflex_never_replaces_an_llm_gesture(self):
+        s = self.service(**self.REFLEX)
+        s.on_request({"id": "a", "emotion": "joie", "intensity": 0.6})
+        s.on_request({"id": "r", "emotion": "peur", "intensity": 0.3, "reflex": True})
+        self.assertIn(("r", "ignored"), self.bridge.states())
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
+
+    def test_parse_reflex(self):
+        self.assertEqual(eg.parse_reflex("surprise:0.4"), ("surprise", 0.4))
+        self.assertEqual(eg.parse_reflex("calme"), ("calme", 0.3))
+        self.assertIsNone(eg.parse_reflex(""))
+        self.assertIsNone(eg.parse_reflex("off"))
 
 
 if __name__ == "__main__":

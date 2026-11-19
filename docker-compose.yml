@@ -53,6 +53,9 @@ version: "3.8"
 #                              together, gesture duration fitted to the sentence (default: 1);
 #                              the offset is set on the drone (GESTURE_SPEECH_OFFSET_MS)
 #   SPEECH_CHARS_PER_S       : speech synthesis rate used to estimate a sentence (default: 14)
+#   LLM_MOTION               : 1 = the LLM may send "motion" / "look" and the NAO head turns
+#                              toward each voice (default: 1); 0 = NAO only moves through
+#                              learned gestures (LLM or the static drone's reflex)
 #   LISTEN_DURATION          : listening time after the wake word in seconds (default: 4.0)
 #   ASR_MODEL                : Whisper model — tiny/base/small (default: small)
 #
@@ -358,6 +361,7 @@ services:
       - WAKE_ALIASES=${WAKE_ALIASES:-}
       - NAO_HEAD_YAW_OFFSET=${NAO_HEAD_YAW_OFFSET:-0}
       - SPEECH_GESTURE_SYNC=${SPEECH_GESTURE_SYNC:-1}
+      - LLM_MOTION=${LLM_MOTION:-1}
       - SPEECH_CHARS_PER_S=${SPEECH_CHARS_PER_S:-14}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - WEBUI_API_KEY=${WEBUI_API_KEY:-}

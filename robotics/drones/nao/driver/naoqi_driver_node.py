@@ -424,6 +424,8 @@ class NAOqiDriverNode(Node):
             return
         if isinstance(data.get("event"), dict):
             order["event"] = data["event"]
+        if data.get("reflex") is True:
+            order["reflex"] = True        # static drone's reaction to what it perceives
         if isinstance(data.get("sync"), dict) and data["sync"].get("id"):
             order["sync"] = data["sync"]      # sentence the drone holds until this gesture starts
         if self._gesture_emotions and order["emotion"] not in self._gesture_emotions:
