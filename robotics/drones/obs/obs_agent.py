@@ -14,6 +14,16 @@ second time with DRONE_ID=obs_01 in nao-core) does the edge-tts synthesis:
                                                       when the stream can hear it
   /drones/{id}/speaking       (Bool)                ← overlay playback start/end,
                                                       the NAO animates meanwhile
+  /speech_gesture_sync        (String JSON)         → {"kind": "go", "sync", "in_s"}:
+                                                      a sentence that goes with a NAO
+                                                      gesture waits for it, like the
+                                                      static drone's speaker
+
+Speech ↔ gesture sync: when body_gateway links a sentence to a learned gesture,
+"say" is JSON {"text", "sync"} and audio_out is JSON {"mp3", "sync", "speech_s"}.
+The sentence (voice and caption) is held until the drone's gesture service says
+the gesture starts (+ its GESTURE_SPEECH_OFFSET_MS, + OBS_SPEECH_OFFSET_MS here),
+at most SPEECH_SYNC_MAX_WAIT_S.  Sentences keep their order.
 
 The overlay is an OBS browser source: /overlay?token=OBS_TOKEN.  With "Control
 audio via OBS" checked, the voice is its own source in the OBS mixer.
@@ -24,6 +34,9 @@ Environment variables:
   ROSBRIDGE_TOKEN   bearer token checked by rosbridge-proxy (required)
   OBS_TOKEN         secret in the overlay URL (required)
   HTTP_PORT         overlay port, default 8096
+  OBS_SPEECH_OFFSET_MS    extra offset of the stream voice over the room speaker,
+                          ms, default 0 (e.g. to match the camera latency)
+  SPEECH_SYNC_MAX_WAIT_S  longest wait for the gesture, default 4
 """
 
 import base64
@@ -46,6 +59,9 @@ ROSBRIDGE_URL   = os.environ.get("ROSBRIDGE_URL", "ws://rosbridge-proxy:80")
 ROSBRIDGE_TOKEN = os.environ.get("ROSBRIDGE_TOKEN", "")
 OBS_TOKEN       = os.environ.get("OBS_TOKEN", "")
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8096"))
+OBS_SPEECH_OFFSET_S = float(os.environ.get("OBS_SPEECH_OFFSET_MS", "0")) / 1000.0
+SPEECH_SYNC_MAX_WAIT_S = float(os.environ.get("SPEECH_SYNC_MAX_WAIT_S", "4"))
+SYNC_TOPIC = "/speech_gesture_sync"
 
 STATUS_PERIOD_S = 30.0
 CAPTION_MAX_AGE_S = 120.0
@@ -195,24 +211,127 @@ class OverlayHub:
         return audio_id
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Speech ↔ gesture sync
+# ─────────────────────────────────────────────────────────────────────────────
+
+def parse_say(data: str) -> str:
+    """Caption text of an /actuators/say message: plain text or JSON {"text", "sync"}."""
+    data = (data or "").strip()
+    if data.startswith("{"):
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            obj = None
+        if isinstance(obj, dict) and "text" in obj:
+            return str(obj.get("text") or "").strip()
+    return data
+
+
+def parse_audio_out(data: str) -> tuple[bytes, str]:
+    """(MP3, sync id): plain base64, or JSON {"mp3", "sync", "speech_s"}."""
+    data = (data or "").strip()
+    sync = ""
+    if data.startswith("{"):
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            return b"", ""
+        data, sync = str(obj.get("mp3") or ""), str(obj.get("sync") or "")
+    try:
+        return (base64.b64decode(data) if data else b""), sync
+    except (ValueError, TypeError):
+        return b"", ""
+
+
+class SpeechSync:
+    """Sentences held until the gesture that goes with them starts.
+
+    The drone's clock is not this machine's: the "go" message carries `in_s`,
+    the delay left when it was sent (0 = now), counted from its arrival here.
+    """
+
+    KEEP_S = 120.0
+    MAX_LEAD_S = 20.0
+
+    def __init__(self, max_wait_s: float, offset_s: float = 0.0,
+                 clock=time.monotonic, sleep=time.sleep):
+        self.max_wait_s = max(0.0, float(max_wait_s))
+        self.offset_s = float(offset_s)
+        self.clock, self.sleep = clock, sleep
+        self._go: dict[str, tuple[float, float]] = {}   # sync -> (due, received)
+        self._cv = threading.Condition()
+
+    def on_message(self, payload: dict):
+        if payload.get("kind") != "go" or not payload.get("sync"):
+            return
+        try:
+            in_s = float(payload.get("in_s") or 0.0)
+        except (TypeError, ValueError):
+            in_s = 0.0
+        now = self.clock()
+        with self._cv:
+            self._go[str(payload["sync"])] = (now + max(0.0, in_s), now)
+            for k in [k for k, (_, t) in self._go.items() if now - t > self.KEEP_S]:
+                del self._go[k]
+            self._cv.notify_all()
+
+    def wait(self, sync: str) -> str:
+        deadline = self.clock() + self.max_wait_s
+        with self._cv:
+            while sync not in self._go:
+                left = deadline - self.clock()
+                if left <= 0:
+                    return f"attente dépassée ({self.max_wait_s:.1f} s), dite sans le geste"
+                self._cv.wait(left)
+            due, _ = self._go.pop(sync)
+        left = due + self.offset_s - self.clock()
+        if left > 0:
+            self.sleep(min(left, self.MAX_LEAD_S))
+        return "partie avec le geste"
+
+
 HUB = OverlayHub()
 BRIDGE = Rosbridge(ROSBRIDGE_URL, ROSBRIDGE_TOKEN)
+SYNC = SpeechSync(SPEECH_SYNC_MAX_WAIT_S, OBS_SPEECH_OFFSET_S)
+_audio_q: queue.Queue = queue.Queue(maxsize=50)
 
 
 def on_say(msg: dict):
-    text = (msg.get("data") or "").strip()
+    text = parse_say(msg.get("data") or "")
     if text:
         HUB.add_caption(text)
 
 
 def on_audio_out(msg: dict):
-    b64 = msg.get("data", "")
-    if not b64:
+    mp3, sync = parse_audio_out(msg.get("data", ""))
+    if not mp3:
         return
-    if HUB.client_count() == 0:
-        # Still consumed so the next caption stays paired with its audio.
-        log("voix reçue mais aucun overlay OBS ouvert — personne ne l'entend")
-    HUB.publish_audio(base64.b64decode(b64))
+    try:
+        _audio_q.put_nowait((mp3, sync))
+    except queue.Full:
+        log("file de la voix pleine — phrase perdue")
+
+
+def on_speech_sync(msg: dict):
+    try:
+        payload = json.loads(msg.get("data") or "{}")
+    except ValueError:
+        return
+    if isinstance(payload, dict):
+        SYNC.on_message(payload)
+
+
+def audio_loop():
+    """One sentence at a time, in order; a linked one waits for its gesture."""
+    while True:
+        mp3, sync = _audio_q.get()
+        if sync:
+            log(f"phrase {sync} : {SYNC.wait(sync)}")
+        if HUB.client_count() == 0:
+            # Still consumed so the next caption stays paired with its audio.
+            log("voix reçue mais aucun overlay OBS ouvert — personne ne l'entend")
+        HUB.publish_audio(mp3)
 
 
 def status_loop():
@@ -325,6 +444,8 @@ def main():
     BRIDGE.advertise(topic("speaking"), "std_msgs/Bool")
     BRIDGE.subscribe(f"/bodies/{DRONE_ID}/actuators/say", "std_msgs/String", on_say)
     BRIDGE.subscribe(topic("audio_out"), "std_msgs/String", on_audio_out)
+    BRIDGE.subscribe(SYNC_TOPIC, "std_msgs/String", on_speech_sync)
+    threading.Thread(target=audio_loop, daemon=True).start()
     threading.Thread(target=BRIDGE.run_forever, daemon=True).start()
     threading.Thread(target=status_loop, daemon=True).start()
     log(f"[{DRONE_ID}] overlay OBS → :{HTTP_PORT}/overlay?token=…  |  rosbridge → {ROSBRIDGE_URL}")

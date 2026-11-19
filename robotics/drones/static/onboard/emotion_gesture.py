@@ -37,8 +37,10 @@ by body_gateway with a "sync" id):
     2. the expressive part (start → gesture → back to start) is stretched or
        tightened to last as long as the speech (GESTURE_SPEECH_SCALE_MIN/MAX;
        tightened only if the guardian still accepts it);
-    3. /speech_gesture_sync → {"kind": "go", "sync", "at"}: the drone's speaker
-       (static_drone.py) says the sentence at `at` = start of the expressive part
+    3. /speech_gesture_sync → {"kind": "go", "sync", "at", "in_s"}: the drone's speaker
+       (static_drone.py) and the OBS voice (obs_agent.py, which uses `in_s`, the
+       delay from now, since its clock is not the drone's) say the sentence at
+       `at` = start of the expressive part
        + GESTURE_SPEECH_OFFSET_MS. Negative offset: speech starts before, the
        gesture is sent that much later if needed.
 
@@ -88,7 +90,9 @@ def read_settings():
     for key in ("GESTURE_DATASET_REPO", "GESTURE_DATASET_REF", "GESTURE_CACHE_DIR",
                 "GESTURE_REST_DELAY", "GESTURE_RATE_HZ", "GESTURE_SPEECH_OFFSET_MS",
                 "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_SCALE_MIN", "GESTURE_SPEECH_SCALE_MAX",
-                "GESTURE_SPEECH_WAIT_S"):
+                "GESTURE_SPEECH_WAIT_S", "GESTURE_REFLEX", "GESTURE_REFLEX_SOUND",
+                "GESTURE_REFLEX_MOTION", "GESTURE_REFLEX_COOLDOWN_S",
+                "GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", "GESTURE_REFLEX_NAO_ID"):
         os.environ.pop(key, None)   # a reload rereads the file, not the old value
     load_dotenv(os.environ.get("GESTURE_ENV_FILE") or os.path.join(HERE, "emotion_gesture.env"))
     load_dotenv(os.path.join(HERE, ".env"))
@@ -109,7 +113,37 @@ def read_settings():
         "scale_min": _env_float("GESTURE_SPEECH_SCALE_MIN", 0.7),
         "scale_max": _env_float("GESTURE_SPEECH_SCALE_MAX", 3.0),
         "speech_wait_s": _env_float("GESTURE_SPEECH_WAIT_S", 3.0),
+        # Reflex: reaction to what the drone perceives, without the LLM
+        "reflex": _env("GESTURE_REFLEX", "1").lower() not in ("0", "false", "no", "non", "off"),
+        "reflex_gestures": {"sound": parse_reflex(_env("GESTURE_REFLEX_SOUND", "surprise:0.3")),
+                            "motion": parse_reflex(_env("GESTURE_REFLEX_MOTION", "calme:0.3"))},
+        "reflex_cooldown_s": _env_float("GESTURE_REFLEX_COOLDOWN_S", 20.0),
+        "reflex_azimuth_offset_deg": _env_float("GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", 0.0),
+        "nao_id": _env("GESTURE_REFLEX_NAO_ID", "nao_01"),
+        "drone_id": _env("DRONE_ID", "static_01"),
     }
+
+
+def parse_reflex(spec):
+    """"surprise:0.3" -> ("surprise", 0.3); empty or "0"/"off" -> None (no reflex)."""
+    spec = (spec or "").strip()
+    if not spec or spec.lower() in ("0", "off", "none", "non"):
+        return None
+    emotion, _, intensity = spec.partition(":")
+    try:
+        value = float(intensity) if intensity else 0.3
+    except ValueError:
+        value = 0.3
+    return emotion.strip(), max(0.0, min(1.0, value))
+
+
+def reflex_event(azimuth_deg, offset_deg=0.0):
+    """Drone angle (positive to the right) -> generator event in the NAO torso frame
+    (positive to the left), like body_rules.gesture_event; None without a direction."""
+    if azimuth_deg is None:
+        return None
+    az = max(-90.0, min(90.0, -float(azimuth_deg) + float(offset_deg)))
+    return {"azimuth_deg": round(az, 1), "elevation_deg": 0.0}
 
 
 def _clamp_offset_ms(ms):
@@ -310,6 +344,8 @@ class GestureService:
         self._at_start = False          # robot left stiff in the start pose
         self._rested = True             # robot at rest and relaxed (last return to rest finished)
         self._last_end = 0.0
+        self._last_request = -1e9        # last gesture asked by the LLM or the control room
+        self._last_reflex = -1e9
         self._stop = threading.Event()
 
     # -- topics -----------------------------------------------------------
@@ -324,6 +360,15 @@ class GestureService:
         b.subscribe("/nao/joint_angles", STRING, lambda m: self.on_angles(_data(m)))
         b.subscribe("/nao/trajectory_state", STRING, lambda m: self.on_trajectory_state(_data(m)))
         b.subscribe("/nao/capabilities", STRING, lambda m: self.on_capabilities(_data(m)))
+        # Reflex: the drone's perceptions, gestures asked through the NAO driver
+        # (heat, posture and walk checks), never straight to the robot.
+        b.advertise("/nao/stop", "std_msgs/Empty")
+        b.advertise(self._driver_topic(), STRING)
+        b.subscribe("/drones/{}/event".format(self.settings.get("drone_id", "static_01")), STRING,
+                    lambda m: self.on_event(_data(m)))
+
+    def _driver_topic(self):
+        return "/bodies/{}/actuators/gesture".format(self.settings.get("nao_id", "nao_01"))
 
     def publish(self, topic, payload):
         self.bridge.publish(topic, {"data": json.dumps(payload)})
@@ -401,7 +446,19 @@ class GestureService:
         gid = str(payload.get("id") or uuid.uuid4().hex[:8])
         req = dict(payload, id=gid)
         with self._lock:
-            old, self._pending = self._pending, req
+            if req.get("reflex"):
+                # A reflex never replaces nor delays a gesture asked by the LLM.
+                ignored = ((self._pending is not None and not self._pending.get("reflex"))
+                           or (self._playing is not None and not self._playing.get("reflex")))
+            else:
+                ignored = False
+                self._last_request = self.clock()
+            old = None
+            if not ignored:
+                old, self._pending = self._pending, req
+        if ignored:
+            self.state(gid, "ignored", reason="réflexe pendant un geste demandé", reflex=True)
+            return
         if old is not None:
             self.state(old["id"], "replaced")
             self.release_speech(old, "geste remplacé")
@@ -451,8 +508,51 @@ class GestureService:
             return False
         return True
 
+    def on_event(self, payload):
+        """Something happens in front of the NAO (drone: sound, motion): short gesture by reflex.
+
+        Only when the robot rests and nothing was asked or played for
+        GESTURE_REFLEX_COOLDOWN_S (the robot's own gestures move in the camera)."""
+        s = self.settings
+        spec = (s.get("reflex_gestures") or {}).get(payload.get("kind"))
+        if not s.get("reflex") or spec is None or self.gen is None:
+            return
+        emotion, intensity = spec
+        if emotion not in (self.gen.emotions or []):
+            return
+        now, cooldown = self.clock(), float(s.get("reflex_cooldown_s", 20.0))
+        with self._lock:
+            idle = (self._playing is None and self._pending is None and self._rested
+                    and min(now - self._last_end, now - self._last_request,
+                            now - self._last_reflex) >= cooldown)
+            if not idle:
+                return
+            self._last_reflex = now
+        order = {"emotion": emotion, "intensity": intensity, "reflex": True}
+        event = reflex_event(payload.get("azimuth_deg"), s.get("reflex_azimuth_offset_deg", 0.0))
+        if event:
+            order["event"] = event
+        log.info("Réflexe (%s) : %s %.1f, %s", payload.get("kind"), emotion, intensity, event)
+        self.publish(self._driver_topic(), order)
+
     def step(self):
         """One iteration: plays the pending request, or the due return to rest."""
+        with self._lock:
+            p = self._playing
+            if self._busy():
+                # A gesture asked by the LLM stops a reflex in progress, then starts
+                # from the measured posture.
+                if (p.get("reflex") and not p.get("stopping") and self._pending is not None
+                        and not self._pending.get("reflex")):
+                    p["stopping"] = True
+                    stop = True
+                else:
+                    return
+            else:
+                stop = False
+        if stop:
+            self.bridge.publish("/nao/stop", {})
+            return
         with self._lock:
             if self._busy():
                 return
@@ -508,6 +608,7 @@ class GestureService:
             timing = {"sync": sync["id"], "speech_s": speech_s, "time_scale": scale,
                       "speech_offset_ms": self.settings.get("speech_offset_ms", 0.0)}
         self._send(gid, g, pose, relax_end=False, to_rest=False, sync=sync, timing=timing,
+                   reflex=bool(req.get("reflex")),
                    info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
                          "event": req.get("event"), "notes": g.notes,
                          "adaptation": getattr(g, "adaptation", None),
@@ -545,7 +646,7 @@ class GestureService:
                            {}, [], {})
         self._send(gid, traj, dict(zip(joints, q0)), relax_end=True, to_rest=True, info={"rest": True})
 
-    def _send(self, gid, g, pose, relax_end, to_rest, info, sync=None, timing=None):
+    def _send(self, gid, g, pose, relax_end, to_rest, info, sync=None, timing=None, reflex=False):
         names, angles, times = g.angle_interpolation(rate_hz=self.settings["rate_hz"])
         if sync:
             # Début de la partie expressive (après le passage à la pose de départ),
@@ -554,15 +655,18 @@ class GestureService:
             lead = expressive_window(g)[0] - float(g.times[0])
             offset = float(self.settings.get("speech_offset_ms", 0.0)) / 1000.0
             hold = max(0.0, -(lead + offset))
+            # `at`: this machine's clock (static_drone.py, same machine);
+            # `in_s`: delay from now, for the OBS voice on the VPS (another clock).
             self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"],
-                                      "at": round(self.wall() + hold + lead + offset, 3)})
+                                      "at": round(self.wall() + hold + lead + offset, 3),
+                                      "in_s": round(hold + lead + offset, 3)})
             if hold > 0:
                 self.sleep(hold)          # la parole part tout de suite, le geste un peu après
             info = dict(info, **(timing or {}))
             info["speech_after_s"] = round(lead + offset, 3)   # par rapport à l'envoi du geste
         with self._lock:
             self._playing = {"id": gid, "until": self.clock() + g.duration + 10 * END_MARGIN_S,
-                             "to_rest": to_rest}
+                             "to_rest": to_rest, "reflex": reflex}
         self.publish("/nao/trajectory", {
             "id": gid, "names": names, "angles": angles, "times": times,
             "start": dict((j, round(v, 5)) for j, v in pose.items() if j in names),
@@ -612,7 +716,8 @@ class GestureService:
         """Le geste ne partira pas : la phrase qui l'attend est dite tout de suite."""
         sync = self._sync(req or {})
         if sync:
-            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"], "at": 0, "reason": reason})
+            self.publish(SYNC_TOPIC, {"kind": "go", "sync": sync["id"], "at": 0, "in_s": 0,
+                                      "reason": reason})
 
     def _joints(self, gen):
         return gen.groups["arms"] + gen.groups["head"] + [j for j in gen.groups.get("hands", [])

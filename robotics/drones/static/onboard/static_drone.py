@@ -15,6 +15,10 @@ principle as the NAO, ADR 002) and handles:
                            ← /speech_gesture_sync       ({"kind": "go", "sync", "at"}:
                                                          a sentence tied to a NAO
                                                          gesture waits for its start)
+    - perception           → /drones/{id}/event         ({"kind": "sound"|"motion",
+                                                         "azimuth_deg"}: what happens in
+                                                         front of the NAO, for the gesture
+                                                         service's reflex)
     - image                → /drones/{id}/image         (base64 JPEG)
                            ← /drones/{id}/image_request
 
@@ -144,6 +148,8 @@ class Config:
         self.camera_fps = _env_float("CAMERA_FPS", 5)
         self.jpeg_quality = _env_int("JPEG_QUALITY", 70)
         self.motion_threshold = _env_int("MOTION_THRESHOLD", 25)
+        # A camera movement is an event (/drones/{id}/event) after this many quiet seconds.
+        self.motion_event_quiet_s = _env_float("MOTION_EVENT_QUIET_S", 3.0)
         self.image_interval = _env_float("IMAGE_INTERVAL", 10)  # 0 = never periodic
 
         # Network intervals
@@ -327,6 +333,7 @@ class Camera:
         self._frame = None          # last BGR image
         self._prev_gray = None
         self._motion = None         # (horodatage, angle)
+        self.on_motion = None       # callback(angle) at the start of a movement
 
     def open(self):
         try:
@@ -368,10 +375,16 @@ class Camera:
             if self._prev_gray is not None:
                 angle = direction.motion_angle(self._prev_gray, gray, self.cfg.camera_hfov,
                                                threshold=self.cfg.motion_threshold)
+            onset = False
             with self._lock:
                 self._frame = frame
                 if angle is not None:
-                    self._motion = (time.monotonic(), angle)
+                    now = time.monotonic()
+                    onset = (self._motion is None
+                             or now - self._motion[0] >= self.cfg.motion_event_quiet_s)
+                    self._motion = (now, angle)
+            if onset and self.on_motion is not None:
+                self.on_motion(angle)
             self._prev_gray = gray
             stop.wait(period)
         self._cap.release()
@@ -831,8 +844,14 @@ class StaticDrone:
             payload["wake"] = "local"
             payload["wake_score"] = round(wake_score, 2)
         sent = self.bridge.publish(self.cfg.topic("audio"), {"data": json.dumps(payload)})
+        self.publish_event("sound", angle)
         log.info("Audio %s: %.1f s, angle %s (%s)", "sent" if sent else "lost (offline)",
                  len(pcm) / float(self.sample_rate), payload["azimuth_deg"], source)
+
+    def publish_event(self, kind, angle):
+        """Something happens in front of the NAO: the gesture service may react by reflex."""
+        self.bridge.publish(self.cfg.topic("event"), {"data": json.dumps(
+            {"kind": kind, "azimuth_deg": None if angle is None else round(float(angle), 1)})})
 
     def publish_wake(self, score):
         """Tells the VPS on detection: the control room shows "ok nao" right away."""
@@ -947,6 +966,8 @@ class StaticDrone:
         b.advertise(self.cfg.topic("speaking"), "std_msgs/Bool")
         b.advertise(self.cfg.topic("wake"), "std_msgs/String")
         b.advertise(self.cfg.topic("image"), "std_msgs/String")
+        b.advertise(self.cfg.topic("event"), "std_msgs/String")
+        self.camera.on_motion = lambda angle: self.publish_event("motion", angle)
         b.subscribe(self.cfg.topic("audio_out"), "std_msgs/String", self.on_audio_out)
         b.subscribe(SYNC_TOPIC, "std_msgs/String", self.on_speech_sync)
         b.subscribe(self.cfg.topic("image_request"), "std_msgs/Empty", self.on_image_request)

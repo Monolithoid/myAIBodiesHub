@@ -53,6 +53,11 @@ version: "3.8"
 #                              together, gesture duration fitted to the sentence (default: 1);
 #                              the offset is set on the drone (GESTURE_SPEECH_OFFSET_MS)
 #   SPEECH_CHARS_PER_S       : speech synthesis rate used to estimate a sentence (default: 14)
+#   LLM_MOTION               : 1 = the LLM may send "motion" / "look" and the NAO head turns
+#                              toward each voice (default: 1); 0 = NAO only moves through
+#                              learned gestures (LLM or the static drone's reflex): the NAO
+#                              driver also drops cognitive_renderer's head animations and
+#                              stiffness changes (LEDs stay)
 #   LISTEN_DURATION          : listening time after the wake word in seconds (default: 4.0)
 #   ASR_MODEL                : Whisper model — tiny/base/small (default: small)
 #
@@ -324,6 +329,8 @@ services:
       # Constrained motor universe: arms only on LLM orders, motion-engine off.
       - RENDERER_ARMS=${NAO_RENDERER_ARMS:-0}
       - MOTION_ENGINE=${NAO_MOTION_ENGINE:-0}
+      # LLM_MOTION=0: only learned gestures move NAO (no renderer head animation, no stiffness)
+      - RAW_MOTION=${LLM_MOTION:-1}
     depends_on:
       whisper-asr:
         condition: service_started
@@ -358,6 +365,7 @@ services:
       - WAKE_ALIASES=${WAKE_ALIASES:-}
       - NAO_HEAD_YAW_OFFSET=${NAO_HEAD_YAW_OFFSET:-0}
       - SPEECH_GESTURE_SYNC=${SPEECH_GESTURE_SYNC:-1}
+      - LLM_MOTION=${LLM_MOTION:-1}
       - SPEECH_CHARS_PER_S=${SPEECH_CHARS_PER_S:-14}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - WEBUI_API_KEY=${WEBUI_API_KEY:-}
@@ -522,6 +530,9 @@ services:
       - ROSBRIDGE_URL=ws://rosbridge-proxy:80
       - ROSBRIDGE_TOKEN=${ROSBRIDGE_TOKEN:-}
       - OBS_TOKEN=${OBS_TOKEN:-}
+      # Speech ↔ gesture sync: extra offset of the stream voice (ms) and longest wait
+      - OBS_SPEECH_OFFSET_MS=${OBS_SPEECH_OFFSET_MS:-0}
+      - SPEECH_SYNC_MAX_WAIT_S=${SPEECH_SYNC_MAX_WAIT_S:-4}
     networks:
       - robotics-net
     depends_on:

@@ -179,11 +179,35 @@ class TestSpeechGestureSync(unittest.TestCase):
         sync = body_rules.speech_gesture_sync(actions, REGISTRY, self.CONNECTED, ["joie"], "s-1")
         self.assertGreater(sync["speech_s"], sync["speech_s_first"])
 
+    def test_sync_with_obs_voice_only(self):
+        registry = ["nao_01", "obs_01"]
+        actions = [dict(self.ACTIONS[0], body="obs_01"), self.ACTIONS[1]]
+        sync = body_rules.speech_gesture_sync(actions, registry, {"nao_01": True, "obs_01": True},
+                                              ["joie"], "s-1")
+        self.assertEqual(sync["id"], "s-1")
+
     def test_no_sync_without_gesture_or_static_voice(self):
         self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS[:1], REGISTRY, self.CONNECTED, [], "s"))
         self.assertIsNone(body_rules.speech_gesture_sync(self.ACTIONS, REGISTRY, self.CONNECTED, ["peur"], "s"))
         self.assertIsNone(body_rules.speech_gesture_sync(
             self.ACTIONS, REGISTRY, {"nao_01": True, "static_01": False}, ["joie"], "s"))
+
+
+
+class TestGesturesOnly(unittest.TestCase):
+    """LLM_MOTION=0: NAO only moves through learned gestures."""
+
+    def test_nao_label(self):
+        text = body_rules.describe_bodies(REGISTRY, "static_01", motion=False)
+        self.assertIn("nao_01 : gestes appris", text)
+        self.assertNotIn("motion", text)
+
+    def test_gestures_label(self):
+        text = body_rules.gestures_label(["joie"], motion=False)
+        self.assertIn("joie", text)
+        self.assertNotIn('"motion"', text)
+        self.assertIn("NAO ne bouge pas", body_rules.gestures_label([], motion=False))
+        self.assertIn('"motion"', body_rules.gestures_label(["joie"]))    # default unchanged
 
 
 if __name__ == "__main__":
