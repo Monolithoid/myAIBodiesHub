@@ -40,6 +40,9 @@ Environment variables:
   TTS_VOICE          edge-tts voice name, default "fr-FR-DeniseNeural"
   MOTION_LIMITS      JSON overriding motion_policy.DEFAULT_LIMITS, e.g.
                      '{"min_move_time": 0.5, "rest_delay": 5}', default empty
+  RAW_MOTION         "0": only learned gestures move NAO; joint orders from the
+                     LLM, cognitive_renderer and motion_engine, and
+                     cognitive_renderer stiffness, are dropped. Default "1"
 
 Motion decisions (the robot is a puppet: it crashes too often to decide):
   every /nao/motion, /nao/gesture and /nao/cmd_vel order goes through
@@ -84,6 +87,10 @@ LISTEN_DURATION = float(os.environ.get("LISTEN_DURATION", "4.0"))
 NAO_STATUS_TIMEOUT = float(os.environ.get("NAO_STATUS_TIMEOUT", "90.0"))
 TTS_VOICE = os.environ.get("TTS_VOICE", "fr-FR-DeniseNeural")
 MOTION_LIMITS = os.environ.get("MOTION_LIMITS", "")
+# 0 = NAO only moves through learned gestures (static drone generator): joint orders
+# (LLM "motion"/"look", cognitive_renderer head animations, motion_engine) and
+# cognitive_renderer stiffness changes are dropped.  Same knob as body_gateway's LLM_MOTION.
+RAW_MOTION = os.environ.get("RAW_MOTION", "1").lower() not in ("0", "false", "no", "non", "off")
 
 
 class NAOqiDriverNode(Node):
@@ -394,6 +401,8 @@ class NAOqiDriverNode(Node):
 
     def _publish_motion(self, msg: String):
         """Hand a joint order to the motion policy; _motion_tick sends it."""
+        if not RAW_MOTION:
+            return      # only learned gestures move NAO (RAW_MOTION=0)
         try:
             joints, angles, speed = parse_motion(json.loads(msg.data))
         except (json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError) as e:
@@ -516,6 +525,8 @@ class NAOqiDriverNode(Node):
         Output format (nao_ws_bridge /nao/stiffness):
           published one message per group: {"groups": ["head"], "value": 1.0}
         """
+        if not RAW_MOTION:
+            return      # a low stiffness would let the head drop: not a learned gesture
         try:
             data = json.loads(msg.data)
         except json.JSONDecodeError:

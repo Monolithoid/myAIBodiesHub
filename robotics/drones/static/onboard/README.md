@@ -172,7 +172,9 @@ posture and walk as for any gesture.
 - With `LLM_MOTION=0` on the VPS (`body_gateway`), the LLM no longer sends
   `motion` / `look` and `body_gateway` no longer turns the head toward each voice:
   NAO only moves through learned gestures, by reflex or asked by the LLM (which
-  gets the voice direction as its `event`).
+  gets the voice direction as its `event`). In `nao-core` the same variable
+  (`RAW_MOTION` of the NAO driver) drops every other joint order and stiffness
+  change, cognitive_renderer's head animations included; the LEDs stay.
 - `GESTURE_REFLEX=0` turns the reflex off.
 
 ## Sound direction

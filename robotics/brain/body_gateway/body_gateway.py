@@ -1310,7 +1310,7 @@ class BodyGatewayNode(Node):
         self.pub_emotion.publish(msg)
         # Forward a motion command derived from the categorical emotion.
         # Not all emotions have a motion mapping — unknown ones are silently skipped.
-        motion_payload = _EMOTION_TO_MOTION.get(emotion.lower())
+        motion_payload = _EMOTION_TO_MOTION.get(emotion.lower()) if LLM_MOTION else None
         if motion_payload:
             self._publish_motion_command(motion_payload)
 

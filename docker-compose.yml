@@ -55,7 +55,9 @@ version: "3.8"
 #   SPEECH_CHARS_PER_S       : speech synthesis rate used to estimate a sentence (default: 14)
 #   LLM_MOTION               : 1 = the LLM may send "motion" / "look" and the NAO head turns
 #                              toward each voice (default: 1); 0 = NAO only moves through
-#                              learned gestures (LLM or the static drone's reflex)
+#                              learned gestures (LLM or the static drone's reflex): the NAO
+#                              driver also drops cognitive_renderer's head animations and
+#                              stiffness changes (LEDs stay)
 #   LISTEN_DURATION          : listening time after the wake word in seconds (default: 4.0)
 #   ASR_MODEL                : Whisper model — tiny/base/small (default: small)
 #
@@ -327,6 +329,8 @@ services:
       # Constrained motor universe: arms only on LLM orders, motion-engine off.
       - RENDERER_ARMS=${NAO_RENDERER_ARMS:-0}
       - MOTION_ENGINE=${NAO_MOTION_ENGINE:-0}
+      # LLM_MOTION=0: only learned gestures move NAO (no renderer head animation, no stiffness)
+      - RAW_MOTION=${LLM_MOTION:-1}
     depends_on:
       whisper-asr:
         condition: service_started
