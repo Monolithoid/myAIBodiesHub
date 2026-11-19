@@ -25,7 +25,6 @@ aucun port à ouvrir côté maison.
 | `setup-lib.sh` | Fonctions communes aux scripts d'installation |
 | `nao-relay/` | Relais du NAO : le NAO passe par le drone pour joindre le VPS ([installation](nao-relay/README.md), [ADR 006](../../../../docs/decisions/006-nao-via-drone-statique.md)) |
 | `emotion_gesture.py` | Gestes appris du NAO : génère les gestes émotionnels sur le drone et les envoie au robot (voir [Gestes appris](#gestes-appris-du-nao)) |
-| `gesture_playback.py` | Rend jouables les gestes du générateur exporté (même étape que l'interface de nao-emotion-motion) |
 | `emotion_gesture.env.example` | Version du générateur à utiliser, à copier en `emotion_gesture.env` |
 | `emotion-gesture-user.service` | Service systemd utilisateur du générateur de gestes |
 | `tests/test_emotion_gesture.py` | Tests du service de gestes (sans réseau ni robot) |
@@ -72,18 +71,14 @@ modèle : modifier `GESTURE_DATASET_REF`, puis publier `{"op": "reload"}` sur
 Si la nouvelle version est refusée (fichiers invalides, aucun geste accepté
 depuis la pose de départ), l'ancienne reste en service.
 
-**Gestes rendus jouables.** Le générateur exporté valide le geste appris brut,
-alors que l'interface de nao-emotion-motion le rend d'abord jouable
-(`playable.py` : points de contrôle ramenés dans la zone, saturation douce,
-ralentissement local là où une vitesse ou une accélération dépasse la limite).
-Depuis nao-emotion-motion#62, le générateur exporté fait cette étape lui-même.
-Pour une version plus ancienne du dataset, `gesture_playback.py` la refait sur
-le drone (il se désactive tout seul avec un générateur récent) ; le guardian
-du générateur juge ensuite le mouvement complet. Sans elle, presque tous les
-gestes sont refusés. Un geste refusé est
-réessayé sans l'événement, puis avec une petite variation ; sinon rien n'est
-joué. `GESTURE_PLAYBACK=off` revient au geste brut. Si `playable.py` évolue
-dans nao-emotion-motion, reporter le changement dans `gesture_playback.py`.
+**Générateur requis.** Le générateur doit rendre les gestes jouables avant le
+guardian, comme l'interface de nao-emotion-motion (`playable.py`) : c'est le
+cas des exports faits avec nao-emotion-motion#62 ou plus récent. Le drone ne
+refait pas cette étape. Une version plus ancienne du dataset est refusée au
+chargement, avec la raison dans `/nao/emotion_gesture_state` (visible dans la
+régie), et l'ancienne version reste en service. Un geste refusé par le
+guardian est réessayé sans l'événement, puis avec une petite variation (le
+champ `retry` le signale) ; sinon rien n'est joué.
 
 **Lancement.**
 

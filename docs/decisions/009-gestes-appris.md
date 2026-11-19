@@ -40,9 +40,8 @@ rien de lourd ne doit tourner dessus.
    repos, validé lui aussi, et le robot se relâche à la fin.
 7. **Les gestes sont rendus jouables avant le guardian**, comme dans
    l'interface de nao-emotion-motion (`playable.py`). Le générateur exporté le
-   fait lui-même depuis nao-emotion-motion#62 ; pour une version plus ancienne
-   du dataset, le drone le refait (`gesture_playback.py`, désactivé
-   automatiquement sinon). Le guardian exporté juge toujours le mouvement final.
+   fait lui-même depuis nao-emotion-motion#62 ; le drone ne refait pas cette
+   étape et refuse au chargement un générateur plus ancien, avec la raison.
 8. **Le driver NAO arbitre** : il refuse un geste pendant une posture, une
    marche ou avec une chaîne trop chaude, attend que les chaînes aient fini
    leur étape, puis les réserve au drone tant que celui-ci tient le corps
@@ -69,7 +68,5 @@ Répartition :
 - Les gestes sont joués à la vitesse apprise, plus vite que la vitesse plafond
   des ordres `motion` (0,3) : c'est le guardian qui borne vitesses et
   accélérations.
-- `gesture_playback.py` copie la logique de `playable.py` : à reporter si
-  elle évolue dans nao-emotion-motion.
 - Pendant un geste appris, la tête ne suit plus la voix ; le geste s'oriente
   lui-même vers la voix entendue.

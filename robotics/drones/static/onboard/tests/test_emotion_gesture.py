@@ -69,7 +69,8 @@ class GestureGenerator(object):
         self.guardian = _Guardian(data["poses"])
         self.refuse = set(data.get("refuse", []))
         self.refuse_with_event = set(data.get("refuse_with_event", []))
-        self.adapted = 0
+        if not data.get("old"):
+            self.adapt_generated = True   # exporté avec nao-emotion-motion#62 ou plus récent
         self.info = {"models": {"arms": {"run": "arms-1"}}, "calibration": {"calibration_version": "cal-1"}}
         self.calls = []
     @classmethod
@@ -249,23 +250,16 @@ class TestService(Base):
         self.assertIn(("b", "replaced"), self.bridge.states())
         self.assertFalse(s.gen.calls[-1][4])          # pas au repos : depuis la posture mesurée
 
-    def test_playback_adaptation_plugged_in(self):
-        calls = []
-        real = eg.gesture_playback._make_playable
-
-        def spy(guardian, joints, t, q, **kw):
-            calls.append(kw.get("mode"))
-            return t, q, {"changed": True, "time_scale": 1.2, "notes": ["ralenti"]}
-        eg.gesture_playback._make_playable = spy
-        try:
-            s = self.service()
-            s.on_request({"id": "a", "emotion": "joie", "intensity": 0.5})
-            s.step()
-        finally:
-            eg.gesture_playback._make_playable = real
-        self.assertEqual(calls[-1], "local")
-        sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"]
-        self.assertEqual(sent[-1]["adaptation"]["time_scale"], 1.2)
+    def test_old_generator_refused_with_reason(self):
+        s = self.service()
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, old=True)).encode()
+        s.settings = dict(s.settings, ref="v1")
+        shutil.rmtree(os.path.join(self.dir, "v1"))
+        self.assertFalse(s.load(fetch=lambda repo, ref, cache: eg.fetch_generator(repo, ref, cache, get=self.get)))
+        last = self.bridge.last_state()
+        self.assertEqual(last["state"], "version_refused")
+        self.assertIn("trop ancien", last["reason"])
+        self.assertIsNotNone(s.gen)                  # l'ancienne version reste en service
 
     def test_retry_without_event(self):
         self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse_with_event=["joie"])).encode()
