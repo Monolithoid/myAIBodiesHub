@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-speech_services.py — Transcription (Whisper ASR) et synthèse vocale (edge-tts)
-partagées par les drivers de corps (naoqi_driver, static_driver).
+speech_services.py — Transcription (Whisper ASR) and speech synthesis (edge-tts)
+shared by the body drivers (naoqi_driver, static_driver).
 
-Les deux appels sont bloquants : les nœuds ROS 2 les lancent dans un thread
-pour ne pas bloquer la boucle rclpy.
+Both calls are blocking: the ROS 2 nodes run them in a thread so as not to
+block the rclpy loop.
 
-    text = transcribe(WHISPER_URL, audio_bytes)     # lève WhisperError
+    text = transcribe(WHISPER_URL, audio_bytes)     # raises WhisperError
     if is_meaningful(text): ...
-    mp3 = synthesize_mp3(text, "fr-FR-DeniseNeural") # lève ImportError si edge-tts absent
+    mp3 = synthesize_mp3(text, "fr-FR-DeniseNeural") # raises ImportError if edge-tts is missing
 """
 
 import asyncio
@@ -18,16 +18,16 @@ import requests
 
 
 class WhisperError(Exception):
-    """Réponse HTTP en erreur du service Whisper ASR."""
+    """HTTP error response from the Whisper ASR service."""
 
 
 def transcribe(whisper_url: str, audio_bytes: bytes, language: str = "fr",
                timeout: float = 30, prompt: str = "") -> str:
-    """Envoie un fichier audio à Whisper ASR et renvoie le texte (sans espaces autour).
+    """Sends an audio file to Whisper ASR and returns the text (stripped).
 
-    Le service onerahmet/openai-whisper-asr-webservice décode l'audio avec
-    ffmpeg : WAV, MP3, etc. sont acceptés.  `prompt` (initial_prompt de
-    Whisper) oriente l'orthographe : "Ok Nao." aide à écrire le mot de réveil.
+    The onerahmet/openai-whisper-asr-webservice service decodes the audio with
+    ffmpeg: WAV, MP3, etc. are accepted. `prompt` (Whisper's initial_prompt)
+    guides the spelling: "Ok Nao." helps write the wake word.
     """
     params = {"task": "transcribe", "language": language, "output": "json"}
     if prompt:
@@ -40,11 +40,11 @@ def transcribe(whisper_url: str, audio_bytes: bytes, language: str = "fr",
     )
     # Whisper returned an HTTP error — the caller logs it and gives up.
     if not resp.ok:
-        raise WhisperError(f"Whisper erreur {resp.status_code}")
+        raise WhisperError(f"Whisper error {resp.status_code}")
     return resp.json().get("text", "").strip()
 
 
-# Ce que Whisper invente sur du bruit ou un silence (sous-titres de vidéos).
+# What Whisper makes up on noise or silence (video subtitles).
 HALLUCINATIONS = ("sous-titr", "merci d'avoir regard", "abonnez-vous", "amara.org")
 
 
@@ -59,7 +59,7 @@ def is_meaningful(text: str) -> bool:
 
 
 def synthesize_mp3(text: str, voice: str) -> bytes:
-    """Génère un MP3 avec edge-tts. Lève ImportError si edge-tts n'est pas installé."""
+    """Generates an MP3 with edge-tts. Raises ImportError if edge-tts is not installed."""
     import edge_tts
 
     async def _gen():

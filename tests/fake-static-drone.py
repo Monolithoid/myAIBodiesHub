@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 """
-fake-static-drone.py — Faux drone statique : teste de bout en bout le chemin
+fake-static-drone.py — Fake static drone: tests the path
 /drones/{id}/* → static-driver → body-gateway → static-driver → /drones/{id}/*
-avec de faux messages rosbridge, sans Raspberry Pi.
+end to end with fake rosbridge messages, without a Raspberry Pi.
 
-Python 3 standard uniquement (client WebSocket minimal inclus).
+Standard Python 3 only (minimal WebSocket client included).
 
-Usage (sur le VPS, depuis la racine du dépôt) :
-    python3 tests/fake-static-drone.py                       # ws://localhost:9090 direct
+Usage (on the VPS, from the repository root):
+    python3 tests/fake-static-drone.py                       # direct ws://localhost:9090
     python3 tests/fake-static-drone.py --url wss://rosbridge.$DOMAIN --token "$ROSBRIDGE_TOKEN"
 
-Étapes :
+Steps:
   1. /drones/{id}/status            → /bodies/{id}/connected = true
   2. /drones/{id}/speaking = true   → /bodies/{id}/sensors/speaking = true
-                                    → yeux du NAO « speaking » (/naoqi/leds FaceLeds,
-                                      cognitive_renderer), puis retour au profil (AllLeds)
-  3. /drones/{id}/image             → /bodies/{id}/sensors/image (même JSON)
+                                    → NAO "speaking" eyes (/naoqi/leds FaceLeds,
+                                      cognitive_renderer), then back to the profile (AllLeds)
+  3. /drones/{id}/image             → /bodies/{id}/sensors/image (same JSON)
   4. /bodies/{id}/actuators/say     → edge-tts → /drones/{id}/audio_out (MP3)
-  5. /drones/{id}/audio (le MP3 de l'étape 4, angle -30°)
+  5. /drones/{id}/audio (the MP3 from step 4, angle -30°)
        → /bodies/{id}/sensors/sound_direction
        → /bodies/{nao}/actuators/motion HeadYaw (body-gateway)
        → Whisper → /bodies/{id}/sensors/speech
-  6. réponse du LLM prononcée par le drone → /drones/{id}/audio_out
+  6. LLM answer spoken by the drone → /drones/{id}/audio_out
 
-Code de sortie : nombre d'étapes en échec.
+Exit code: number of failed steps.
 """
 
 import argparse
@@ -64,12 +64,12 @@ class WebSocket:
         while b"\r\n\r\n" not in response:
             chunk = sock.recv(4096)
             if not chunk:
-                raise ConnectionError("connexion fermée pendant la poignée de main")
+                raise ConnectionError("connection closed during the handshake")
             response += chunk
         head, self._buf = response.split(b"\r\n\r\n", 1)
         status = head.split(b"\r\n", 1)[0].decode()
         if " 101 " not in status + " ":
-            raise ConnectionError(f"refus du serveur : {status}")
+            raise ConnectionError(f"refused by the server: {status}")
         sock.settimeout(None)
         self._sock = sock
         self._lock = threading.Lock()
@@ -93,7 +93,7 @@ class WebSocket:
         while len(self._buf) < n:
             chunk = self._sock.recv(65536)
             if not chunk:
-                raise ConnectionError("connexion fermée")
+                raise ConnectionError("connection closed")
             self._buf += chunk
         out, self._buf = self._buf[:n], self._buf[n:]
         return out
@@ -113,7 +113,7 @@ class WebSocket:
             if mask:
                 data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
             if opcode == 0x8:
-                raise ConnectionError("fermeture par le serveur")
+                raise ConnectionError("closed by the server")
             if opcode == 0x9:       # ping → pong
                 with self._lock:
                     m = os.urandom(4)
@@ -191,10 +191,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--url", default=os.environ.get("ROSBRIDGE_URL", "ws://localhost:9090"))
     p.add_argument("--token", default=os.environ.get("ROSBRIDGE_TOKEN", ""))
-    p.add_argument("--id", default="static_01", help="identifiant du drone statique")
-    p.add_argument("--nao", default="nao_01", help="identifiant du NAO")
+    p.add_argument("--id", default="static_01", help="static drone identifier")
+    p.add_argument("--nao", default="nao_01", help="NAO identifier")
     p.add_argument("--text", default="OK Nao, bonjour, comment vas-tu ?",
-                   help="phrase synthétisée puis renvoyée comme audio entendu")
+                   help="sentence synthesised, then sent back as heard audio")
     p.add_argument("--azimuth", type=float, default=-30.0)
     p.add_argument("--llm-timeout", type=float, default=120.0)
     args = p.parse_args()
@@ -216,9 +216,9 @@ def main():
     try:
         rb = Rosbridge(args.url, args.token)
     except (OSError, ConnectionError) as e:
-        result(False, f"connexion rosbridge {args.url}", str(e))
+        result(False, f"rosbridge connection {args.url}", str(e))
         return 1
-    result(True, f"connexion rosbridge {args.url}")
+    result(True, f"rosbridge connection {args.url}")
 
     for topic, kind in [(f"{body}/connected", "std_msgs/Bool"),
                         (f"{body}/sensors/speaking", "std_msgs/Bool"),
@@ -235,9 +235,9 @@ def main():
                         (f"{drone}/image", "std_msgs/String"),
                         (f"{body}/actuators/say", "std_msgs/String")]:
         rb.advertise(topic, kind)
-    time.sleep(2.0)     # laisse rosbridge créer publishers et abonnements
+    time.sleep(2.0)     # lets rosbridge create publishers and subscriptions
 
-    # 1. Signal de vie → connecté
+    # 1. Heartbeat → connected
     status = {"drone_id": args.id, "type": "static", "capabilities": ["audio_in", "audio_out", "image", "direction"],
               "mics": 4, "respeaker": True, "aec": False, "direction_mode": "respeaker",
               "camera_hfov_deg": 66, "speaking": False, "uptime_s": 1}
@@ -245,7 +245,7 @@ def main():
     m = rb.wait(f"{body}/connected", lambda m: m.get("data") is True, timeout=20)
     result(m is not None, f"/drones/{args.id}/status → {body}/connected = true")
 
-    # 2. speaking relayé
+    # 2. speaking relayed
     def led_group(m):
         try:
             d = json.loads(m.get("data", "{}"))
@@ -258,12 +258,12 @@ def main():
     m = rb.wait(f"{body}/sensors/speaking", lambda m: m.get("data") is True)
     result(m is not None, f"/drones/{args.id}/speaking → {body}/sensors/speaking")
     m = rb.wait("/naoqi/leds", lambda m: led_group(m) == "FaceLeds")
-    result(m is not None, "speaking → yeux du NAO animés (cognitive_renderer)")
+    result(m is not None, "speaking → NAO eyes animated (cognitive_renderer)")
     rb.publish(f"{drone}/speaking", {"data": False})
     m = rb.wait("/naoqi/leds", lambda m: led_group(m) == "AllLeds")
-    result(m is not None, "fin de parole → NAO revient à son profil")
+    result(m is not None, "end of speech → NAO back to its profile")
 
-    # 3. image relayée telle quelle
+    # 3. image relayed as is
     image = {"jpeg": base64.b64encode(b"\xff\xd8fake-jpeg\xff\xd9").decode(),
              "width": 2, "height": 2, "reason": "request"}
     rb.publish(f"{drone}/image", {"data": json.dumps(image)})
@@ -276,13 +276,13 @@ def main():
     m = rb.wait(f"{drone}/audio_out", lambda m: bool(m.get("data")), timeout=30)
     mp3_b64 = m.get("data") if m else ""
     result(m is not None, f"{body}/actuators/say → edge-tts → /drones/{args.id}/audio_out",
-           f"{len(base64.b64decode(mp3_b64))} octets MP3" if m else "edge-tts injoignable ?")
+           f"{len(base64.b64decode(mp3_b64))} MP3 bytes" if m else "edge-tts unreachable?")
     if not mp3_b64:
-        print(f"        {CYAN}Pas d'audio de test : étapes 5 et 6 ignorées{NC}")
+        print(f"        {CYAN}No test audio: steps 5 and 6 skipped{NC}")
         rb.ws.close()
         return failures
 
-    # 5. audio entendu → direction, tête du NAO, transcription
+    # 5. heard audio → direction, NAO head, transcription
     rb.drain(f"{drone}/audio_out")
     audio = {"wav": mp3_b64, "azimuth_deg": args.azimuth, "direction_source": "respeaker"}
     rb.publish(f"{drone}/audio", {"data": json.dumps(audio)})
@@ -294,17 +294,17 @@ def main():
 
     m = rb.wait(f"/bodies/{args.nao}/actuators/motion",
                 lambda m: json.loads(m.get("data", "{}")).get("joint") == "HeadYaw")
-    result(m is not None, f"body-gateway tourne la tête de {args.nao} vers la voix",
-           m.get("data", "") if m else "body-gateway démarré avec ce drone dans BODY_REGISTRY ?")
+    result(m is not None, f"body-gateway turns {args.nao}'s head towards the voice",
+           m.get("data", "") if m else "body-gateway started with this drone in BODY_REGISTRY?")
 
     m = rb.wait(f"{body}/sensors/speech", timeout=60)
     result(m is not None, f"Whisper → {body}/sensors/speech",
-           repr(m.get("data")) if m else "WHISPER_URL configuré dans nao-core ?")
+           repr(m.get("data")) if m else "WHISPER_URL configured in nao-core?")
 
-    # 6. réponse du LLM prononcée par le drone statique
+    # 6. LLM answer spoken by the static drone
     m = rb.wait(f"{drone}/audio_out", lambda m: bool(m.get("data")), timeout=args.llm_timeout)
-    result(m is not None, f"réponse du LLM prononcée par {args.id} (/drones/{args.id}/audio_out)",
-           "" if m else "mot de réveil absent de la transcription, ou LLM trop lent ?")
+    result(m is not None, f"LLM answer spoken by {args.id} (/drones/{args.id}/audio_out)",
+           "" if m else "wake word missing from the transcription, or LLM too slow?")
 
     rb.ws.close()
     return failures
