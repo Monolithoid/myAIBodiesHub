@@ -198,6 +198,9 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `BLOCKLIST` (`TWITCH_BLOCKLIST`) | Comma-separated forbidden words |
 | `MODS_ONLY` (`TWITCH_MODS_ONLY`) | `1` = moderators and broadcaster only, default 0 |
 | `MAX_CHARS`, `MAX_AGE_S`, `IGNORED_USERS`, `POLL_S`, `SPEAKING_WAIT_MAX_S` | Not in the compose file: 200 characters, 90 s, `nightbot,streamelements,moobot`, 0.3 s, 120 s |
+| `TWITCH_CLIENT_ID`, `TWITCH_WHISPER_TOKEN` | Twitch app client id and user token (scope `user:manage:whispers`) of the account that whispers `!rgpd` answers; empty = `!rgpd` is only logged, never posted in public chat |
+
+**Viewer memory** (`body-gateway`, `viewers.py`). Each `/chat` from twitch-input also carries `"viewer": {"login", "name", "message"}`. body-gateway keeps per viewer, in SQLite (`VIEWER_DB=/data/viewers.db`, mounted from `/opt/ia/nao/viewers`), the last message answered and a profile of 2-3 sentences. Before the viewer's message it adds `[profil de pseudo : …]` and `[son message précédent : …]`, and asks the LLM for an optional `"profil"` field, last in its JSON, which replaces the stored profile (one LLM call, no extra one; field omitted = nothing new). Invalid JSON or no `profil`: the old profile is kept. The profile only describes: the prompt forbids roles, rights or instructions in it, and rights (moderators only, ignored users) only come from the Twitch tags. Chat commands, handled at once and never dropped by the single slot: `!rgpd` whispers the viewer what is stored (`GET /viewers/<login>`), `!reset` erases it (`POST /viewers/reset`). `VIEWER_MEMORY=0` disables it all.
 
 ---
 

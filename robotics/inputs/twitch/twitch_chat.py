@@ -5,6 +5,8 @@ twitch_chat.py — Règles du tchat Twitch sans réseau ni dépendance (testable
   - commande « !nao » : seuls ces messages sont pris en compte
   - filtres anti-abus : longueur, liens, mots interdits, bots (pas de délai par
     spectateur : la case « dernier message » suffit contre les rafales)
+  - commandes de la mémoire des spectateurs : « !rgpd » (voir ce qui est
+    stocké sur soi, envoyé en message privé) et « !reset » (tout effacer)
   - case unique « dernier message » : dès que le robot est libre, il répond au
     message le plus récent ; ceux arrivés entre-temps sont abandonnés plutôt
     que de faire attendre le stream
@@ -40,6 +42,10 @@ class ChatMessage:
     @property
     def is_broadcaster(self) -> bool:
         return "broadcaster/" in self.tags.get("badges", "")
+
+    @property
+    def user_id(self) -> str:
+        return self.tags.get("user-id", "")
 
     @property
     def is_mod(self) -> bool:
@@ -94,6 +100,34 @@ def extract_command(text: str, prefix: str = "!nao") -> str | None:
         return None
     rest = rest.lstrip(" ,.;:!?-").strip()
     return rest or None
+
+
+VIEWER_COMMANDS = ("!rgpd", "!reset")
+
+
+def viewer_command(text: str) -> str | None:
+    """'!rgpd' / '!RESET ' → 'rgpd' / 'reset'; anything else → None.
+
+    Only the bare command counts: '!reset tout' or '!rgpdx' are ignored.
+    """
+    word = text.strip().lower()
+    return word[1:] if word in VIEWER_COMMANDS else None
+
+
+WHISPER_MAX_CHARS = 500   # Twitch limit of a first whisper to a new recipient
+
+
+def rgpd_text(record: dict) -> str:
+    """Whisper answering '!rgpd': everything body-gateway stores about the viewer."""
+    if not record:
+        text = "NAO ne garde rien sur toi."
+    else:
+        text = (f"Ce que NAO garde sur toi — profil : {record.get('profile') or '(vide)'}"
+                f" | dernier message : {record.get('last_message') or '(aucun)'}")
+    text += " | !reset pour tout effacer."
+    if len(text) > WHISPER_MAX_CHARS:
+        text = text[: WHISPER_MAX_CHARS - 1] + "…"
+    return text
 
 
 def normalize(text: str) -> str:

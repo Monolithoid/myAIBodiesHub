@@ -92,6 +92,16 @@ Environment variables:
   WEBUI_API_KEY              Open WebUI API key
   WEBUI_PIPE_MODEL           NAO Brain Pipe model ID, default "nao_brain"
   WEBUI_VOICE_CHAT_ID        voice chat ID in Open WebUI (optional)
+  VIEWER_DB                  SQLite file of the Twitch viewer profiles (viewers.py),
+                             default /data/viewers.db; empty = no viewer memory
+  VIEWER_MEMORY              0 = no viewer memory, default 1
+  VIEWER_PROFILE_MAX         longest viewer profile kept, in characters, default 300
+
+Twitch viewers (viewers.py): twitch-input adds {"viewer": {"login", "name",
+"message"}} to /chat.  The viewer's profile and previous message go before the
+message, the LLM may add a "profil" field to its JSON, which is stored.
+GET /viewers/<login> returns what is stored ("!rgpd"), POST /viewers/reset
+{"login"} erases it ("!reset").
 """
 
 import collections
@@ -101,6 +111,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -115,6 +126,7 @@ import body_rules
 import brain_client
 import events
 import persona
+import viewers
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -159,6 +171,10 @@ WEBUI_PIPE_MODEL    = os.environ.get("WEBUI_PIPE_MODEL",    "nao_brain")
 WEBUI_VOICE_CHAT_ID = os.environ.get("WEBUI_VOICE_CHAT_ID", "")
 # Read at each LLM call (persona.py): editing the file needs no restart.
 BRAIN_PERSONA_FILE  = os.environ.get("BRAIN_PERSONA_FILE",  "")
+VIEWER_DB           = os.environ.get("VIEWER_DB", "/data/viewers.db").strip()
+if os.environ.get("VIEWER_MEMORY", "1").lower() in ("0", "false", "no", "non", "off"):
+    VIEWER_DB = ""
+VIEWER_PROFILE_MAX  = int(os.environ.get("VIEWER_PROFILE_MAX", str(viewers.PROFILE_MAX_CHARS)))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompts
@@ -390,6 +406,7 @@ class BodyGatewayNode(Node):
         self._infer_lock = threading.Lock()
         self._speaking = body_rules.SpeakingTracker(SPEECH_START_GRACE_S, SPEAKING_MAX_S)
         self._running = True
+        self._viewers = self._open_viewer_store()
 
         # Queue of voice inference results waiting to be fetched by the WebUI Pipe
         self._voice_queue: collections.deque = collections.deque(maxlen=20)
@@ -430,6 +447,19 @@ class BodyGatewayNode(Node):
                 "Parcours voix sans WebUI (WEBUI_URL / WEBUI_API_KEY non définis) — "
                 "robot répond mais transcription non affichée dans le chat"
             )
+
+    def _open_viewer_store(self):
+        """Twitch viewer memory (viewers.py); None when disabled or unusable."""
+        if not VIEWER_DB:
+            self.get_logger().info("Mémoire des spectateurs désactivée (VIEWER_DB vide)")
+            return None
+        try:
+            store = viewers.ViewerStore(VIEWER_DB, VIEWER_PROFILE_MAX)
+        except Exception as e:
+            self.get_logger().error(f"Mémoire des spectateurs indisponible ({VIEWER_DB}) : {e}")
+            return None
+        self.get_logger().info(f"Mémoire des spectateurs : {VIEWER_DB} ({len(store)} profils)")
+        return store
 
     # ─────────────────────────────────────────────────────────────────────────
     # Body registration — create publishers/subscribers for each robot body
@@ -816,9 +846,35 @@ class BodyGatewayNode(Node):
                     # twitch-input polls it to send the next message as soon as
                     # the last answer has been spoken.
                     self._json(200, {"speaking": node._speaking.busy()})
+                elif self.path.startswith("/viewers/"):
+                    self._viewer_show(self.path[len("/viewers/"):])
                 else:
                     self.send_response(404)
                     self.end_headers()
+
+            def _viewer_show(self, login: str):
+                """"!rgpd": what is stored about a viewer ({} when nothing)."""
+                if node._viewers is None:
+                    self._json(503, {"error": "viewer memory disabled"})
+                    return
+                record = node._viewers.get(urllib.parse.unquote(login))
+                self._json(200, record or {})
+
+            def _viewer_reset(self):
+                """"!reset": erase everything stored about a viewer."""
+                body = self._read_json()
+                if body is None:
+                    return
+                login = str(body.get("login", "")).strip()
+                if not login:
+                    self._json(400, {"error": "missing login"})
+                    return
+                if node._viewers is None:
+                    self._json(503, {"error": "viewer memory disabled"})
+                    return
+                deleted = node._viewers.delete(login)
+                node.get_logger().info(f"Profil de {login} effacé (!reset) : {deleted}")
+                self._json(200, {"ok": True, "deleted": deleted})
 
             def _voice_pop(self):
                 with node._voice_queue_lock:
@@ -832,6 +888,8 @@ class BodyGatewayNode(Node):
                     self._handle_say()
                 elif self.path == "/motion-command":
                     self._handle_motion_command()
+                elif self.path == "/viewers/reset":
+                    self._viewer_reset()
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -851,7 +909,9 @@ class BodyGatewayNode(Node):
                     self._json(400, {"error": "missing text"})
                     return
 
-                result = node._infer_sync(robot_id, text)
+                viewer = body.get("viewer")
+                result = node._infer_sync(robot_id, text,
+                                          viewer if isinstance(viewer, dict) else None)
                 self._json(200, result)
 
             def _handle_motion_command(self):
@@ -943,7 +1003,7 @@ class BodyGatewayNode(Node):
     # Synchronous inference (Path 1 — /chat endpoint)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _infer_sync(self, body_id: str, user_input: str) -> dict:
+    def _infer_sync(self, body_id: str, user_input: str, viewer: dict | None = None) -> dict:
         self._publish_cognitive("thinking")
         self._state = "AWAKE"
 
@@ -958,7 +1018,18 @@ class BodyGatewayNode(Node):
         self._emit("input", interaction, source=source, body=body_id, text=user_input,
                    author=author)
         try:
-            parsed = self._decide(interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7)
+            login = str((viewer or {}).get("login", "")).strip().lower()
+            memory = self._viewers is not None and bool(login)
+            name = str(viewer.get("name") or login) if memory else ""
+            record = self._viewers.get(login) if memory else None
+            parsed = self._decide(
+                interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7,
+                viewer_context=viewers.context_lines(name, record) if memory else "",
+            )
+            if memory:
+                # Invalid JSON or no "profil" field: the old profile is kept.
+                profile = viewers.clean_profile(parsed.get("profil"), VIEWER_PROFILE_MAX)
+                self._viewers.save(login, name, str(viewer.get("message") or ""), profile)
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -1049,13 +1120,22 @@ class BodyGatewayNode(Node):
                 self._publish_cognitive("listening")
 
     def _decide(self, interaction: str, body_id: str, user_input: str,
-                template: str, temperature: float) -> dict:
-        """One LLM call: prompt → parsed JSON, published on /events as a decision."""
+                template: str, temperature: float, viewer_context: str = "") -> dict:
+        """One LLM call: prompt → parsed JSON, published on /events as a decision.
+
+        viewer_context: profile lines of the Twitch viewer who speaks (viewers.py);
+        the rules asking for the "profil" field are then added to the system prompt.
+        """
         started = time.monotonic()
+        system = self._system_prompt(template)
+        user = self._user_content(body_id, user_input)
+        if viewer_context:
+            system += "\n" + viewers.PROMPT_RULES
+            user = f"{viewer_context}\n{user}"
         raw = self._brain_chat(
             messages=[
-                {"role": "system", "content": self._system_prompt(template)},
-                {"role": "user",   "content": self._user_content(body_id, user_input)},
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
             ],
             temperature=temperature,
         )
@@ -1067,6 +1147,8 @@ class BodyGatewayNode(Node):
             energy=parsed.get("energy", ""),
             actions=parsed.get("actions", []),
             duration_s=round(time.monotonic() - started, 2),
+            **({"profile": parsed["profil"]}
+               if viewer_context and isinstance(parsed.get("profil"), str) else {}),
         )
         return parsed
 

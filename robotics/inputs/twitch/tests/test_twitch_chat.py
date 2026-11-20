@@ -101,5 +101,28 @@ class TestQueue(unittest.TestCase):
                          "[tchat Twitch] Joa : salut")
 
 
+class TestViewerCommands(unittest.TestCase):
+
+    def test_commands(self):
+        self.assertEqual(twitch_chat.viewer_command("!rgpd"), "rgpd")
+        self.assertEqual(twitch_chat.viewer_command(" !RESET "), "reset")
+        for text in ("!reset tout", "!rgpdx", "!nao reset", "reset"):
+            self.assertIsNone(twitch_chat.viewer_command(text), text)
+
+    def test_user_id(self):
+        msg = twitch_chat.parse_privmsg(
+            "@display-name=Bob;user-id=1234 :bob!bob@bob.tmi.twitch.tv PRIVMSG #chan :!rgpd")
+        self.assertEqual(msg.user_id, "1234")
+
+    def test_rgpd_text(self):
+        self.assertIn("rien", twitch_chat.rgpd_text({}))
+        text = twitch_chat.rgpd_text({"profile": "Aime la danse.", "last_message": "tu danses ?"})
+        self.assertIn("Aime la danse.", text)
+        self.assertIn("tu danses ?", text)
+        self.assertIn("!reset", text)
+        long = twitch_chat.rgpd_text({"profile": "x" * 900, "last_message": "y"})
+        self.assertLessEqual(len(long), twitch_chat.WHISPER_MAX_CHARS)
+
+
 if __name__ == "__main__":
     unittest.main()

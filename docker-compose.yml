@@ -25,6 +25,7 @@ version: "3.8"
 #   mkdir -p /opt/ia/bitterbot/{config,workspace}
 #   mkdir -p /opt/ia/nao/naoqi-sdk
 #   mkdir -p /opt/ia/nao/persona
+#   mkdir -p /opt/ia/nao/viewers
 #   mkdir -p /opt/ia/whisper
 #   cp core/bitterbot/bitterbot.json /opt/ia/bitterbot/config/bitterbot.json
 #   # Extract the NAOqi Python 2.7 SDK into /opt/ia/nao/naoqi-sdk/
@@ -65,6 +66,12 @@ version: "3.8"
 #   TWITCH_CHANNEL           : channel whose chat is read (e.g. monolithoid)
 #   TWITCH_BLOCKLIST         : banned words separated by commas (default: empty)
 #   TWITCH_MODS_ONLY         : 1 = only moderators and the streamer can call !nao (default: 0)
+#   TWITCH_CLIENT_ID         : Twitch app client id, to whisper "!rgpd" answers (optional)
+#   TWITCH_WHISPER_TOKEN     : user token (scope user:manage:whispers) of the account that
+#                              sends the "!rgpd" whispers (optional, empty = not sent)
+#   VIEWER_MEMORY            : 1 = NAO keeps a short profile per viewer (default: 1),
+#                              stored in /opt/ia/nao/viewers/viewers.db;
+#                              "!rgpd" whispers it to the viewer, "!reset" erases it
 #   OBS_DRONE_ID             : obs_01 (ROS2 identifier of the stream voice)
 #   OBS_TOKEN                : openssl rand -hex 32 (secret of the OBS overlay URL)
 #   REGIE_TOKEN              : openssl rand -hex 32 (secret of the control room URL)
@@ -370,9 +377,14 @@ services:
       - WEBUI_API_KEY=${WEBUI_API_KEY:-}
       - WEBUI_PIPE_MODEL=${WEBUI_PIPE_MODEL:-nao_brain}
       - WEBUI_VOICE_CHAT_ID=${WEBUI_VOICE_CHAT_ID:-}
+      # Twitch viewer profiles (viewers.py); VIEWER_MEMORY=0 disables them
+      - VIEWER_MEMORY=${VIEWER_MEMORY:-1}
+      - VIEWER_DB=/data/viewers.db
     volumes:
       # NAO's personality, reread on every LLM call (persona.py)
       - /opt/ia/nao/persona:/opt/nao/persona:ro
+      # Twitch viewer profiles (SQLite)
+      - /opt/ia/nao/viewers:/data
     depends_on:
       nao-core:
         condition: service_started
@@ -499,6 +511,8 @@ services:
       - COMMAND_PREFIX=${TWITCH_COMMAND_PREFIX:-!nao}
       - BLOCKLIST=${TWITCH_BLOCKLIST:-}
       - MODS_ONLY=${TWITCH_MODS_ONLY:-0}
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
+      - TWITCH_WHISPER_TOKEN=${TWITCH_WHISPER_TOKEN:-}
     networks:
       - ai-network
     depends_on:
