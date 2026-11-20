@@ -45,7 +45,7 @@ wake word do for the voice:
 | Read the chat | Twitch IRC in **anonymous read mode** (`justinfan…`): no token or Twitch app |
 | Keep the commands | message starting with `!nao` (`!naomi` excluded) |
 | Filter | max length, no links, banned words, bots ignored, per-viewer delay, "moderators only" option |
-| Bursts | queue of 5 messages, oldest dropped, any message older than 90 s too |
+| Bursts | single slot: when the robot is free it takes the latest message, those received in between are dropped, as is a message older than 90 s |
 | Send | `POST body-gateway/chat` with `[tchat Twitch] nickname : message`, exactly like Open WebUI |
 
 `body-gateway`'s system prompt describes this format and reminds that **chat

@@ -11,7 +11,9 @@ service knows nothing about the outputs.
     Twitch chat (IRC, anonymous read)
       │  only "!nao …" messages, filtered (twitch_chat.ChatFilter)
       ▼
-    LatestQueue ── one message at a time ──► body-gateway POST /chat
+    LatestQueue ── latest message only ──► body-gateway POST /chat
+    (single slot: when the robot is free it takes the newest message,
+     those received in between are dropped)
                                                "[tchat Twitch] pseudo : message"
 
 Environment variables:
@@ -21,7 +23,6 @@ Environment variables:
   COMMAND_PREFIX        default "!nao"
   MAX_CHARS             longest question kept, default 200
   USER_COOLDOWN_S       seconds between two accepted messages of one viewer, default 30
-  QUEUE_MAX             messages kept during a burst (oldest dropped), default 5
   MAX_AGE_S             older messages are dropped, default 90
   MIN_INTERVAL_S        pause after each answer, default 5
   BLOCKLIST             comma-separated forbidden words, default empty
@@ -52,7 +53,6 @@ ROBOT_ID         = os.environ.get("ROBOT_ID", "nao_01")
 COMMAND_PREFIX   = os.environ.get("COMMAND_PREFIX", "!nao")
 MAX_CHARS        = int(os.environ.get("MAX_CHARS", "200"))
 USER_COOLDOWN_S  = float(os.environ.get("USER_COOLDOWN_S", "30"))
-QUEUE_MAX        = int(os.environ.get("QUEUE_MAX", "5"))
 MAX_AGE_S        = float(os.environ.get("MAX_AGE_S", "90"))
 MIN_INTERVAL_S   = float(os.environ.get("MIN_INTERVAL_S", "5"))
 BLOCKLIST        = _env_list("BLOCKLIST")
@@ -99,8 +99,10 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
                     if reason != "pas une commande":
                         log(f"ignoré ({reason}) : {msg.user}")
                     continue
-                inbox.push(msg, question)
-                log(f"reçu de {msg.display_name} : {question[:80]!r} (file : {len(inbox)})")
+                replaced = inbox.push(msg, question)
+                log(f"reçu de {msg.display_name} : {question[:80]!r}")
+                if replaced is not None:
+                    log(f"abandonné (plus récent reçu) : {replaced[0].display_name}")
             sock.close()
         except OSError as e:
             log(f"tchat déconnecté : {e} — nouvel essai dans {backoff}s")
@@ -109,7 +111,7 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Worker: one message at a time → brain
+# Worker: as soon as the robot is free, the latest message → brain
 # ─────────────────────────────────────────────────────────────────────────────
 
 def worker_loop(inbox: twitch_chat.LatestQueue):
@@ -149,7 +151,7 @@ def main():
         prefix=COMMAND_PREFIX, max_chars=MAX_CHARS, user_cooldown_s=USER_COOLDOWN_S,
         blocklist=BLOCKLIST, ignored_users=IGNORED_USERS, mods_only=MODS_ONLY,
     )
-    inbox = twitch_chat.LatestQueue(maxlen=QUEUE_MAX, max_age_s=MAX_AGE_S)
+    inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S)
     threading.Thread(target=irc_loop, args=(chat_filter, inbox), daemon=True).start()
     log(f"tchat #{TWITCH_CHANNEL} → {BODY_GATEWAY_URL}/chat")
     worker_loop(inbox)

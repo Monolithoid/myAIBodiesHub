@@ -186,7 +186,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 ### twitch-input
 
 **Image:** `$DOCKERHUB_USERNAME/twitch-input:latest` — **Code:** `robotics/inputs/twitch/`
-**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time.
+**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is free it answers the newest one, and messages received in between are dropped.
 
 | Variable (compose name) | Description |
 |---|---|
@@ -196,7 +196,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `MIN_INTERVAL_S` (`TWITCH_MIN_INTERVAL_S`) | Pause after each answer, default 5 |
 | `BLOCKLIST` (`TWITCH_BLOCKLIST`) | Comma-separated forbidden words |
 | `MODS_ONLY` (`TWITCH_MODS_ONLY`) | `1` = moderators and broadcaster only, default 0 |
-| `MAX_CHARS`, `QUEUE_MAX`, `MAX_AGE_S`, `IGNORED_USERS` | Not in the compose file: 200 characters, 5 queued messages, 90 s, `nightbot,streamelements,moobot` |
+| `MAX_CHARS`, `MAX_AGE_S`, `IGNORED_USERS` | Not in the compose file: 200 characters, 90 s, `nightbot,streamelements,moobot` |
 
 ---
 
