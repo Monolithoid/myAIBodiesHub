@@ -23,6 +23,7 @@ at home.
 | [`pc-portable-ubuntu.md`](pc-portable-ubuntu.md) | **Installation on an Ubuntu laptop** (webcam + microphone) |
 | `setup-ubuntu.sh` | Automatic installation on Ubuntu (idempotent), see [pc-portable-ubuntu.md](pc-portable-ubuntu.md#automatic-installation) |
 | `setup-lib.sh` | Functions shared by the installation scripts |
+| `tmux.sh` | Runs the NAO relay, `static_drone.py` and `emotion_gesture.py` in one tmux session, panes stacked vertically: `bash tmux.sh [session-name]` (default `static-drone`) |
 | `nao-relay/` | NAO relay: the NAO goes through the drone to reach the VPS ([installation](nao-relay/README.md), [ADR 006](../../../../docs/decisions/006-nao-via-drone-statique.md)) |
 | `emotion_gesture.py` | Learned NAO gestures: generates the emotional gestures on the drone and sends them to the robot (see [Learned gestures](#learned-nao-gestures)) |
 | `emotion_gesture.env.example` | Generator version to use, to copy to `emotion_gesture.env` |
