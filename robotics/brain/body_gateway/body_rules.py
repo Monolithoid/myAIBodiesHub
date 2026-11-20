@@ -14,6 +14,7 @@ positif = à droite.  HeadYaw du NAO : radians, positif = vers la gauche du robo
 
 import math
 import re
+import threading
 import time
 import unicodedata
 
@@ -384,3 +385,59 @@ def speech_gesture_sync(actions: list, registry: list[str], connected: dict[str,
     first = speech_seconds(speeches[0]["text"], chars_per_s)
     total = first + sum(speech_seconds(a["text"], chars_per_s) for a in speeches[1:])
     return {"id": sync_id, "speech_s": round(total, 2), "speech_s_first": first}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Speaking state: is NAO's voice still talking?
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SpeakingTracker:
+    """Tell when the last answer has been spoken, so an input can send the next one.
+
+    Each sentence sent to a connected voice body (static, obs) is pending until
+    that body reports speaking=true (synthesis and gesture sync delay the
+    start), then busy until speaking=false.  A pending sentence that never
+    starts stops counting after start_grace_s, a speaking=true without its
+    false after max_speaking_s.  The NAO has no speaking signal: a sentence it
+    says itself counts for its estimated duration (speech_seconds).
+    """
+
+    def __init__(self, start_grace_s: float = 10.0, max_speaking_s: float = 120.0):
+        self.start_grace_s = start_grace_s
+        self.max_speaking_s = max_speaking_s
+        self._pending: dict[str, list[float]] = {}   # body → start deadlines, oldest first
+        self._speaking: dict[str, float] = {}         # body → speaking=true time
+        self._estimated_until = 0.0
+        self._lock = threading.Lock()   # ROS callbacks and HTTP threads
+
+    def said(self, body_id: str, text: str, now: float | None = None,
+             chars_per_s: float = SPEECH_CHARS_PER_S):
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._said(body_id, text, now, chars_per_s)
+
+    def _said(self, body_id, text, now, chars_per_s):
+        if is_voice(body_id):
+            self._pending.setdefault(body_id, []).append(now + self.start_grace_s)
+        else:
+            self._estimated_until = max(self._estimated_until,
+                                        now + speech_seconds(text, chars_per_s))
+
+    def heard(self, body_id: str, speaking: bool, now: float | None = None):
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if speaking:
+                self._speaking[body_id] = now
+                if self._pending.get(body_id):
+                    self._pending[body_id].pop(0)
+            else:
+                self._speaking.pop(body_id, None)
+
+    def busy(self, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            for body_id in list(self._pending):
+                self._pending[body_id] = [d for d in self._pending[body_id] if d > now]
+            return (any(self._pending.values())
+                    or any(now - t < self.max_speaking_s for t in self._speaking.values())
+                    or now < self._estimated_until)

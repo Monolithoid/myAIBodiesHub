@@ -80,6 +80,10 @@ Environment variables:
                              (the start offset is set on the drone, emotion_gesture.env)
   SPEECH_CHARS_PER_S         speech rate used to estimate a sentence length before the
                              measured one arrives, default 14 characters per second
+  SPEECH_START_GRACE_S       GET /speaking: a sentence sent to a connected voice counts as
+                             spoken if that voice has not started it after this delay, default 10
+  SPEAKING_MAX_S             GET /speaking: a speaking=true without its false stops counting
+                             after this delay, default 120
   DREAMING_HOUR_START/END    default 2 / 6
   DREAMING_BATTERY_THRESHOLD default 80.0
   DREAM_TICK_INTERVAL        seconds between dream ticks, default 300
@@ -141,6 +145,11 @@ NAO_HEAD_YAW_OFFSET = float(os.environ.get("NAO_HEAD_YAW_OFFSET", "0"))
 LLM_MOTION = os.environ.get("LLM_MOTION", "1").lower() not in ("0", "false", "no", "non", "off")
 SPEECH_GESTURE_SYNC = os.environ.get("SPEECH_GESTURE_SYNC", "1").lower() not in ("0", "false", "no", "non", "off")
 SPEECH_CHARS_PER_S  = float(os.environ.get("SPEECH_CHARS_PER_S", str(body_rules.SPEECH_CHARS_PER_S)))
+# GET /speaking: a sentence sent to a voice counts as "speaking" until that
+# voice reports speaking=false; it is given up if it has not started after
+# SPEECH_START_GRACE_S, or if speaking=false never comes after SPEAKING_MAX_S.
+SPEECH_START_GRACE_S = float(os.environ.get("SPEECH_START_GRACE_S", "10"))
+SPEAKING_MAX_S       = float(os.environ.get("SPEAKING_MAX_S",       "120"))
 # A voice direction older than this is not added to the LLM context.
 VOICE_DIRECTION_MAX_AGE = 30.0
 
@@ -379,6 +388,7 @@ class BodyGatewayNode(Node):
         self._gesture_emotions: dict[str, list] = {}  # NAO body_id → emotions of the learned gestures
         self._energy = "medium"                     # last "energy" of the LLM, for gesture intensity
         self._infer_lock = threading.Lock()
+        self._speaking = body_rules.SpeakingTracker(SPEECH_START_GRACE_S, SPEAKING_MAX_S)
         self._running = True
 
         # Queue of voice inference results waiting to be fetched by the WebUI Pipe
@@ -466,6 +476,11 @@ class BodyGatewayNode(Node):
             self.create_subscription(
                 String, f"{ns}/sensors/gesture_emotions",
                 lambda msg, bid=body_id: self._on_gesture_emotions(bid, msg), 10
+            )
+        if body_rules.is_voice(body_id):
+            self.create_subscription(
+                Bool, f"{ns}/sensors/speaking",
+                lambda msg, bid=body_id: self._speaking.heard(bid, msg.data), 10
             )
         if body_rules.body_type(body_id) == "static":
             self.create_subscription(
@@ -784,7 +799,7 @@ class BodyGatewayNode(Node):
             self.get_logger().warn(f"_notify_webui error: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # HTTP server — /chat (Path 1) + /voice-pop (Path 2) + /say + /ping
+    # HTTP server — /chat (Path 1) + /voice-pop (Path 2) + /say + /ping + /speaking
     # ─────────────────────────────────────────────────────────────────────────
 
     def _start_http_server(self):
@@ -797,6 +812,10 @@ class BodyGatewayNode(Node):
                     self._json(200, {"ok": True, "service": "body-gateway"})
                 elif self.path == "/voice-pop":
                     self._voice_pop()
+                elif self.path == "/speaking":
+                    # twitch-input polls it to send the next message as soon as
+                    # the last answer has been spoken.
+                    self._json(200, {"speaking": node._speaking.busy()})
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -909,7 +928,7 @@ class BodyGatewayNode(Node):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.get_logger().info(
             f"HTTP démarré → :{CHAT_PORT}/ping  :{CHAT_PORT}/chat  :{CHAT_PORT}/say"
-            f"  :{CHAT_PORT}/voice-pop  :{CHAT_PORT}/motion-command"
+            f"  :{CHAT_PORT}/voice-pop  :{CHAT_PORT}/motion-command  :{CHAT_PORT}/speaking"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1162,6 +1181,9 @@ class BodyGatewayNode(Node):
                 # The room speaker and the OBS voice hold this sentence until the gesture starts.
                 msg.data = json.dumps({"text": msg.data, "sync": sync["id"]})
             self._pub_say[body_id].publish(msg)
+            # A disconnected voice will never report speaking: do not wait for it.
+            if not body_rules.is_voice(body_id) or self._body_connected.get(body_id, False):
+                self._speaking.said(body_id, action.get("text", ""), chars_per_s=SPEECH_CHARS_PER_S)
             time.sleep(0.3)
 
         elif kind == "motion":

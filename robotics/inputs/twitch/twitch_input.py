@@ -14,6 +14,8 @@ service knows nothing about the outputs.
     LatestQueue ── latest message only ──► body-gateway POST /chat
     (single slot: when the robot is free it takes the newest message,
      those received in between are dropped)
+      ▲                                       │
+      └── robot free ◄── GET /speaking ◄──────┘  polled until the answer is spoken
                                                "[tchat Twitch] pseudo : message"
 
 Environment variables:
@@ -24,7 +26,8 @@ Environment variables:
   MAX_CHARS             longest question kept, default 200
   USER_COOLDOWN_S       seconds between two accepted messages of one viewer, default 30
   MAX_AGE_S             older messages are dropped, default 90
-  MIN_INTERVAL_S        pause after each answer, default 5
+  POLL_S                seconds between two GET /speaking, default 0.3
+  SPEAKING_WAIT_MAX_S   longest wait for the end of an answer, default 120
   BLOCKLIST             comma-separated forbidden words, default empty
   IGNORED_USERS         comma-separated logins, default "nightbot,streamelements,moobot"
   MODS_ONLY             1 = only moderators and the broadcaster, default 0
@@ -54,7 +57,8 @@ COMMAND_PREFIX   = os.environ.get("COMMAND_PREFIX", "!nao")
 MAX_CHARS        = int(os.environ.get("MAX_CHARS", "200"))
 USER_COOLDOWN_S  = float(os.environ.get("USER_COOLDOWN_S", "30"))
 MAX_AGE_S        = float(os.environ.get("MAX_AGE_S", "90"))
-MIN_INTERVAL_S   = float(os.environ.get("MIN_INTERVAL_S", "5"))
+POLL_S           = float(os.environ.get("POLL_S", "0.3"))
+SPEAKING_WAIT_MAX_S = float(os.environ.get("SPEAKING_WAIT_MAX_S", "120"))
 BLOCKLIST        = _env_list("BLOCKLIST")
 IGNORED_USERS    = _env_list("IGNORED_USERS", "nightbot,streamelements,moobot")
 MODS_ONLY        = os.environ.get("MODS_ONLY", "0") == "1"
@@ -136,8 +140,24 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
                 log("cerveau occupé — message abandonné")
             else:
                 log(f"réponse à {msg.display_name} : {(result.get('speech') or '')[:80]!r}")
-        # Leaves time for the answer to be spoken before the next one.
-        time.sleep(MIN_INTERVAL_S)
+        # The robot is free once the answer has been spoken, not after a fixed pause.
+        wait_until_spoken()
+
+
+def wait_until_spoken():
+    """Poll body-gateway GET /speaking until the last answer has been spoken."""
+    deadline = time.monotonic() + SPEAKING_WAIT_MAX_S
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(f"{BODY_GATEWAY_URL}/speaking", timeout=5)
+            resp.raise_for_status()
+            if not resp.json().get("speaking"):
+                return
+        except (requests.RequestException, ValueError) as e:
+            log(f"état « parle » inconnu ({e}) — message suivant sans attendre")
+            return
+        time.sleep(POLL_S)
+    log(f"toujours en train de parler après {SPEAKING_WAIT_MAX_S:.0f}s — message suivant")
 
 
 def main():
