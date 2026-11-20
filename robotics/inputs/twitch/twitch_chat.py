@@ -37,9 +37,12 @@ class ChatMessage:
     received_at: float = 0.0
 
     @property
+    def is_broadcaster(self) -> bool:
+        return "broadcaster/" in self.tags.get("badges", "")
+
+    @property
     def is_mod(self) -> bool:
-        badges = self.tags.get("badges", "")
-        return self.tags.get("mod") == "1" or "broadcaster/" in badges
+        return self.tags.get("mod") == "1" or self.is_broadcaster
 
 
 def _unescape_tag(value: str) -> str:
@@ -107,6 +110,10 @@ class ChatFilter:
 
     Returns (question, reason): question is the cleaned text, or None with the
     reason it was rejected (logged by the bridge).
+
+    The per-viewer cooldown starts when a message is actually sent to the
+    brain (sent()), not when it is accepted: a message replaced in the
+    latest-only slot costs nothing.  The broadcaster has no cooldown.
     """
 
     def __init__(self, prefix: str = "!nao", max_chars: int = 200,
@@ -118,7 +125,7 @@ class ChatFilter:
         self.blocklist = [normalize(w) for w in (blocklist or []) if normalize(w)]
         self.ignored_users = {u.strip().lower() for u in (ignored_users or []) if u.strip()}
         self.mods_only = mods_only
-        self._last_accepted: dict[str, float] = {}
+        self._last_sent: dict[str, float] = {}
 
     def check(self, msg: ChatMessage, now: float | None = None) -> tuple[str | None, str]:
         now = time.monotonic() if now is None else now
@@ -134,13 +141,17 @@ class ChatFilter:
         padded = f" {normalize(question)} "
         if any(f" {w} " in padded for w in self.blocklist):
             return None, "mot interdit"
-        last = self._last_accepted.get(msg.user)
-        if last is not None and now - last < self.user_cooldown_s:
+        last = self._last_sent.get(msg.user)
+        if (not msg.is_broadcaster and last is not None
+                and now - last < self.user_cooldown_s):
             return None, "délai par spectateur"
-        self._last_accepted[msg.user] = now
         if len(question) > self.max_chars:
             question = question[: self.max_chars].rsplit(" ", 1)[0] + "…"
         return question, "ok"
+
+    def sent(self, msg: ChatMessage, now: float | None = None):
+        """The message went to the brain: start this viewer's cooldown."""
+        self._last_sent[msg.user] = time.monotonic() if now is None else now
 
 
 # ─────────────────────────────────────────────────────────────────────────────

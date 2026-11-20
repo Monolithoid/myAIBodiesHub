@@ -24,7 +24,8 @@ Environment variables:
   ROBOT_ID              body named in /chat, default "nao_01"
   COMMAND_PREFIX        default "!nao"
   MAX_CHARS             longest question kept, default 200
-  USER_COOLDOWN_S       seconds between two accepted messages of one viewer, default 30
+  USER_COOLDOWN_S       seconds after a viewer's answered message before the next one is
+                        accepted, default 30 (none for the broadcaster)
   MAX_AGE_S             older messages are dropped, default 90
   POLL_S                seconds between two GET /speaking, default 0.3
   SPEAKING_WAIT_MAX_S   longest wait for the end of an answer, default 120
@@ -118,12 +119,13 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
 # Worker: as soon as the robot is free, the latest message → brain
 # ─────────────────────────────────────────────────────────────────────────────
 
-def worker_loop(inbox: twitch_chat.LatestQueue):
+def worker_loop(inbox: twitch_chat.LatestQueue, chat_filter: twitch_chat.ChatFilter):
     while True:
         item = inbox.pop()
         if item is None:
             continue
         msg, question = item
+        chat_filter.sent(msg)
         try:
             # Same entry point as Open WebUI: the brain dispatches the actions itself.
             resp = requests.post(
@@ -174,7 +176,7 @@ def main():
     inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S)
     threading.Thread(target=irc_loop, args=(chat_filter, inbox), daemon=True).start()
     log(f"tchat #{TWITCH_CHANNEL} → {BODY_GATEWAY_URL}/chat")
-    worker_loop(inbox)
+    worker_loop(inbox, chat_filter)
 
 
 if __name__ == "__main__":

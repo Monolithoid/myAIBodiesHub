@@ -56,10 +56,25 @@ class TestFilter(unittest.TestCase):
 
     def test_accepts_and_cooldown(self):
         f = twitch_chat.ChatFilter(user_cooldown_s=30)
-        self.assertEqual(f.check(msg("!nao salut"), now=0), ("salut", "ok"))
+        m = msg("!nao salut")
+        self.assertEqual(f.check(m, now=0), ("salut", "ok"))
+        f.sent(m, now=0)
         self.assertEqual(f.check(msg("!nao encore"), now=10)[1], "délai par spectateur")
         self.assertEqual(f.check(msg("!nao autre", user="bob"), now=10)[0], "autre")
         self.assertEqual(f.check(msg("!nao encore"), now=31)[0], "encore")
+
+    def test_cooldown_starts_when_sent_not_accepted(self):
+        # A message replaced in the slot before being answered costs nothing.
+        f = twitch_chat.ChatFilter(user_cooldown_s=30)
+        self.assertEqual(f.check(msg("!nao un"), now=0)[0], "un")
+        self.assertEqual(f.check(msg("!nao deux"), now=1)[0], "deux")
+
+    def test_broadcaster_has_no_cooldown(self):
+        f = twitch_chat.ChatFilter(user_cooldown_s=30)
+        b = twitch_chat.ChatMessage(user="joa", display_name="joa", channel="c", text="!nao un",
+                                    tags={"badges": "broadcaster/1"})
+        f.sent(b, now=0)
+        self.assertEqual(f.check(b, now=1)[0], "un")
 
     def test_rejected_message_does_not_start_cooldown(self):
         f = twitch_chat.ChatFilter(blocklist=["Gros-Mot"])
