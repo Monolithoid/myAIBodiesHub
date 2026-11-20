@@ -54,17 +54,10 @@ class TestCommand(unittest.TestCase):
 
 class TestFilter(unittest.TestCase):
 
-    def test_accepts_and_cooldown(self):
-        f = twitch_chat.ChatFilter(user_cooldown_s=30)
+    def test_accepts_every_message_without_delay(self):
+        f = twitch_chat.ChatFilter()
         self.assertEqual(f.check(msg("!nao salut"), now=0), ("salut", "ok"))
-        self.assertEqual(f.check(msg("!nao encore"), now=10)[1], "délai par spectateur")
-        self.assertEqual(f.check(msg("!nao autre", user="bob"), now=10)[0], "autre")
-        self.assertEqual(f.check(msg("!nao encore"), now=31)[0], "encore")
-
-    def test_rejected_message_does_not_start_cooldown(self):
-        f = twitch_chat.ChatFilter(blocklist=["Gros-Mot"])
-        self.assertEqual(f.check(msg("!nao un gros mot"), now=0)[1], "mot interdit")
-        self.assertEqual(f.check(msg("!nao poli"), now=1)[0], "poli")
+        self.assertEqual(f.check(msg("!nao encore"), now=0.5), ("encore", "ok"))
 
     def test_links_bots_mods(self):
         f = twitch_chat.ChatFilter(ignored_users=["Nightbot"])

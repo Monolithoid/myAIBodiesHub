@@ -3,7 +3,8 @@ twitch_chat.py — Règles du tchat Twitch sans réseau ni dépendance (testable
 
   - lecture d'une ligne IRC Twitch (tags, pseudo, canal, texte)
   - commande « !nao » : seuls ces messages sont pris en compte
-  - filtres anti-abus : longueur, liens, mots interdits, bots, délai par spectateur
+  - filtres anti-abus : longueur, liens, mots interdits, bots (pas de délai par
+    spectateur : la case « dernier message » suffit contre les rafales)
   - case unique « dernier message » : dès que le robot est libre, il répond au
     message le plus récent ; ceux arrivés entre-temps sont abandonnés plutôt
     que de faire attendre le stream
@@ -37,9 +38,12 @@ class ChatMessage:
     received_at: float = 0.0
 
     @property
+    def is_broadcaster(self) -> bool:
+        return "broadcaster/" in self.tags.get("badges", "")
+
+    @property
     def is_mod(self) -> bool:
-        badges = self.tags.get("badges", "")
-        return self.tags.get("mod") == "1" or "broadcaster/" in badges
+        return self.tags.get("mod") == "1" or self.is_broadcaster
 
 
 def _unescape_tag(value: str) -> str:
@@ -110,15 +114,13 @@ class ChatFilter:
     """
 
     def __init__(self, prefix: str = "!nao", max_chars: int = 200,
-                 user_cooldown_s: float = 30.0, blocklist: list[str] | None = None,
+                 blocklist: list[str] | None = None,
                  ignored_users: list[str] | None = None, mods_only: bool = False):
         self.prefix = prefix
         self.max_chars = max_chars
-        self.user_cooldown_s = user_cooldown_s
         self.blocklist = [normalize(w) for w in (blocklist or []) if normalize(w)]
         self.ignored_users = {u.strip().lower() for u in (ignored_users or []) if u.strip()}
         self.mods_only = mods_only
-        self._last_accepted: dict[str, float] = {}
 
     def check(self, msg: ChatMessage, now: float | None = None) -> tuple[str | None, str]:
         now = time.monotonic() if now is None else now
@@ -134,10 +136,6 @@ class ChatFilter:
         padded = f" {normalize(question)} "
         if any(f" {w} " in padded for w in self.blocklist):
             return None, "mot interdit"
-        last = self._last_accepted.get(msg.user)
-        if last is not None and now - last < self.user_cooldown_s:
-            return None, "délai par spectateur"
-        self._last_accepted[msg.user] = now
         if len(question) > self.max_chars:
             question = question[: self.max_chars].rsplit(" ", 1)[0] + "…"
         return question, "ok"

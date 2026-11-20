@@ -195,7 +195,6 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 |---|---|
 | `TWITCH_CHANNEL` | Channel to read, **required** (the container exits without it) |
 | `COMMAND_PREFIX` (`TWITCH_COMMAND_PREFIX`) | default `!nao` (`!naomi` is not a match) |
-| `USER_COOLDOWN_S` (`TWITCH_USER_COOLDOWN_S`) | Seconds between two accepted messages of one viewer, default 30 |
 | `BLOCKLIST` (`TWITCH_BLOCKLIST`) | Comma-separated forbidden words |
 | `MODS_ONLY` (`TWITCH_MODS_ONLY`) | `1` = moderators and broadcaster only, default 0 |
 | `MAX_CHARS`, `MAX_AGE_S`, `IGNORED_USERS`, `POLL_S`, `SPEAKING_WAIT_MAX_S` | Not in the compose file: 200 characters, 90 s, `nightbot,streamelements,moobot`, 0.3 s, 120 s |
