@@ -10,11 +10,11 @@
 #   │ gesture emotion_gesture  │
 #   └──────────────────────────┘
 #
-# Usage : bash robotics/drones/static/onboard/tmux.sh [session-name]
+# Usage : bash robotics/drones/static/onboard/tmux.sh [--kill] [session-name]
 #   session-name : tmux session name (default: $TMUX_SESSION or "static-drone")
+#   --kill       : stops the session (and the three programs) instead
 #
 # If the session already exists, it is reattached instead of being recreated.
-# To stop everything: tmux kill-session -t <session-name>
 # A pane stays open after its program exits (see its last lines), and
 # "Ctrl+B :respawn-pane -k" restarts it.
 
@@ -24,10 +24,30 @@ ONBOARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=SCRIPTDIR/setup-lib.sh
 . "${ONBOARD_DIR}/setup-lib.sh"
 
-SESSION="${1:-${TMUX_SESSION:-static-drone}}"
-PYTHON="${ONBOARD_DIR}/.venv/bin/python"
+KILL=false
+SESSION=""
+for arg in "$@"; do
+    case "$arg" in
+        -k|--kill) KILL=true ;;
+        -h|--help) sed -n '2,/^$/{s/^# \{0,1\}//;p}' "$0"; exit 0 ;;
+        -*) error "Option inconnue : $arg (usage : tmux.sh [--kill] [session])" ;;
+        *) SESSION="$arg" ;;
+    esac
+done
+SESSION="${SESSION:-${TMUX_SESSION:-static-drone}}"
 
 command -v tmux >/dev/null || error "tmux absent : sudo apt install -y tmux"
+
+if $KILL; then
+    tmux has-session -t "=$SESSION" 2>/dev/null \
+        || error "Aucune session tmux « $SESSION »"
+    tmux kill-session -t "=$SESSION"
+    log "Session tmux « $SESSION » arrêtée"
+    exit 0
+fi
+
+PYTHON="${ONBOARD_DIR}/.venv/bin/python"
+
 [[ -x "$PYTHON" ]] || error "$PYTHON absent : lancer d'abord setup-ubuntu.sh"
 [[ -f "${ONBOARD_DIR}/.env" ]] || error "${ONBOARD_DIR}/.env absent : cp .env.example .env"
 [[ -f "${ONBOARD_DIR}/emotion_gesture.env" ]] \
