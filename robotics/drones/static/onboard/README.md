@@ -156,6 +156,16 @@ way: `obs_agent` holds the sentence until the same start, plus `OBS_SPEECH_OFFSE
 clock is not the drone's, it uses `in_s` (delay from the moment the message is sent).
 `SPEECH_GESTURE_SYNC=0` in `body_gateway`'s environment turns the whole mechanism off.
 
+### Variety (CVAE generator)
+
+When the pinned generator has CVAE models (`latent_dims` in `nao_gesture.py`), each
+gesture draws a new latent code: the same emotion and intensity give a different
+learned gesture every time, for LLM gestures and reflexes alike. If the guardian
+refuses the draw, the service tries the same draw without the event, another draw,
+then the central gesture. `GESTURE_LATENT_TEMPERATURE` (`emotion_gesture.env`) sets
+how far the draws go: empty = the generator's own default, `0` = always the central
+gesture. The draw (`latent`, `temperature`) is reported in `/nao/emotion_gesture_state`.
+
 ### Reflex
 
 The gesture service also reacts, without the LLM, to what happens in front of

@@ -53,6 +53,7 @@ import importlib.util
 import json
 import logging
 import os
+import random
 import re
 import sys
 import threading
@@ -92,7 +93,8 @@ def read_settings():
                 "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_SCALE_MIN", "GESTURE_SPEECH_SCALE_MAX",
                 "GESTURE_SPEECH_WAIT_S", "GESTURE_REFLEX", "GESTURE_REFLEX_SOUND",
                 "GESTURE_REFLEX_MOTION", "GESTURE_REFLEX_COOLDOWN_S",
-                "GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", "GESTURE_REFLEX_NAO_ID"):
+                "GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", "GESTURE_REFLEX_NAO_ID",
+                "GESTURE_LATENT_TEMPERATURE"):
         os.environ.pop(key, None)   # a reload rereads the file, not the old value
     load_dotenv(os.environ.get("GESTURE_ENV_FILE") or os.path.join(HERE, "emotion_gesture.env"))
     load_dotenv(os.path.join(HERE, ".env"))
@@ -107,6 +109,8 @@ def read_settings():
         "cache_dir": os.path.expanduser(_env("GESTURE_CACHE_DIR", "~/.cache/nao-gesture")),
         "rest_delay": _env_float("GESTURE_REST_DELAY", 3.0),
         "rate_hz": _env_float("GESTURE_RATE_HZ", 25.0),
+        # CVAE generator: temperature of the latent draw (None = the generator file's default)
+        "latent_temperature": parse_temperature(_env("GESTURE_LATENT_TEMPERATURE", "")),
         # Synchronisation avec la parole
         "speech_offset_ms": _clamp_offset_ms(_env_float("GESTURE_SPEECH_OFFSET_MS", 0.0)),
         "match_speech": _env("GESTURE_MATCH_SPEECH", "1").lower() not in ("0", "false", "no", "non", "off"),
@@ -135,6 +139,38 @@ def parse_reflex(spec):
     except ValueError:
         value = 0.3
     return emotion.strip(), max(0.0, min(1.0, value))
+
+
+def parse_temperature(spec):
+    """"0.8" -> 0.8; empty or invalid -> None (the generator file's default)."""
+    try:
+        value = float((spec or "").strip())
+    except ValueError:
+        return None
+    return value if value >= 0 and value == value and value != float("inf") else None
+
+
+def generation_tries(gen, event, temperature=None, rng=None):
+    """Successive generate() arguments for one gesture, the first accepted is played.
+
+    CVAE generator (`gen.latent_dims` not empty): a new latent code at each gesture, so
+    the same emotion and intensity give a different learned gesture each time; if the
+    guardian refuses it, the same z without the event, another z, then the central
+    gesture (z = 0). Other generators: the learned gesture, without the event, then a
+    small variation (docs/generator-integration.md §7)."""
+    rng = rng or random.SystemRandom()
+    if getattr(gen, "latent_dims", None):
+        s1, s2 = rng.randrange(1 << 30), rng.randrange(1 << 30)
+        t = {} if temperature is None else {"temperature": float(temperature)}
+        tries = [dict(t, event=event, seed=s1)]
+        if event:
+            tries.append(dict(t, event=None, seed=s1))
+        tries += [dict(t, event=event, seed=s2), {"event": event, "temperature": 0.0}]
+        return tries
+    tries = [{"event": event}]
+    if event:
+        tries.append({"event": None})
+    return tries + [{"event": event, "variation": 0.05, "seed": 1}]
 
 
 def reflex_event(azimuth_deg, offset_deg=0.0):
@@ -581,12 +617,12 @@ class GestureService:
             from_rest = self._is_at_rest(gen, pose)
             emotion, intensity = req.get("emotion"), float(req.get("intensity", 0.5))
             event = req.get("event") or None
-            # Refused: retry without the event, then with a small variation
-            # (advice from docs/generator-integration.md §7); otherwise nothing is played.
-            tries = [(event, 0.0, None)] + ([(None, 0.0, None)] if event else []) + [(event, 0.05, 1)]
-            for ev, variation, seed in tries:
-                g = gen.generate(emotion, intensity, event=ev, current_pose=pose, from_rest=from_rest,
-                                 return_to="start", variation=variation, seed=seed)
+            # A new learned gesture each time (CVAE); refused: the fallbacks of
+            # generation_tries, otherwise nothing is played.
+            tries = generation_tries(gen, event, self.settings.get("latent_temperature"))
+            for i, kw in enumerate(tries):
+                g = gen.generate(emotion, intensity, current_pose=pose, from_rest=from_rest,
+                                 return_to="start", **kw)
                 if g.ok:
                     break
         except Exception as exc:
@@ -612,8 +648,9 @@ class GestureService:
                    info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
                          "event": req.get("event"), "notes": g.notes,
                          "adaptation": getattr(g, "adaptation", None),
-                         "retry": None if (ev, variation) == (event, 0.0) else
-                         ("sans événement" if ev is None and event else "variation")})
+                         "latent": (getattr(g, "inputs", None) or {}).get("latent"),
+                         "temperature": (getattr(g, "inputs", None) or {}).get("temperature"),
+                         "retry": _retry_label(i, kw, event)})
         with self._lock:
             self._at_start = True
 
@@ -746,6 +783,17 @@ class GestureService:
     def stop(self):
         self._stop.set()
         self._wake.set()
+
+
+def _retry_label(i, kw, event):
+    """Why the played gesture is not the first try (None: it is)."""
+    if i == 0:
+        return None
+    if event and kw.get("event") is None:
+        return "sans événement"
+    if kw.get("temperature") == 0.0:
+        return "geste central"
+    return "variation" if kw.get("variation") else "autre tirage"
 
 
 def _data(msg):
