@@ -210,5 +210,62 @@ class TestGesturesOnly(unittest.TestCase):
         self.assertIn('"motion"', body_rules.gestures_label(["joy"]))    # default unchanged
 
 
+class TestSpeakingTracker(unittest.TestCase):
+
+    def test_idle_at_start(self):
+        self.assertFalse(body_rules.SpeakingTracker().busy(now=0))
+
+    def test_voice_busy_until_it_stops_speaking(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.said("static_01", "bonjour", now=0)
+        self.assertTrue(t.busy(now=1))          # synthesis: not started yet
+        t.heard("static_01", True, now=2)
+        self.assertTrue(t.busy(now=30))         # still speaking after the grace
+        t.heard("static_01", False, now=31)
+        self.assertFalse(t.busy(now=31))
+
+    def test_two_sentences_wait_for_the_second(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.said("static_01", "un", now=0)
+        t.said("static_01", "deux", now=0)
+        t.heard("static_01", True, now=1)
+        t.heard("static_01", False, now=2)
+        self.assertTrue(t.busy(now=2))          # second sentence not started yet
+        t.heard("static_01", True, now=2.1)
+        t.heard("static_01", False, now=3)
+        self.assertFalse(t.busy(now=3))
+
+    def test_two_voices(self):
+        t = body_rules.SpeakingTracker()
+        t.said("static_01", "salut", now=0)
+        t.said("obs_01", "salut", now=0)
+        t.heard("static_01", True, now=1)
+        t.heard("obs_01", True, now=1)
+        t.heard("static_01", False, now=3)
+        self.assertTrue(t.busy(now=3))
+        t.heard("obs_01", False, now=4)
+        self.assertFalse(t.busy(now=4))
+
+    def test_voice_that_never_starts_is_given_up(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.said("static_01", "bonjour", now=0)
+        self.assertTrue(t.busy(now=9))
+        self.assertFalse(t.busy(now=11))
+
+    def test_missing_false_is_given_up(self):
+        t = body_rules.SpeakingTracker(max_speaking_s=60)
+        t.heard("static_01", True, now=0)
+        self.assertTrue(t.busy(now=59))
+        self.assertFalse(t.busy(now=61))
+
+    def test_nao_alone_uses_estimated_duration(self):
+        t = body_rules.SpeakingTracker()
+        text = "Bonjour à tous, merci d'être là ce soir."
+        t.said("nao_01", text, now=0)
+        d = body_rules.speech_seconds(text)
+        self.assertTrue(t.busy(now=d - 0.1))
+        self.assertFalse(t.busy(now=d + 0.1))
+
+
 if __name__ == "__main__":
     unittest.main()

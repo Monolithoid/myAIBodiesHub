@@ -5,6 +5,7 @@
 
 import os
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -82,19 +83,25 @@ class TestFilter(unittest.TestCase):
 
 class TestQueue(unittest.TestCase):
 
-    def test_burst_keeps_newest(self):
-        q = twitch_chat.LatestQueue(maxlen=2, max_age_s=90)
-        for i in range(4):
-            q.push(msg(f"!nao {i}", t=0), str(i))
-        self.assertEqual(q.pop(timeout=0, now=1)[1], "2")
+    def test_burst_keeps_only_latest(self):
+        q = twitch_chat.LatestQueue(max_age_s=90)
+        self.assertIsNone(q.push(msg("!nao 0", t=0), "0"))
+        for i in range(1, 4):
+            replaced = q.push(msg(f"!nao {i}", t=0), str(i))
+            self.assertEqual(replaced[1], str(i - 1))
+        self.assertEqual(len(q), 1)
         self.assertEqual(q.pop(timeout=0, now=1)[1], "3")
         self.assertIsNone(q.pop(timeout=0, now=1))
 
+    def test_pop_waits_for_next_message(self):
+        q = twitch_chat.LatestQueue(max_age_s=90)
+        threading.Timer(0.05, q.push, args=(msg("!nao tard"), "tard")).start()
+        self.assertEqual(q.pop(timeout=2, now=0)[1], "tard")
+
     def test_old_messages_dropped(self):
-        q = twitch_chat.LatestQueue(maxlen=5, max_age_s=60)
+        q = twitch_chat.LatestQueue(max_age_s=60)
         q.push(msg("!nao vieux", t=0), "vieux")
-        q.push(msg("!nao récent", t=50), "récent")
-        self.assertEqual(q.pop(timeout=0, now=100)[1], "récent")
+        self.assertIsNone(q.pop(timeout=0, now=100))
 
     def test_prompt(self):
         self.assertEqual(twitch_chat.brain_prompt(msg("x", user="Joa"), "salut"),

@@ -4,8 +4,9 @@ twitch_chat.py — Règles du tchat Twitch sans réseau ni dépendance (testable
   - lecture d'une ligne IRC Twitch (tags, pseudo, canal, texte)
   - commande « !nao » : seuls ces messages sont pris en compte
   - filtres anti-abus : longueur, liens, mots interdits, bots, délai par spectateur
-  - file courte « les plus récents gagnent » : en cas de rafale, les vieux
-    messages sont abandonnés plutôt que de faire attendre le stream
+  - case unique « dernier message » : dès que le robot est libre, il répond au
+    message le plus récent ; ceux arrivés entre-temps sont abandonnés plutôt
+    que de faire attendre le stream
 
 Le tchat est une source que le streamer ne contrôle pas : tout ce qui passe ici
 finit dans le prompt du LLM puis à l'antenne.  Les filtres restent volontairement
@@ -13,7 +14,6 @@ simples (ADR 005) ; le prompt de body-gateway rappelle au LLM que ces messages n
 sont pas des ordres.
 """
 
-import collections
 import re
 import threading
 import time
@@ -148,21 +148,26 @@ class ChatFilter:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class LatestQueue:
-    """Bounded queue where a burst drops the oldest messages.
+    """Single slot: only the most recent message waits for the robot.
 
-    pop() also discards messages older than max_age_s: answering a question
-    asked minutes ago makes no sense on a live stream.
+    push() overwrites the waiting message, so as soon as the robot is free,
+    pop() returns the latest one received.  Messages that arrived in between
+    are dropped: on a live stream, answering the last question right away is
+    better than answering the backlog late.  pop() also discards a message
+    older than max_age_s.
     """
 
-    def __init__(self, maxlen: int = 5, max_age_s: float = 90.0):
-        self._items: collections.deque = collections.deque(maxlen=maxlen)
+    def __init__(self, max_age_s: float = 90.0):
+        self._item: tuple[ChatMessage, str] | None = None
         self._max_age_s = max_age_s
         self._cond = threading.Condition()
 
-    def push(self, item: ChatMessage, question: str):
+    def push(self, item: ChatMessage, question: str) -> tuple[ChatMessage, str] | None:
+        """Put the message in the slot; return the one it replaced, if any."""
         with self._cond:
-            self._items.append((item, question))
+            replaced, self._item = self._item, (item, question)
             self._cond.notify()
+            return replaced
 
     def pop(self, timeout: float | None = None, now: float | None = None):
         """Return (ChatMessage, question) or None after `timeout` seconds."""
@@ -170,8 +175,9 @@ class LatestQueue:
             deadline = None if timeout is None else time.monotonic() + timeout
             while True:
                 current = time.monotonic() if now is None else now
-                while self._items:
-                    item, question = self._items.popleft()
+                if self._item is not None:
+                    item, question = self._item
+                    self._item = None
                     if current - item.received_at <= self._max_age_s:
                         return item, question
                 remaining = None if deadline is None else deadline - time.monotonic()
@@ -181,7 +187,7 @@ class LatestQueue:
 
     def __len__(self) -> int:
         with self._cond:
-            return len(self._items)
+            return 0 if self._item is None else 1
 
 
 def brain_prompt(msg: ChatMessage, question: str) -> str:

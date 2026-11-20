@@ -144,6 +144,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `/chat` | POST | Path 1: `{"text": "...", "robot_id": "nao_01"}` → Ollama → JSON actions |
 | `/say` | POST | Direct TTS without Ollama: `{"text": "...", "robot_id": "nao_01"}` |
 | `/voice-pop` | GET | Path 2: retrieve pre-computed voice result (avoids double inference) |
+| `/speaking` | GET | `{"speaking": bool}`: true until the last answer has been spoken (each connected voice reports `sensors/speaking`; a NAO speaking alone counts for the estimated duration). twitch-input waits on it before the next message |
 | `/motion-command` | POST | Direct `motion_engine` payload without the LLM: `{"arousal", "valence", ...}` → `/motion_engine/command` |
 
 **Environment variables:**
@@ -164,6 +165,8 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `LLM_MOTION` | `1` (default): the LLM may send `motion` / `look`, and the NAO head turns toward each voice. `0`: NAO only moves through learned gestures; the prompt has no `motion` / `look`, those actions are dropped, no raw `HeadYaw` toward a voice, no motion_engine command; in `nao-core` the same variable sets the NAO driver's `RAW_MOTION`, which drops every joint order and stiffness change that is not a learned gesture (cognitive_renderer head animations included, LEDs stay) — the static drone reacts by [reflex](../robotics/drones/static/onboard/README.md#reflex) |
 | `SPEECH_GESTURE_SYNC` | `1` (default): a sentence said by the static drone and the learned gesture of the same answer start together, and the gesture lasts as long as the sentence ([details](../robotics/drones/static/onboard/README.md#speech--gesture-synchronisation)); the start offset is set on the drone (`GESTURE_SPEECH_OFFSET_MS`) |
 | `SPEECH_CHARS_PER_S` | Speech rate used to estimate a sentence length until the measured one arrives, default 14 |
+| `SPEECH_START_GRACE_S` | `GET /speaking`: a sentence a connected voice has not started after this delay counts as spoken, default 10 |
+| `SPEAKING_MAX_S` | `GET /speaking`: a `speaking=true` without its `false` stops counting after this delay, default 120 |
 | `DREAMING_HOUR_START/END` | Dream window, default 2 / 6 |
 | `DREAMING_BATTERY_THRESHOLD` | Minimum battery % to dream, default 80.0 |
 | `DREAM_TICK_INTERVAL` | Seconds between dream ticks, default 300 |
@@ -186,17 +189,16 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 ### twitch-input
 
 **Image:** `$DOCKERHUB_USERNAME/twitch-input:latest` — **Code:** `robotics/inputs/twitch/`
-**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time.
+**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is free it answers the newest one, and messages received in between are dropped. The robot is free when the answer has been spoken: after each `/chat`, twitch-input polls `GET /speaking` on body-gateway (every `POLL_S` = 0.3 s, at most `SPEAKING_WAIT_MAX_S` = 120 s).
 
 | Variable (compose name) | Description |
 |---|---|
 | `TWITCH_CHANNEL` | Channel to read, **required** (the container exits without it) |
 | `COMMAND_PREFIX` (`TWITCH_COMMAND_PREFIX`) | default `!nao` (`!naomi` is not a match) |
 | `USER_COOLDOWN_S` (`TWITCH_USER_COOLDOWN_S`) | Seconds between two accepted messages of one viewer, default 30 |
-| `MIN_INTERVAL_S` (`TWITCH_MIN_INTERVAL_S`) | Pause after each answer, default 5 |
 | `BLOCKLIST` (`TWITCH_BLOCKLIST`) | Comma-separated forbidden words |
 | `MODS_ONLY` (`TWITCH_MODS_ONLY`) | `1` = moderators and broadcaster only, default 0 |
-| `MAX_CHARS`, `QUEUE_MAX`, `MAX_AGE_S`, `IGNORED_USERS` | Not in the compose file: 200 characters, 5 queued messages, 90 s, `nightbot,streamelements,moobot` |
+| `MAX_CHARS`, `MAX_AGE_S`, `IGNORED_USERS`, `POLL_S`, `SPEAKING_WAIT_MAX_S` | Not in the compose file: 200 characters, 90 s, `nightbot,streamelements,moobot`, 0.3 s, 120 s |
 
 ---
 
