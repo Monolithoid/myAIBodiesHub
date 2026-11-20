@@ -63,7 +63,6 @@ version: "3.8"
 #
 # Twitch and stream voice (ADR 005):
 #   TWITCH_CHANNEL           : channel whose chat is read (e.g. monolithoid)
-#   TWITCH_USER_COOLDOWN_S   : delay between two accepted messages from one viewer (default: 30)
 #   TWITCH_BLOCKLIST         : banned words separated by commas (default: empty)
 #   TWITCH_MODS_ONLY         : 1 = only moderators and the streamer can call !nao (default: 0)
 #   OBS_DRONE_ID             : obs_01 (ROS2 identifier of the stream voice)
@@ -498,7 +497,6 @@ services:
       - BODY_GATEWAY_URL=http://chat-relay:8095
       - ROBOT_ID=${NAO_ROBOT_ID:-nao_01}
       - COMMAND_PREFIX=${TWITCH_COMMAND_PREFIX:-!nao}
-      - USER_COOLDOWN_S=${TWITCH_USER_COOLDOWN_S:-30}
       - BLOCKLIST=${TWITCH_BLOCKLIST:-}
       - MODS_ONLY=${TWITCH_MODS_ONLY:-0}
     networks:

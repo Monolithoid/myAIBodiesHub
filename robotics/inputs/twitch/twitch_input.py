@@ -24,8 +24,6 @@ Environment variables:
   ROBOT_ID              body named in /chat, default "nao_01"
   COMMAND_PREFIX        default "!nao"
   MAX_CHARS             longest question kept, default 200
-  USER_COOLDOWN_S       seconds after a viewer's answered message before the next one is
-                        accepted, default 30 (none for the broadcaster)
   MAX_AGE_S             older messages are dropped, default 90
   POLL_S                seconds between two GET /speaking, default 0.3
   SPEAKING_WAIT_MAX_S   longest wait for the end of an answer, default 120
@@ -56,7 +54,6 @@ BODY_GATEWAY_URL = os.environ.get("BODY_GATEWAY_URL", "http://chat-relay:8095").
 ROBOT_ID         = os.environ.get("ROBOT_ID", "nao_01")
 COMMAND_PREFIX   = os.environ.get("COMMAND_PREFIX", "!nao")
 MAX_CHARS        = int(os.environ.get("MAX_CHARS", "200"))
-USER_COOLDOWN_S  = float(os.environ.get("USER_COOLDOWN_S", "30"))
 MAX_AGE_S        = float(os.environ.get("MAX_AGE_S", "90"))
 POLL_S           = float(os.environ.get("POLL_S", "0.3"))
 SPEAKING_WAIT_MAX_S = float(os.environ.get("SPEAKING_WAIT_MAX_S", "120"))
@@ -119,13 +116,12 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
 # Worker: as soon as the robot is free, the latest message → brain
 # ─────────────────────────────────────────────────────────────────────────────
 
-def worker_loop(inbox: twitch_chat.LatestQueue, chat_filter: twitch_chat.ChatFilter):
+def worker_loop(inbox: twitch_chat.LatestQueue):
     while True:
         item = inbox.pop()
         if item is None:
             continue
         msg, question = item
-        chat_filter.sent(msg)
         try:
             # Same entry point as Open WebUI: the brain dispatches the actions itself.
             resp = requests.post(
@@ -170,13 +166,13 @@ def main():
         log("ERREUR : TWITCH_CHANNEL est obligatoire")
         sys.exit(1)
     chat_filter = twitch_chat.ChatFilter(
-        prefix=COMMAND_PREFIX, max_chars=MAX_CHARS, user_cooldown_s=USER_COOLDOWN_S,
+        prefix=COMMAND_PREFIX, max_chars=MAX_CHARS,
         blocklist=BLOCKLIST, ignored_users=IGNORED_USERS, mods_only=MODS_ONLY,
     )
     inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S)
     threading.Thread(target=irc_loop, args=(chat_filter, inbox), daemon=True).start()
     log(f"tchat #{TWITCH_CHANNEL} → {BODY_GATEWAY_URL}/chat")
-    worker_loop(inbox, chat_filter)
+    worker_loop(inbox)
 
 
 if __name__ == "__main__":
