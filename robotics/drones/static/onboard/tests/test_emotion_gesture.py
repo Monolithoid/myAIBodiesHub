@@ -47,6 +47,7 @@ class Gesture(object):
     def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations):
         self.joints, self.times, self.positions, self.report = joints, times, positions, report
         self.notes = notes
+        self.inputs = inputs
     @property
     def ok(self):
         return self.report.ok
@@ -73,6 +74,10 @@ class GestureGenerator(object):
             self.adapt_generated = True   # exporté avec nao-emotion-motion#62 ou plus récent
         self.info = {"models": {"arms": {"run": "arms-1"}}, "calibration": {"calibration_version": "cal-1"}}
         self.calls = []
+        self.kwargs = []
+        if data.get("cvae"):
+            self.latent_dims = {"arms": 4, "head": 4}
+        self.refuse_drawn = set(data.get("refuse_drawn", []))
     @classmethod
     def load(cls, path):
         with open(path) as f:
@@ -82,15 +87,21 @@ class GestureGenerator(object):
     def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None):
         return ["LShoulderPitch"], [0.0, 1.0], [[0.8], [0.9]], {"notes": [], "durations": {}}
     def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
-                 variation=0.0, seed=None):
+                 variation=0.0, seed=None, **kw):
         self.calls.append((emotion, intensity, event, dict(current_pose or {}), from_rest, return_to))
+        self.kwargs.append(dict(kw, event=event, seed=seed, variation=variation))
         self.gesture(emotion, intensity, event, variation, seed)
         joints = ["LShoulderPitch", "HeadYaw"]
         start = self.guardian.pose("start")
         q0 = [current_pose[j] for j in joints]
         rows = [q0, [x + 0.1 for x in q0], [start[j] for j in joints]]
         ok = emotion not in self.refuse and not (event and emotion in self.refuse_with_event)
-        return Gesture(joints, [0.0, 0.5, 1.0], rows, _Report(ok, "" if ok else "velocity"), None, [], {},
+        ok = ok and not (emotion in self.refuse_drawn and kw.get("temperature") != 0.0)
+        inputs = {}
+        if getattr(self, "latent_dims", None):
+            t = kw.get("temperature", 1.0)
+            inputs = {"temperature": t, "latent": {"arms": [0.0] * 4 if t == 0.0 else [(seed or 0) % 7, 0.0, 0.0, 0.0]}}
+        return Gesture(joints, [0.0, 0.5, 1.0], rows, _Report(ok, "" if ok else "velocity"), None, [], inputs,
                        ["note"], {})
 '''
 
@@ -272,6 +283,55 @@ class TestService(Base):
         self.assertIsNone(s.gen.calls[-1][2])
         sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"]
         self.assertEqual(sent[-1]["retry"], "sans événement")
+
+    def _sent(self):
+        return [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"]
+
+    def test_cvae_draws_a_new_gesture_each_time(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, cvae=True)).encode()
+        s = self.service(latent_temperature=0.8)
+        seeds = []
+        for gid in ("a", "b"):
+            s.on_request({"id": gid, "emotion": "joy", "intensity": 0.5})
+            s.step()
+            kw = s.gen.kwargs[-1]
+            self.assertEqual(kw["temperature"], 0.8)
+            seeds.append(kw["seed"])
+            s.on_trajectory_state({"id": gid, "state": "done"})
+        self.assertNotEqual(seeds[0], seeds[1])
+        sent = self._sent()
+        self.assertEqual([d["id"] for d in sent], ["a", "b"])
+        self.assertEqual(sent[-1]["temperature"], 0.8)
+        self.assertIsNone(sent[-1]["retry"])
+        self.assertIn("arms", sent[-1]["latent"])
+
+    def test_cvae_default_temperature_is_the_generator_one(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, cvae=True)).encode()
+        s = self.service()
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})
+        s.step()
+        self.assertNotIn("temperature", {k: v for k, v in s.gen.kwargs[-1].items() if k != "event"})
+        self.assertIsNotNone(s.gen.kwargs[-1]["seed"])
+
+    def test_cvae_refused_draws_fall_back_to_the_central_gesture(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, cvae=True, refuse_drawn=["fear"])).encode()
+        s = self.service()
+        s.on_request({"id": "a", "emotion": "fear", "intensity": 0.5, "event": {"azimuth_deg": 20}})
+        s.step()
+        tried = s.gen.kwargs[-4:]
+        self.assertEqual([k["event"] for k in tried], [{"azimuth_deg": 20}, None, {"azimuth_deg": 20},
+                                                       {"azimuth_deg": 20}])
+        self.assertEqual(tried[0]["seed"], tried[1]["seed"])
+        self.assertNotEqual(tried[0]["seed"], tried[2]["seed"])
+        self.assertEqual(tried[3]["temperature"], 0.0)
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
+        self.assertEqual(self._sent()[-1]["retry"], "geste central")
+
+    def test_plain_generator_keeps_the_former_tries(self):
+        s = self.service(latent_temperature=0.8)
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})
+        s.step()
+        self.assertEqual(s.gen.kwargs[-1], {"event": None, "seed": None, "variation": 0.0})
 
     def test_guardian_refusal_sends_nothing(self):
         self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, refuse=["fear"])).encode()
@@ -483,6 +543,12 @@ class TestReflex(Base):
     def test_parse_reflex(self):
         self.assertEqual(eg.parse_reflex("surprise:0.4"), ("surprise", 0.4))
         self.assertEqual(eg.parse_reflex("calm"), ("calm", 0.3))
+
+    def test_parse_temperature(self):
+        self.assertEqual(eg.parse_temperature("0.8"), 0.8)
+        self.assertEqual(eg.parse_temperature("0"), 0.0)
+        for bad in ("", " ", "x", "-1", "nan", "inf"):
+            self.assertIsNone(eg.parse_temperature(bad))
         self.assertIsNone(eg.parse_reflex(""))
         self.assertIsNone(eg.parse_reflex("off"))
 
