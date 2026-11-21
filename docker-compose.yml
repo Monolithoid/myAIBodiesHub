@@ -69,7 +69,8 @@ version: "3.8"
 #   TWITCH_CLIENT_ID         : Twitch app client id, to whisper "!rgpd" answers (optional)
 #   TWITCH_WHISPER_TOKEN     : user token (scope user:manage:whispers) of the account that
 #                              sends the "!rgpd" whispers (optional, empty = not sent)
-#   VIEWER_MEMORY            : 1 = NAO keeps a short profile per viewer (default: 1),
+#   VIEWER_MEMORY            : 1 = NAO keeps per viewer a one-sentence profile and the
+#                              last 5 messages with its answers (default: 1),
 #                              stored in /opt/ia/nao/viewers/viewers.db;
 #                              "!rgpd" whispers it to the viewer, "!reset" erases it
 #   OBS_DRONE_ID             : obs_01 (ROS2 identifier of the stream voice)

@@ -117,17 +117,25 @@ def viewer_command(text: str) -> str | None:
 WHISPER_MAX_CHARS = 500   # Twitch limit of a first whisper to a new recipient
 
 
-def rgpd_text(record: dict) -> str:
-    """Whisper answering '!rgpd': everything body-gateway stores about the viewer."""
+def _cut(text: str, max_chars: int = WHISPER_MAX_CHARS) -> str:
+    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+
+
+def rgpd_texts(record: dict) -> list[str]:
+    """Whispers answering '!rgpd': everything body-gateway stores about the viewer.
+
+    One whisper for the profile, then one per stored message (Twitch limits a
+    whisper to a new recipient to 500 characters).
+    """
     if not record:
-        text = "NAO ne garde rien sur toi."
-    else:
-        text = (f"Ce que NAO garde sur toi — profil : {record.get('profile') or '(vide)'}"
-                f" | dernier message : {record.get('last_message') or '(aucun)'}")
-    text += " | !reset pour tout effacer."
-    if len(text) > WHISPER_MAX_CHARS:
-        text = text[: WHISPER_MAX_CHARS - 1] + "…"
-    return text
+        return ["NAO ne garde rien sur toi."]
+    messages = record.get("messages") or []
+    texts = [_cut(f"Ce que NAO garde sur toi — profil : {record.get('profile') or '(vide)'}"
+                  f" | {len(messages)} dernier(s) message(s) ci-dessous | !reset pour tout effacer.")]
+    for i, item in enumerate(messages, 1):
+        answer = item.get("answer") or "(raté, pas de réponse)"
+        texts.append(_cut(f"{i}. toi : {item.get('message', '')} | NAO : {answer}"))
+    return texts
 
 
 def normalize(text: str) -> str:
@@ -186,18 +194,27 @@ class LatestQueue:
     pop() returns the latest one received.  Messages that arrived in between
     are dropped: on a live stream, answering the last question right away is
     better than answering the backlog late.  pop() also discards a message
-    older than max_age_s.
+    older than max_age_s.  on_drop(msg, question) is called for each dropped
+    message (replaced or too old), so body-gateway can keep it as missed; it
+    runs under the queue lock and must return at once.
     """
 
-    def __init__(self, max_age_s: float = 90.0):
+    def __init__(self, max_age_s: float = 90.0, on_drop=None):
         self._item: tuple[ChatMessage, str] | None = None
         self._max_age_s = max_age_s
+        self._on_drop = on_drop
         self._cond = threading.Condition()
+
+    def _dropped(self, item: tuple[ChatMessage, str]):
+        if self._on_drop is not None:
+            self._on_drop(*item)
 
     def push(self, item: ChatMessage, question: str) -> tuple[ChatMessage, str] | None:
         """Put the message in the slot; return the one it replaced, if any."""
         with self._cond:
             replaced, self._item = self._item, (item, question)
+            if replaced is not None:
+                self._dropped(replaced)
             self._cond.notify()
             return replaced
 
@@ -212,6 +229,7 @@ class LatestQueue:
                     self._item = None
                     if current - item.received_at <= self._max_age_s:
                         return item, question
+                    self._dropped((item, question))
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     return None

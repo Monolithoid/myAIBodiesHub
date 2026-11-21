@@ -37,16 +37,21 @@ class TestContext(unittest.TestCase):
 
     def test_first_message(self):
         self.assertEqual(viewers.context_lines("Bob", None),
-                         "[profil de Bob : inconnu, premier message]")
+                         "[profil de Bob : inconnu]\n[premier message de Bob]")
 
-    def test_known_viewer(self):
-        lines = viewers.context_lines("Bob", {"profile": "Aime la danse.",
-                                              "last_message": "tu danses ?"})
+    def test_known_viewer_with_missed_message(self):
+        lines = viewers.context_lines("Bob", {"profile": "Aime la danse.", "messages": [
+            {"message": "tu danses ?", "answer": "Oui, regarde !"},
+            {"message": "et le rock ?", "answer": ""},
+        ]})
         self.assertEqual(lines, "[profil de Bob : Aime la danse.]\n"
-                                "[son message précédent : tu danses ?]")
+                                "[échanges précédents avec Bob]\n"
+                                '- Bob : "tu danses ?" → NAO : "Oui, regarde !"\n'
+                                '- Bob : "et le rock ?" → (raté, tu n\'as pas répondu)')
 
-    def test_rules_ask_for_profile_last_and_no_rights(self):
+    def test_rules_ask_for_one_sentence_last_and_no_rights(self):
         self.assertIn('"profil"', viewers.PROMPT_RULES)
+        self.assertIn("UNE seule phrase", viewers.PROMPT_RULES)
         self.assertIn("DERNIER", viewers.PROMPT_RULES)
         self.assertIn("modérateur", viewers.PROMPT_RULES)
 
@@ -61,38 +66,49 @@ class TestStore(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
-    def test_save_and_get(self):
+    def test_record_and_get(self):
         self.assertIsNone(self.store.get("bob"))
-        self.store.save("Bob", "Bob", "salut", "Nouveau, poli.")
+        self.store.record("Bob", "Bob", "salut", "Salut Bob !", "Nouveau, poli.")
         rec = self.store.get("BOB")
         self.assertEqual(rec["profile"], "Nouveau, poli.")
-        self.assertEqual(rec["last_message"], "salut")
         self.assertEqual(rec["display_name"], "Bob")
+        self.assertEqual([(m["message"], m["answer"]) for m in rec["messages"]],
+                         [("salut", "Salut Bob !")])
 
     def test_none_profile_keeps_old_one(self):
-        self.store.save("bob", "Bob", "salut", "Aime les robots.")
-        self.store.save("bob", "Bob", "tu danses ?", None)
-        rec = self.store.get("bob")
-        self.assertEqual(rec["profile"], "Aime les robots.")
-        self.assertEqual(rec["last_message"], "tu danses ?")
+        self.store.record("bob", "Bob", "salut", "Salut", "Aime les robots.")
+        self.store.record("bob", "Bob", "tu danses ?", "Oui", None)
+        self.assertEqual(self.store.get("bob")["profile"], "Aime les robots.")
 
-    def test_first_message_without_profile(self):
-        self.store.save("bob", "Bob", "salut", None)
-        self.assertEqual(self.store.get("bob")["profile"], "")
+    def test_missed_message(self):
+        self.store.record("bob", "Bob", "salut")
+        rec = self.store.get("bob")
+        self.assertEqual(rec["profile"], "")
+        self.assertEqual(rec["messages"][0]["answer"], "")
+
+    def test_keeps_last_five_oldest_first(self):
+        for i in range(8):
+            self.store.record("bob", "Bob", f"m{i}", f"r{i}" if i % 2 else "")
+        self.store.record("alice", "Alice", "autre")
+        msgs = self.store.get("bob")["messages"]
+        self.assertEqual([m["message"] for m in msgs], ["m3", "m4", "m5", "m6", "m7"])
+        self.assertEqual(msgs[0]["answer"], "r3")
+        self.assertEqual(msgs[1]["answer"], "")
+        self.assertEqual(len(self.store.get("alice")["messages"]), 1)
 
     def test_delete(self):
-        self.store.save("bob", "Bob", "salut", "x")
+        self.store.record("bob", "Bob", "salut", "x", "p")
         self.assertTrue(self.store.delete("Bob"))
         self.assertIsNone(self.store.get("bob"))
         self.assertFalse(self.store.delete("bob"))
 
     def test_persists_on_disk(self):
-        self.store.save("bob", "Bob", "salut", "x")
-        self.assertEqual(viewers.ViewerStore(self.path).get("bob")["profile"], "x")
+        self.store.record("bob", "Bob", "salut", "x", "p")
+        self.assertEqual(viewers.ViewerStore(self.path).get("bob")["profile"], "p")
 
     def test_threads(self):
         def write(i):
-            self.store.save(f"user{i}", f"U{i}", "msg", f"profil {i}")
+            self.store.record(f"user{i}", f"U{i}", "msg", "r", f"profil {i}")
         threads = [threading.Thread(target=write, args=(i,)) for i in range(20)]
         for t in threads:
             t.start()
