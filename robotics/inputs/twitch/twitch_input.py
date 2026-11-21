@@ -176,7 +176,7 @@ def viewer_command(command: str, msg: twitch_chat.ChatMessage):
             resp = requests.post(f"{BODY_GATEWAY_URL}/viewers/reset",
                                  json={"login": msg.user}, timeout=10)
             resp.raise_for_status()
-            log(f"!reset de {msg.display_name} : profil effacé ({resp.json().get('deleted')})")
+            log(f"!reset from {msg.display_name}: memory erased ({resp.json().get('deleted')})")
         elif command == "rgpd":
             resp = requests.get(f"{BODY_GATEWAY_URL}/viewers/{quote(msg.user)}", timeout=10)
             resp.raise_for_status()
@@ -186,7 +186,7 @@ def viewer_command(command: str, msg: twitch_chat.ChatMessage):
                 if not send_whisper(msg, text):
                     break
     except (requests.RequestException, ValueError, KeyError, IndexError) as e:
-        log(f"!{command} de {msg.display_name} en erreur : {e}")
+        log(f"!{command} from {msg.display_name} failed: {e}")
 
 
 def report_missed(msg: twitch_chat.ChatMessage, question: str):
@@ -200,7 +200,7 @@ def _post_missed(msg: twitch_chat.ChatMessage, question: str):
             "login": msg.user, "name": msg.display_name, "message": question,
         }).raise_for_status()
     except requests.RequestException as e:
-        log(f"message raté de {msg.display_name} non mémorisé : {e}")
+        log(f"missed message from {msg.display_name} not stored: {e}")
 
 
 _whisper_sender_id = ""
@@ -210,11 +210,11 @@ def send_whisper(msg: twitch_chat.ChatMessage, text: str) -> bool:
     """Private message through the Twitch API: the profile never goes to public chat."""
     global _whisper_sender_id
     if not (TWITCH_CLIENT_ID and TWITCH_WHISPER_TOKEN):
-        log(f"!rgpd de {msg.display_name} : whisper non configuré "
-            "(TWITCH_CLIENT_ID / TWITCH_WHISPER_TOKEN), rien envoyé")
+        log(f"!rgpd from {msg.display_name}: whispers not configured "
+            "(TWITCH_CLIENT_ID / TWITCH_WHISPER_TOKEN), nothing sent")
         return False
     if not msg.user_id:
-        log(f"!rgpd de {msg.display_name} : identifiant Twitch inconnu, rien envoyé")
+        log(f"!rgpd from {msg.display_name}: unknown Twitch user id, nothing sent")
         return False
     headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {TWITCH_WHISPER_TOKEN}"}
     if not _whisper_sender_id:
@@ -228,9 +228,9 @@ def send_whisper(msg: twitch_chat.ChatMessage, text: str) -> bool:
         headers=headers, json={"message": text}, timeout=10,
     )
     if resp.status_code != 204:
-        log(f"!rgpd : whisper à {msg.display_name} refusé ({resp.status_code}) {resp.text[:200]}")
+        log(f"!rgpd: whisper to {msg.display_name} refused ({resp.status_code}) {resp.text[:200]}")
         return False
-    log(f"!rgpd : whisper envoyé à {msg.display_name}")
+    log(f"!rgpd: whisper sent to {msg.display_name}")
     return True
 
 

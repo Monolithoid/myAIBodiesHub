@@ -454,14 +454,14 @@ class BodyGatewayNode(Node):
     def _open_viewer_store(self):
         """Twitch viewer memory (viewers.py); None when disabled or unusable."""
         if not VIEWER_DB:
-            self.get_logger().info("Mémoire des spectateurs désactivée (VIEWER_DB vide)")
+            self.get_logger().info("Viewer memory disabled (VIEWER_DB empty)")
             return None
         try:
             store = viewers.ViewerStore(VIEWER_DB, VIEWER_PROFILE_MAX, VIEWER_HISTORY)
         except Exception as e:
-            self.get_logger().error(f"Mémoire des spectateurs indisponible ({VIEWER_DB}) : {e}")
+            self.get_logger().error(f"Viewer memory unavailable ({VIEWER_DB}): {e}")
             return None
-        self.get_logger().info(f"Mémoire des spectateurs : {VIEWER_DB} ({len(store)} profils)")
+        self.get_logger().info(f"Viewer memory: {VIEWER_DB} ({len(store)} viewers)")
         return store
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -876,7 +876,7 @@ class BodyGatewayNode(Node):
                     self._json(503, {"error": "viewer memory disabled"})
                     return
                 deleted = node._viewers.delete(login)
-                node.get_logger().info(f"Profil de {login} effacé (!reset) : {deleted}")
+                node.get_logger().info(f"Viewer {login} erased (!reset): {deleted}")
                 self._json(200, {"ok": True, "deleted": deleted})
 
             def _viewer_missed(self):
@@ -1095,7 +1095,7 @@ class BodyGatewayNode(Node):
             self._viewers.record(login, str(viewer.get("name") or login),
                                  str(viewer.get("message") or ""), answer, profile)
         except Exception as e:
-            self.get_logger().error(f"Mémoire des spectateurs : {e}")
+            self.get_logger().error(f"Viewer memory: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Asynchronous inference (sonar proximity, bumper touch, dream ticks)

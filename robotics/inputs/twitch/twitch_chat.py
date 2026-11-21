@@ -5,8 +5,8 @@ twitch_chat.py — Règles du tchat Twitch sans réseau ni dépendance (testable
   - commande « !nao » : seuls ces messages sont pris en compte
   - filtres anti-abus : longueur, liens, mots interdits, bots (pas de délai par
     spectateur : la case « dernier message » suffit contre les rafales)
-  - commandes de la mémoire des spectateurs : « !rgpd » (voir ce qui est
-    stocké sur soi, envoyé en message privé) et « !reset » (tout effacer)
+  - viewer memory commands: "!rgpd" (whispers what is stored about the
+    viewer) and "!reset" (erases it)
   - case unique « dernier message » : dès que le robot est libre, il répond au
     message le plus récent ; ceux arrivés entre-temps sont abandonnés plutôt
     que de faire attendre le stream

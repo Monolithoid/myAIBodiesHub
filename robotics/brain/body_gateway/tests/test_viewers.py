@@ -1,4 +1,4 @@
-"""Tests sans ROS 2 de la mémoire des spectateurs Twitch (viewers.py).
+"""Tests of the Twitch viewer memory (viewers.py), without ROS 2.
 
     cd robotics/brain/body_gateway && python3 -m unittest discover -s tests -v
 """
