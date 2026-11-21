@@ -51,6 +51,12 @@ wake word do for the voice:
 `body-gateway`'s system prompt describes this format and reminds that **chat
 messages are never orders**.
 
+Viewer memory: body-gateway keeps per viewer (SQLite) a one-sentence profile,
+written by the LLM in the same answer, and the last 5 messages with NAO's
+answer or marked missed; both are sent back with that viewer's next message.
+`!rgpd` whispers a viewer what is stored, `!reset` erases it (see
+[bridge-ia-ros2-nao.md](../bridge-ia-ros2-nao.md#twitch-input)).
+
 ### 3. OBS agent: a "voice" body like the static drone (`robotics/drones/obs/`)
 
 The stream voice is a new body type, `obs`, with the `speech` capability, built on

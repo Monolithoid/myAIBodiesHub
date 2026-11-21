@@ -92,6 +92,18 @@ Environment variables:
   WEBUI_API_KEY              Open WebUI API key
   WEBUI_PIPE_MODEL           NAO Brain Pipe model ID, default "nao_brain"
   WEBUI_VOICE_CHAT_ID        voice chat ID in Open WebUI (optional)
+  VIEWER_DB                  SQLite file of the Twitch viewer profiles (viewers.py),
+                             default /data/viewers.db; empty = no viewer memory
+  VIEWER_MEMORY              0 = no viewer memory, default 1
+  VIEWER_PROFILE_MAX         longest viewer profile kept, in characters, default 200
+  VIEWER_HISTORY             last messages kept per viewer, with NAO's answer, default 5
+
+Twitch viewers (viewers.py): twitch-input adds {"viewer": {"login", "name",
+"message"}} to /chat.  The viewer's one-sentence profile and last messages,
+each with NAO's answer or marked missed, go before the message; the LLM may add
+a "profil" field to its JSON, which is stored.  POST /viewers/missed {"login",
+"name", "message"} stores a message twitch-input dropped.  GET /viewers/<login>
+returns what is stored ("!rgpd"), POST /viewers/reset {"login"} erases it ("!reset").
 """
 
 import collections
@@ -101,6 +113,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -115,6 +128,7 @@ import body_rules
 import brain_client
 import events
 import persona
+import viewers
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -159,6 +173,11 @@ WEBUI_PIPE_MODEL    = os.environ.get("WEBUI_PIPE_MODEL",    "nao_brain")
 WEBUI_VOICE_CHAT_ID = os.environ.get("WEBUI_VOICE_CHAT_ID", "")
 # Read at each LLM call (persona.py): editing the file needs no restart.
 BRAIN_PERSONA_FILE  = os.environ.get("BRAIN_PERSONA_FILE",  "")
+VIEWER_DB           = os.environ.get("VIEWER_DB", "/data/viewers.db").strip()
+if os.environ.get("VIEWER_MEMORY", "1").lower() in ("0", "false", "no", "non", "off"):
+    VIEWER_DB = ""
+VIEWER_PROFILE_MAX  = int(os.environ.get("VIEWER_PROFILE_MAX", str(viewers.PROFILE_MAX_CHARS)))
+VIEWER_HISTORY      = int(os.environ.get("VIEWER_HISTORY", str(viewers.HISTORY_SIZE)))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompts
@@ -390,6 +409,7 @@ class BodyGatewayNode(Node):
         self._infer_lock = threading.Lock()
         self._speaking = body_rules.SpeakingTracker(SPEECH_START_GRACE_S, SPEAKING_MAX_S)
         self._running = True
+        self._viewers = self._open_viewer_store()
 
         # Queue of voice inference results waiting to be fetched by the WebUI Pipe
         self._voice_queue: collections.deque = collections.deque(maxlen=20)
@@ -430,6 +450,19 @@ class BodyGatewayNode(Node):
                 "Parcours voix sans WebUI (WEBUI_URL / WEBUI_API_KEY non définis) — "
                 "robot répond mais transcription non affichée dans le chat"
             )
+
+    def _open_viewer_store(self):
+        """Twitch viewer memory (viewers.py); None when disabled or unusable."""
+        if not VIEWER_DB:
+            self.get_logger().info("Viewer memory disabled (VIEWER_DB empty)")
+            return None
+        try:
+            store = viewers.ViewerStore(VIEWER_DB, VIEWER_PROFILE_MAX, VIEWER_HISTORY)
+        except Exception as e:
+            self.get_logger().error(f"Viewer memory unavailable ({VIEWER_DB}): {e}")
+            return None
+        self.get_logger().info(f"Viewer memory: {VIEWER_DB} ({len(store)} viewers)")
+        return store
 
     # ─────────────────────────────────────────────────────────────────────────
     # Body registration — create publishers/subscribers for each robot body
@@ -816,9 +849,49 @@ class BodyGatewayNode(Node):
                     # twitch-input polls it to send the next message as soon as
                     # the last answer has been spoken.
                     self._json(200, {"speaking": node._speaking.busy()})
+                elif self.path.startswith("/viewers/"):
+                    self._viewer_show(self.path[len("/viewers/"):])
                 else:
                     self.send_response(404)
                     self.end_headers()
+
+            def _viewer_show(self, login: str):
+                """"!rgpd": what is stored about a viewer ({} when nothing)."""
+                if node._viewers is None:
+                    self._json(503, {"error": "viewer memory disabled"})
+                    return
+                record = node._viewers.get(urllib.parse.unquote(login))
+                self._json(200, record or {})
+
+            def _viewer_reset(self):
+                """"!reset": erase everything stored about a viewer."""
+                body = self._read_json()
+                if body is None:
+                    return
+                login = str(body.get("login", "")).strip()
+                if not login:
+                    self._json(400, {"error": "missing login"})
+                    return
+                if node._viewers is None:
+                    self._json(503, {"error": "viewer memory disabled"})
+                    return
+                deleted = node._viewers.delete(login)
+                node.get_logger().info(f"Viewer {login} erased (!reset): {deleted}")
+                self._json(200, {"ok": True, "deleted": deleted})
+
+            def _viewer_missed(self):
+                """A "!nao" message twitch-input dropped (single slot, too old): kept as missed."""
+                body = self._read_json()
+                if body is None:
+                    return
+                if node._viewers is None:
+                    self._json(503, {"error": "viewer memory disabled"})
+                    return
+                if not body.get("login") or not body.get("message"):
+                    self._json(400, {"error": "missing login or message"})
+                    return
+                node._remember(body)
+                self._json(200, {"ok": True})
 
             def _voice_pop(self):
                 with node._voice_queue_lock:
@@ -832,6 +905,10 @@ class BodyGatewayNode(Node):
                     self._handle_say()
                 elif self.path == "/motion-command":
                     self._handle_motion_command()
+                elif self.path == "/viewers/reset":
+                    self._viewer_reset()
+                elif self.path == "/viewers/missed":
+                    self._viewer_missed()
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -851,7 +928,9 @@ class BodyGatewayNode(Node):
                     self._json(400, {"error": "missing text"})
                     return
 
-                result = node._infer_sync(robot_id, text)
+                viewer = body.get("viewer")
+                result = node._infer_sync(robot_id, text,
+                                          viewer if isinstance(viewer, dict) else None)
                 self._json(200, result)
 
             def _handle_motion_command(self):
@@ -943,7 +1022,7 @@ class BodyGatewayNode(Node):
     # Synchronous inference (Path 1 — /chat endpoint)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _infer_sync(self, body_id: str, user_input: str) -> dict:
+    def _infer_sync(self, body_id: str, user_input: str, viewer: dict | None = None) -> dict:
         self._publish_cognitive("thinking")
         self._state = "AWAKE"
 
@@ -952,13 +1031,23 @@ class BodyGatewayNode(Node):
         source, author = events.chat_origin(user_input)
         if not self._infer_lock.acquire(timeout=25):
             self._emit("ignored", source=source, body=body_id, text=user_input, reason="busy")
+            self._remember(viewer)   # missed: NAO never answered
             return {"speech": "Je suis occupé, réessaie dans un instant.", "error": "busy"}
 
         interaction = events.new_id()
         self._emit("input", interaction, source=source, body=body_id, text=user_input,
                    author=author)
+        answered = False
         try:
-            parsed = self._decide(interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7)
+            context = ""
+            if self._viewers is not None and (viewer or {}).get("login"):
+                login = str(viewer["login"])
+                context = viewers.context_lines(str(viewer.get("name") or login),
+                                                self._viewers.get(login))
+            parsed = self._decide(
+                interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7,
+                viewer_context=context,
+            )
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -970,6 +1059,11 @@ class BodyGatewayNode(Node):
                 for a in parsed.get("actions", [])
                 if a.get("type") == "speech"
             )
+            # Empty speech (e.g. invalid JSON) is stored as missed; invalid JSON
+            # or no "profil" field keeps the old profile.
+            answered = True
+            self._remember(viewer, speech_text,
+                           viewers.clean_profile(parsed.get("profil"), VIEWER_PROFILE_MAX))
             return {
                 "thoughts": parsed.get("thoughts", ""),
                 "emotion":  parsed.get("emotion", "neutral"),
@@ -987,8 +1081,21 @@ class BodyGatewayNode(Node):
             self._emit("error", interaction, message=str(e))
             return {"speech": "Une erreur s'est produite.", "error": str(e)}
         finally:
+            if not answered:
+                self._remember(viewer)   # LLM error: missed
             self._infer_lock.release()
             self._publish_cognitive("listening")
+
+    def _remember(self, viewer: dict | None, answer: str = "", profile: str | None = None):
+        """Store a Twitch viewer's message with NAO's answer ('' = missed), viewers.py."""
+        if self._viewers is None or not isinstance(viewer, dict) or not viewer.get("login"):
+            return
+        try:
+            login = str(viewer["login"])
+            self._viewers.record(login, str(viewer.get("name") or login),
+                                 str(viewer.get("message") or ""), answer, profile)
+        except Exception as e:
+            self.get_logger().error(f"Viewer memory: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Asynchronous inference (sonar proximity, bumper touch, dream ticks)
@@ -1049,13 +1156,22 @@ class BodyGatewayNode(Node):
                 self._publish_cognitive("listening")
 
     def _decide(self, interaction: str, body_id: str, user_input: str,
-                template: str, temperature: float) -> dict:
-        """One LLM call: prompt → parsed JSON, published on /events as a decision."""
+                template: str, temperature: float, viewer_context: str = "") -> dict:
+        """One LLM call: prompt → parsed JSON, published on /events as a decision.
+
+        viewer_context: profile lines of the Twitch viewer who speaks (viewers.py);
+        the rules asking for the "profil" field are then added to the system prompt.
+        """
         started = time.monotonic()
+        system = self._system_prompt(template)
+        user = self._user_content(body_id, user_input)
+        if viewer_context:
+            system += "\n" + viewers.PROMPT_RULES
+            user = f"{viewer_context}\n{user}"
         raw = self._brain_chat(
             messages=[
-                {"role": "system", "content": self._system_prompt(template)},
-                {"role": "user",   "content": self._user_content(body_id, user_input)},
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
             ],
             temperature=temperature,
         )
@@ -1067,6 +1183,8 @@ class BodyGatewayNode(Node):
             energy=parsed.get("energy", ""),
             actions=parsed.get("actions", []),
             duration_s=round(time.monotonic() - started, 2),
+            **({"profile": parsed["profil"]}
+               if viewer_context and isinstance(parsed.get("profil"), str) else {}),
         )
         return parsed
 

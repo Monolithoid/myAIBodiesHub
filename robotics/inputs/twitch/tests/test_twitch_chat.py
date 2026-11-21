@@ -101,5 +101,48 @@ class TestQueue(unittest.TestCase):
                          "[tchat Twitch] Joa : salut")
 
 
+class TestViewerCommands(unittest.TestCase):
+
+    def test_commands(self):
+        self.assertEqual(twitch_chat.viewer_command("!rgpd"), "rgpd")
+        self.assertEqual(twitch_chat.viewer_command(" !RESET "), "reset")
+        for text in ("!reset tout", "!rgpdx", "!nao reset", "reset"):
+            self.assertIsNone(twitch_chat.viewer_command(text), text)
+
+    def test_user_id(self):
+        msg = twitch_chat.parse_privmsg(
+            "@display-name=Bob;user-id=1234 :bob!bob@bob.tmi.twitch.tv PRIVMSG #chan :!rgpd")
+        self.assertEqual(msg.user_id, "1234")
+
+    def test_rgpd_texts(self):
+        self.assertEqual(len(twitch_chat.rgpd_texts({})), 1)
+        self.assertIn("rien", twitch_chat.rgpd_texts({})[0])
+        texts = twitch_chat.rgpd_texts({"profile": "Aime la danse.", "messages": [
+            {"message": "tu danses ?", "answer": "Oui !"},
+            {"message": "et le rock ?", "answer": ""},
+        ]})
+        self.assertEqual(len(texts), 3)
+        self.assertIn("Aime la danse.", texts[0])
+        self.assertIn("!reset", texts[0])
+        self.assertIn("tu danses ?", texts[1])
+        self.assertIn("Oui !", texts[1])
+        self.assertIn("raté", texts[2])
+        long = twitch_chat.rgpd_texts({"profile": "x" * 900, "messages": [
+            {"message": "y", "answer": "z" * 900}]})
+        self.assertTrue(all(len(t) <= twitch_chat.WHISPER_MAX_CHARS for t in long))
+
+
+class TestDropped(unittest.TestCase):
+
+    def test_replaced_and_expired_are_reported(self):
+        dropped = []
+        q = twitch_chat.LatestQueue(max_age_s=10, on_drop=lambda m, q: dropped.append(q))
+        q.push(msg("!nao un", t=0.0), "un")
+        q.push(msg("!nao deux", t=1.0), "deux")
+        self.assertEqual(dropped, ["un"])
+        self.assertIsNone(q.pop(timeout=0, now=100.0))
+        self.assertEqual(dropped, ["un", "deux"])
+
+
 if __name__ == "__main__":
     unittest.main()

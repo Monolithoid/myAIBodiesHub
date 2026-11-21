@@ -30,6 +30,17 @@ Environment variables:
   BLOCKLIST             comma-separated forbidden words, default empty
   IGNORED_USERS         comma-separated logins, default "nightbot,streamelements,moobot"
   MODS_ONLY             1 = only moderators and the broadcaster, default 0
+  TWITCH_CLIENT_ID      Twitch app client id, for the "!rgpd" whisper (optional)
+  TWITCH_WHISPER_TOKEN  user token of the account that sends whispers, scope
+                        user:manage:whispers (optional; empty = "!rgpd" is only logged)
+
+Viewer memory (body-gateway viewers.py): every "!nao" message carries the
+viewer's login, name and question, body-gateway keeps a one-sentence profile
+and the last 5 messages of each viewer with NAO's answer; messages dropped by
+the single slot are sent to POST /viewers/missed and kept as missed.  Two chat commands, handled at once (never dropped by the queue):
+  !rgpd    whispers the viewer what is stored about them (never in public chat),
+           one whisper for the profile then one per message
+  !reset   erases it
 """
 
 import os
@@ -39,6 +50,7 @@ import ssl
 import sys
 import threading
 import time
+from urllib.parse import quote
 
 import requests
 
@@ -60,6 +72,9 @@ SPEAKING_WAIT_MAX_S = float(os.environ.get("SPEAKING_WAIT_MAX_S", "120"))
 BLOCKLIST        = _env_list("BLOCKLIST")
 IGNORED_USERS    = _env_list("IGNORED_USERS", "nightbot,streamelements,moobot")
 MODS_ONLY        = os.environ.get("MODS_ONLY", "0") == "1"
+TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "").strip()
+TWITCH_WHISPER_TOKEN = os.environ.get("TWITCH_WHISPER_TOKEN", "").strip().removeprefix("oauth:")
+HELIX_URL = "https://api.twitch.tv/helix"
 
 TWITCH_IRC_HOST = "irc.chat.twitch.tv"
 TWITCH_IRC_PORT = 6697
@@ -96,6 +111,10 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
                 msg = twitch_chat.parse_privmsg(line)
                 if msg is None:
                     continue
+                command = twitch_chat.viewer_command(msg.text)
+                if command and msg.user not in chat_filter.ignored_users:
+                    threading.Thread(target=viewer_command, args=(command, msg), daemon=True).start()
+                    continue
                 question, reason = chat_filter.check(msg)
                 if question is None:
                     if reason != "pas une commande":
@@ -126,7 +145,12 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
             # Same entry point as Open WebUI: the brain dispatches the actions itself.
             resp = requests.post(
                 f"{BODY_GATEWAY_URL}/chat",
-                json={"text": twitch_chat.brain_prompt(msg, question), "robot_id": ROBOT_ID},
+                json={
+                    "text": twitch_chat.brain_prompt(msg, question),
+                    "robot_id": ROBOT_ID,
+                    # body-gateway keeps a short profile per viewer (viewers.py).
+                    "viewer": {"login": msg.user, "name": msg.display_name, "message": question},
+                },
                 timeout=180,
             )
             resp.raise_for_status()
@@ -140,6 +164,74 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
                 log(f"réponse à {msg.display_name} : {(result.get('speech') or '')[:80]!r}")
         # The robot is free once the answer has been spoken, not after a fixed pause.
         wait_until_spoken()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Viewer memory: !rgpd (whisper what is stored) and !reset (erase it)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def viewer_command(command: str, msg: twitch_chat.ChatMessage):
+    try:
+        if command == "reset":
+            resp = requests.post(f"{BODY_GATEWAY_URL}/viewers/reset",
+                                 json={"login": msg.user}, timeout=10)
+            resp.raise_for_status()
+            log(f"!reset from {msg.display_name}: memory erased ({resp.json().get('deleted')})")
+        elif command == "rgpd":
+            resp = requests.get(f"{BODY_GATEWAY_URL}/viewers/{quote(msg.user)}", timeout=10)
+            resp.raise_for_status()
+            for i, text in enumerate(twitch_chat.rgpd_texts(resp.json())):
+                if i:
+                    time.sleep(0.5)   # Twitch: at most 3 whispers per second
+                if not send_whisper(msg, text):
+                    break
+    except (requests.RequestException, ValueError, KeyError, IndexError) as e:
+        log(f"!{command} from {msg.display_name} failed: {e}")
+
+
+def report_missed(msg: twitch_chat.ChatMessage, question: str):
+    """A dropped message stays in the viewer's memory as missed (no answer)."""
+    threading.Thread(target=_post_missed, args=(msg, question), daemon=True).start()
+
+
+def _post_missed(msg: twitch_chat.ChatMessage, question: str):
+    try:
+        requests.post(f"{BODY_GATEWAY_URL}/viewers/missed", timeout=10, json={
+            "login": msg.user, "name": msg.display_name, "message": question,
+        }).raise_for_status()
+    except requests.RequestException as e:
+        log(f"missed message from {msg.display_name} not stored: {e}")
+
+
+_whisper_sender_id = ""
+
+
+def send_whisper(msg: twitch_chat.ChatMessage, text: str) -> bool:
+    """Private message through the Twitch API: the profile never goes to public chat."""
+    global _whisper_sender_id
+    if not (TWITCH_CLIENT_ID and TWITCH_WHISPER_TOKEN):
+        log(f"!rgpd from {msg.display_name}: whispers not configured "
+            "(TWITCH_CLIENT_ID / TWITCH_WHISPER_TOKEN), nothing sent")
+        return False
+    if not msg.user_id:
+        log(f"!rgpd from {msg.display_name}: unknown Twitch user id, nothing sent")
+        return False
+    headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {TWITCH_WHISPER_TOKEN}"}
+    if not _whisper_sender_id:
+        # Without parameters, /users returns the account the token belongs to.
+        resp = requests.get(f"{HELIX_URL}/users", headers=headers, timeout=10)
+        resp.raise_for_status()
+        _whisper_sender_id = resp.json()["data"][0]["id"]
+    resp = requests.post(
+        f"{HELIX_URL}/whispers",
+        params={"from_user_id": _whisper_sender_id, "to_user_id": msg.user_id},
+        headers=headers, json={"message": text}, timeout=10,
+    )
+    if resp.status_code != 204:
+        log(f"!rgpd: whisper to {msg.display_name} refused ({resp.status_code}) {resp.text[:200]}")
+        return False
+    log(f"!rgpd: whisper sent to {msg.display_name}")
+    return True
 
 
 def wait_until_spoken():
@@ -169,7 +261,7 @@ def main():
         prefix=COMMAND_PREFIX, max_chars=MAX_CHARS,
         blocklist=BLOCKLIST, ignored_users=IGNORED_USERS, mods_only=MODS_ONLY,
     )
-    inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S)
+    inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S, on_drop=report_missed)
     threading.Thread(target=irc_loop, args=(chat_filter, inbox), daemon=True).start()
     log(f"tchat #{TWITCH_CHANNEL} → {BODY_GATEWAY_URL}/chat")
     worker_loop(inbox)
