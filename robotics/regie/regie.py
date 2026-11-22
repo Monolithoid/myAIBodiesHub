@@ -59,7 +59,8 @@ Environment variables:
   NAO_ID            NAO body id for the gesture test button, default nao_01
   TWITCH_CLIENT_ID      Twitch app client id, for the "!rgpd" whispers (optional)
   TWITCH_CLIENT_SECRET  Twitch app client secret (optional; empty = no Twitch button)
-  TWITCH_REDIRECT_URI   default https://<host of the request>/twitch/callback
+  TWITCH_REDIRECT_URI   régie domain or full callback URL, normalized to
+                        https://<domain>/twitch/callback (default: host of the request)
 """
 
 import collections
@@ -75,7 +76,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from twitch_auth import TwitchAuth
+from twitch_auth import TwitchAuth, redirect_uri
 
 ROSBRIDGE_URL   = os.environ.get("ROSBRIDGE_URL", "ws://rosbridge-proxy:80")
 ROSBRIDGE_TOKEN = os.environ.get("ROSBRIDGE_TOKEN", "")
@@ -371,11 +372,11 @@ class Handler(BaseHTTPRequestHandler):
     def _twitch_redirect_uri(self) -> str:
         """Where Twitch sends the browser back; must be registered in the Twitch app."""
         if TWITCH_REDIRECT_URI:
-            return TWITCH_REDIRECT_URI
+            return redirect_uri(TWITCH_REDIRECT_URI)
         # Behind Coolify's Traefik: public host and https in the forwarded headers.
         proto = (self.headers.get("X-Forwarded-Proto") or "http").split(",")[0].strip()
         host = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").split(",")[0]
-        return f"{proto}://{host.strip()}/twitch/callback"
+        return redirect_uri(host, proto)
 
     def _twitch_callback(self, query: dict):
         state = query.get("state", [""])[0]

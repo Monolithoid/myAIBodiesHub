@@ -48,6 +48,22 @@ class FakeTwitch:
         return [c[1] for c in self.calls]
 
 
+class TestRedirectUri(unittest.TestCase):
+
+    def test_normalized(self):
+        expected = "https://regia.example.com/twitch/callback"
+        for value in ("regia.example.com", "regia.example.com/", "https://regia.example.com",
+                      "https://regia.example.com/", " https://regia.example.com/twitch/callback ",
+                      "https://https://regia.example.com//twitch/callback",
+                      "HTTPS://regia.example.com//twitch/callback/"):
+            self.assertEqual(ta.redirect_uri(value), expected, value)
+
+    def test_scheme_and_port_kept(self):
+        self.assertEqual(ta.redirect_uri("localhost:8097", "http"), "http://localhost:8097/twitch/callback")
+        self.assertEqual(ta.redirect_uri("http://localhost:8097/"), "http://localhost:8097/twitch/callback")
+        self.assertEqual(ta.redirect_uri(""), "")
+
+
 class TestTwitchAuth(unittest.TestCase):
 
     def setUp(self):

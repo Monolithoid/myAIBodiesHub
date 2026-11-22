@@ -36,6 +36,29 @@ REFRESH_EARLY_S = 600     # refresh the access token this long before it expires
 VALIDATE_EVERY_S = 3600   # Twitch asks apps to validate their tokens every hour
 
 
+CALLBACK_PATH = "/twitch/callback"
+
+
+def redirect_uri(value: str, default_scheme: str = "https") -> str:
+    """Twitch redirect URL from a domain or a URL, however it was typed:
+    "regia.example.com", "https://regia.example.com/", even
+    "https://https://regia.example.com//twitch/callback"
+    → "https://regia.example.com/twitch/callback"."""
+    rest, scheme = value.strip(), default_scheme
+    while True:
+        head, sep, tail = rest.partition("://")
+        if not sep or head.lower() not in ("http", "https"):
+            break
+        scheme, rest = head.lower(), tail
+    parts = [p for p in rest.split("/") if p]
+    if not parts:
+        return ""
+    path = "/" + "/".join(parts[1:])
+    if not path.rstrip("/").endswith(CALLBACK_PATH):
+        path = path.rstrip("/") + CALLBACK_PATH
+    return f"{scheme}://{parts[0]}{path}"
+
+
 def http_call(method: str, url: str, *, params: dict | None = None, form: dict | None = None,
               json_body: dict | None = None, headers: dict | None = None,
               timeout: float = 10) -> tuple[int, dict]:

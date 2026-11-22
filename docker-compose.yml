@@ -588,7 +588,7 @@ services:
       # Twitch account for the "!rgpd" whispers ("Connecter Twitch" button)
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
       - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:-}
-      - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}
+      - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}   # régie domain or callback URL (optional)
     networks:
       - robotics-net
     depends_on:
