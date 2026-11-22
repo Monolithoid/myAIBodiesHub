@@ -66,6 +66,8 @@
   <span class="pill"><span id="link" class="dot"></span><span id="linkText">rosbridge…</span></span>
   <span class="pill">Cerveau <b id="cognitive">—</b></span>
   <span class="pill">Émotion <b id="emotion">—</b></span>
+  <span class="pill" id="twitchPill"><span id="twitchDot" class="dot"></span><span id="twitchText">Twitch !rgpd…</span></span>
+  <button id="twitchBtn" type="button" hidden>Connecter Twitch</button>
   <span class="spacer"></span>
   <a id="obsLink" href="obs" target="_blank" style="color:var(--muted)">OBS : overlay voix →</a>
   <a id="robotLink" href="robot" style="color:var(--muted)">Robot : calibrage et composants →</a>
@@ -291,6 +293,9 @@ function handle(ev, live) {
     case "emotion":
       document.getElementById("emotion").textContent = ev.value;
       return;
+    case "twitch":
+      renderTwitch(ev);
+      return;
     case "bodies":
       connected = ev.connected || {};
       setBodies(Object.keys(connected));
@@ -337,11 +342,38 @@ function connect() {
   });
   source.onmessage = e => {
     const ev = JSON.parse(e.data);
-    if (paused && !["link", "cognitive", "emotion", "bodies"].includes(ev.kind)) buffered.push(ev);
+    if (paused && !["link", "cognitive", "emotion", "bodies", "twitch"].includes(ev.kind)) buffered.push(ev);
     else handle(ev, true);
   };
   source.onerror = () => handle({ kind: "link", up: false }, false);
 }
+
+// ── Twitch account for the "!rgpd" whispers ──────────────────────────────────
+
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const twitchBtn = document.getElementById("twitchBtn");
+let twitchConnected = false;
+
+function renderTwitch(ev) {
+  twitchConnected = !!ev.connected;
+  document.getElementById("twitchDot").className = "dot" + (ev.connected ? " up" : "");
+  const text = !ev.configured ? "!rgpd off (TWITCH_CLIENT_ID / SECRET manquants)"
+    : ev.connected ? `!rgpd : chuchote en tant que ${ev.login}`
+    : "!rgpd off : Twitch non connecté" + (ev.error ? ` (${ev.error})` : "");
+  document.getElementById("twitchText").textContent = text;
+  twitchBtn.hidden = !ev.configured;
+  twitchBtn.textContent = ev.connected ? "Déconnecter Twitch" : "Connecter Twitch";
+  twitchBtn.title = ev.connected ? ""
+    : `Se connecter avec le compte qui envoie les chuchotements. URL de redirection à déclarer dans l'app Twitch : ${location.origin}/twitch/callback`;
+}
+
+twitchBtn.onclick = async () => {
+  if (!twitchConnected) {
+    location.href = "twitch/login?token=" + encodeURIComponent(TOKEN);
+    return;
+  }
+  await fetch("twitch/logout?token=" + encodeURIComponent(TOKEN), { method: "POST" });
+};
 
 // ── Controls ───────────────────────────────────────────────────────────────
 

@@ -36,6 +36,18 @@ and plays or reloads the learned gestures (ADR 009):
                                        → {"op": "speech_offset", "ms": 150}: start offset
                                          between a sentence and its gesture, live
 
+Twitch account for the "!rgpd" whispers (twitch_auth.py): the "Connecter
+Twitch" button of the page logs in with the account that sends the whispers
+(OAuth, scope user:manage:whispers), once per start: the tokens stay in
+memory and are refreshed while the régie runs.  twitch-input asks for each
+whisper with POST /twitch/whisper?token=REGIE_TOKEN {"to_user_id", "message"};
+not connected = 503, only "!rgpd" is off.
+
+  /twitch/login?token=…   → Twitch authorize page
+  /twitch/callback        ← back from Twitch (no token: the OAuth state is checked);
+                            this URL must be registered in the Twitch app
+  /twitch/logout?token=…  (POST) forgets and revokes the tokens
+
 Environment variables:
   ROSBRIDGE_URL     default ws://rosbridge-proxy:80
   ROSBRIDGE_TOKEN   bearer token checked by rosbridge-proxy (required)
@@ -45,6 +57,9 @@ Environment variables:
   HTTP_PORT         page port, default 8097
   HISTORY           events kept for a page opened later, default 300
   NAO_ID            NAO body id for the gesture test button, default nao_01
+  TWITCH_CLIENT_ID      Twitch app client id, for the "!rgpd" whispers (optional)
+  TWITCH_CLIENT_SECRET  Twitch app client secret (optional; empty = no Twitch button)
+  TWITCH_REDIRECT_URI   default https://<host of the request>/twitch/callback
 """
 
 import collections
@@ -60,6 +75,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from twitch_auth import TwitchAuth
+
 ROSBRIDGE_URL   = os.environ.get("ROSBRIDGE_URL", "ws://rosbridge-proxy:80")
 ROSBRIDGE_TOKEN = os.environ.get("ROSBRIDGE_TOKEN", "")
 REGIE_TOKEN     = os.environ.get("REGIE_TOKEN", "")
@@ -70,6 +87,9 @@ OBS_TOKEN       = os.environ.get("OBS_TOKEN", "")
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8097"))
 HISTORY         = int(os.environ.get("HISTORY", "300"))
 NAO_ID          = os.environ.get("NAO_ID", "nao_01")
+TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "").strip()
+TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "").strip()
+TWITCH_REDIRECT_URI  = os.environ.get("TWITCH_REDIRECT_URI", "").strip()
 
 PAGE_HTML = pathlib.Path(__file__).with_name("regie.html")
 ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
@@ -243,10 +263,24 @@ def on_state(kind: str):
 
 
 BRIDGE = Rosbridge(ROSBRIDGE_URL, ROSBRIDGE_TOKEN, on_link)
+# Twitch account state shown on the page (connected or not, login, error).
+TWITCH = TwitchAuth(TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET,
+                    on_change=lambda status: HUB.publish(status, keep=False),
+                    log=lambda text: log(text))
+
+
+def twitch_loop():
+    while True:
+        time.sleep(30)
+        try:
+            TWITCH.maintain()
+        except Exception as e:   # never let the refresh loop die
+            log(f"Twitch maintenance error: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTTP: / (page), /robot, /favicon.*, /obs (redirect), /stream (SSE), /ping
+# HTTP: / (page), /robot, /favicon.*, /obs (redirect), /stream (SSE), /ping,
+#       /twitch/* (whispering account)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -262,7 +296,11 @@ class Handler(BaseHTTPRequestHandler):
             icon = pathlib.Path(__file__).with_name(url.path.lstrip("/"))
             self._send(200, icon.read_bytes(), ICONS[url.path])
             return
-        token = urllib.parse.parse_qs(url.query).get("token", [""])[0]
+        query = urllib.parse.parse_qs(url.query)
+        if url.path == "/twitch/callback":
+            self._twitch_callback(query)
+            return
+        token = query.get("token", [""])[0]
         if not hmac.compare_digest(token.encode(), REGIE_TOKEN.encode()):
             self._send(401, b"unauthorized", "text/plain")
             return
@@ -280,19 +318,36 @@ class Handler(BaseHTTPRequestHandler):
                              + urllib.parse.quote(OBS_TOKEN, safe=""))
             self.send_header("Content-Length", "0")
             self.end_headers()
+        elif url.path == "/twitch/login":
+            if not TWITCH.configured:
+                self._send(404, "TWITCH_CLIENT_ID et TWITCH_CLIENT_SECRET non configurés sur la régie"
+                           .encode(), "text/plain; charset=utf-8")
+                return
+            redirect_uri = self._twitch_redirect_uri()
+            log(f"Twitch login started, redirect URI {redirect_uri}")
+            self._redirect(TWITCH.login_url(redirect_uri))
         elif url.path == "/stream":
-            self._stream(HUB, [])
+            self._stream(HUB, [TWITCH.status()])
         elif url.path == "/robot-stream":
             self._stream(ROBOT_HUB, list(ROBOT_STATE.values()))
         else:
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
-        """/command : {"target": "calibration"|"components", "msg": {...}} → rosbridge."""
+        """/command : {"target": "calibration"|"components", "msg": {...}} → rosbridge.
+        /twitch/whisper : {"to_user_id", "message"} from twitch-input ("!rgpd").
+        /twitch/logout : forget the Twitch account."""
         url = urllib.parse.urlsplit(self.path)
         token = urllib.parse.parse_qs(url.query).get("token", [""])[0]
         if not hmac.compare_digest(token.encode(), REGIE_TOKEN.encode()):
             self._send(401, b"unauthorized", "text/plain")
+            return
+        if url.path == "/twitch/whisper":
+            self._twitch_whisper()
+            return
+        if url.path == "/twitch/logout":
+            TWITCH.logout()
+            self._send(200, b'{"ok": true}', "application/json")
             return
         if url.path != "/command":
             self._send(404, b"not found", "text/plain")
@@ -312,6 +367,44 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200 if ok else 503,
                    json.dumps({"ok": ok, "error": "" if ok else "rosbridge coupé"}).encode(),
                    "application/json")
+
+    def _twitch_redirect_uri(self) -> str:
+        """Where Twitch sends the browser back; must be registered in the Twitch app."""
+        if TWITCH_REDIRECT_URI:
+            return TWITCH_REDIRECT_URI
+        # Behind Coolify's Traefik: public host and https in the forwarded headers.
+        proto = (self.headers.get("X-Forwarded-Proto") or "http").split(",")[0].strip()
+        host = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").split(",")[0]
+        return f"{proto}://{host.strip()}/twitch/callback"
+
+    def _twitch_callback(self, query: dict):
+        state = query.get("state", [""])[0]
+        # Without a state from a click on the page (which needs REGIE_TOKEN),
+        # nothing happens and the page token is never given away.
+        if not TWITCH.known_state(state):
+            self._send(400, "Connexion Twitch inconnue ou expirée : recommence depuis la régie."
+                       .encode(), "text/plain; charset=utf-8")
+            return
+        TWITCH.finish_login(state, query.get("code", [""])[0], query.get("error", [""])[0])
+        self._redirect("/?token=" + urllib.parse.quote(REGIE_TOKEN, safe=""))
+
+    def _twitch_whisper(self):
+        try:
+            length = min(int(self.headers.get("Content-Length", "0")), 10_000)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            to_user_id, message = str(body["to_user_id"]), str(body["message"])
+        except (KeyError, TypeError, ValueError):
+            self._send(400, b'{"ok": false, "error": "whisper invalide"}', "application/json")
+            return
+        code, error = TWITCH.whisper(to_user_id, message)
+        self._send(code, json.dumps({"ok": code == 200, "error": error}).encode(),
+                   "application/json")
+
+    def _redirect(self, location: str):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _stream(self, hub: Hub, state: list):
         q, history = hub.subscribe()
@@ -365,6 +458,9 @@ def main():
     for topic in COMMAND_TOPICS.values():
         BRIDGE.advertise(topic)
     threading.Thread(target=BRIDGE.run_forever, daemon=True).start()
+    threading.Thread(target=twitch_loop, daemon=True).start()
+    if not TWITCH.configured:
+        log("TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET empty: no Twitch button, !rgpd is off")
     log(f"régie → :{HTTP_PORT}/?token=…  |  rosbridge → {ROSBRIDGE_URL}")
     ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler).serve_forever()
 

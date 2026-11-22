@@ -67,8 +67,11 @@ version: "3.8"
 #   TWITCH_BLOCKLIST         : banned words separated by commas (default: empty)
 #   TWITCH_MODS_ONLY         : 1 = only moderators and the streamer can call !nao (default: 0)
 #   TWITCH_CLIENT_ID         : Twitch app client id, to whisper "!rgpd" answers (optional)
-#   TWITCH_WHISPER_TOKEN     : user token (scope user:manage:whispers) of the account that
-#                              sends the "!rgpd" whispers (optional, empty = not sent)
+#   TWITCH_CLIENT_SECRET     : Twitch app client secret (optional). The account that sends
+#                              the whispers logs in from the control room ("Connecter Twitch"
+#                              button) at each start; tokens stay in memory. Redirect URL
+#                              of the Twitch app: https://<regie domain>/twitch/callback.
+#                              Not connected = only "!rgpd" is off.
 #   VIEWER_MEMORY            : 1 = NAO keeps per viewer a one-sentence profile and the
 #                              last 5 messages with its answers (default: 1),
 #                              stored in /opt/ia/nao/viewers/viewers.db;
@@ -512,10 +515,12 @@ services:
       - COMMAND_PREFIX=${TWITCH_COMMAND_PREFIX:-!nao}
       - BLOCKLIST=${TWITCH_BLOCKLIST:-}
       - MODS_ONLY=${TWITCH_MODS_ONLY:-0}
-      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
-      - TWITCH_WHISPER_TOKEN=${TWITCH_WHISPER_TOKEN:-}
+      # "!rgpd" whispers are sent by the control room (Twitch account connected there)
+      - REGIE_URL=http://regie:8097
+      - REGIE_TOKEN=${REGIE_TOKEN:-}
     networks:
       - ai-network
+      - robotics-net   # reaches regie for the "!rgpd" whispers
     depends_on:
       - chat-relay
 
@@ -560,6 +565,9 @@ services:
   # Robot page (the only one that writes, on /nao/calibration and /nao/components):
   # motor profile calibration and the NAO's NAOqi components.
   #   https://<regie domain>/robot?token=$REGIE_TOKEN
+  # Twitch: the "Connecter Twitch" button logs in the account that sends
+  # the "!rgpd" whispers (OAuth, once per start, tokens in memory);
+  # twitch-input asks the control room to whisper (POST /twitch/whisper).
   # OBS link: /obs?token=$REGIE_TOKEN redirects to the overlay
   # $OBS_URL/overlay?token=$OBS_TOKEN (OBS_URL = obs-agent domain,
   # e.g. https://obs.${DOMAIN}; empty = link disabled).
@@ -577,6 +585,10 @@ services:
       - REGIE_TOKEN=${REGIE_TOKEN:-}
       - OBS_URL=${OBS_URL:-}
       - OBS_TOKEN=${OBS_TOKEN:-}
+      # Twitch account for the "!rgpd" whispers ("Connecter Twitch" button)
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:-}
+      - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}
     networks:
       - robotics-net
     depends_on:
@@ -588,6 +600,7 @@ services:
 # ai-network (bridge, internet access):
 #   ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge,
 #   chat-relay, twitch-input
+#   (twitch-input is also on robotics-net, to reach regie)
 #
 # bitterbot-net (bridge, internal: true — no internet access):
 #   bitterbot-gateway, ollama

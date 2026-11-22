@@ -119,8 +119,8 @@ Optional variables (defaults in `docker-compose.yml`, whose header describes eac
 | Brain ([AI stack](ia-stack.md#brain-provider-body-gateway)) | `BRAIN_PROVIDER`, `BRAIN_URL`, `BRAIN_MODEL`, `BRAIN_API_KEY`, `BRAIN_EFFORT`, `BRAIN_TIMEOUT` (personality: file `/opt/ia/nao/persona/personnalite.md`) |
 | Bodies | `NAO_ROBOT_ID`, `STATIC_DRONE_ID`, `OBS_DRONE_ID` (empty = body disabled), `NAO_HEAD_YAW_OFFSET`, `NAO_SPEAKING_SYNC`, `SPEECH_GESTURE_SYNC`, `SPEECH_CHARS_PER_S`, `LLM_MOTION` |
 | Voice | `WAKE_WORD`, `WAKE_WINDOW_S`, `LISTEN_DURATION`, `ASR_MODEL`, `TTS_VOICE` |
-| Control room | `OBS_URL`: `obs-agent` domain (e.g. `obs.$DOMAIN`, `https://` added if missing), for the control room's "OBS : overlay voix" link |
-| Twitch | `TWITCH_COMMAND_PREFIX`, `TWITCH_BLOCKLIST`, `TWITCH_MODS_ONLY`, `VIEWER_MEMORY` (viewer profiles in `/opt/ia/nao/viewers/viewers.db`), `TWITCH_CLIENT_ID` + `TWITCH_WHISPER_TOKEN` (`!rgpd` whispers) |
+| Control room | `OBS_URL`: `obs-agent` domain (e.g. `obs.$DOMAIN`, `https://` added if missing), for the control room's "OBS : overlay voix" link; `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET`: Twitch app for the `!rgpd` whispers, the sending account logs in with the "Connecter Twitch" button at each start (redirect URL `https://<regie domain>/twitch/callback`, override with `TWITCH_REDIRECT_URI`) |
+| Twitch | `TWITCH_COMMAND_PREFIX`, `TWITCH_BLOCKLIST`, `TWITCH_MODS_ONLY`, `VIEWER_MEMORY` (viewer profiles in `/opt/ia/nao/viewers/viewers.db`), `REGIE_TOKEN` on twitch-input (`!rgpd` whispers go through the control room) |
 | Dreams | `DREAMING_HOUR_START`, `DREAMING_HOUR_END`, `DREAMING_BATTERY_THRESHOLD`, `DREAM_TICK_INTERVAL`, `TZ` |
 | Open WebUI voice notifications | `WEBUI_URL`, `WEBUI_API_KEY`, `WEBUI_PIPE_MODEL`, `WEBUI_VOICE_CHAT_ID` |
 
