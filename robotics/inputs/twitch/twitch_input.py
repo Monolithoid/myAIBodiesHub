@@ -30,9 +30,12 @@ Environment variables:
   BLOCKLIST             comma-separated forbidden words, default empty
   IGNORED_USERS         comma-separated logins, default "nightbot,streamelements,moobot"
   MODS_ONLY             1 = only moderators and the broadcaster, default 0
-  TWITCH_CLIENT_ID      Twitch app client id, for the "!rgpd" whisper (optional)
-  TWITCH_WHISPER_TOKEN  user token of the account that sends whispers, scope
-                        user:manage:whispers (optional; empty = "!rgpd" is only logged)
+  REGIE_URL             control room that sends the "!rgpd" whispers, default http://regie:8097
+  REGIE_TOKEN           its page secret (optional; empty = "!rgpd" is only logged)
+
+The Twitch account that whispers is connected in the control room ("Connecter
+Twitch" button, once per start): this service holds no Twitch token.  Not
+connected = "!rgpd" is off, everything else works.
 
 Viewer memory (body-gateway viewers.py): every "!nao" message carries the
 viewer's login, name and question, body-gateway keeps a one-sentence profile
@@ -72,9 +75,8 @@ SPEAKING_WAIT_MAX_S = float(os.environ.get("SPEAKING_WAIT_MAX_S", "120"))
 BLOCKLIST        = _env_list("BLOCKLIST")
 IGNORED_USERS    = _env_list("IGNORED_USERS", "nightbot,streamelements,moobot")
 MODS_ONLY        = os.environ.get("MODS_ONLY", "0") == "1"
-TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "").strip()
-TWITCH_WHISPER_TOKEN = os.environ.get("TWITCH_WHISPER_TOKEN", "").strip().removeprefix("oauth:")
-HELIX_URL = "https://api.twitch.tv/helix"
+REGIE_URL        = os.environ.get("REGIE_URL", "http://regie:8097").rstrip("/")
+REGIE_TOKEN      = os.environ.get("REGIE_TOKEN", "").strip()
 
 TWITCH_IRC_HOST = "irc.chat.twitch.tv"
 TWITCH_IRC_PORT = 6697
@@ -203,31 +205,23 @@ def _post_missed(msg: twitch_chat.ChatMessage, question: str):
         log(f"missed message from {msg.display_name} not stored: {e}")
 
 
-_whisper_sender_id = ""
-
-
 def send_whisper(msg: twitch_chat.ChatMessage, text: str) -> bool:
-    """Private message through the Twitch API: the profile never goes to public chat."""
-    global _whisper_sender_id
-    if not (TWITCH_CLIENT_ID and TWITCH_WHISPER_TOKEN):
-        log(f"!rgpd from {msg.display_name}: whispers not configured "
-            "(TWITCH_CLIENT_ID / TWITCH_WHISPER_TOKEN), nothing sent")
+    """Private message, sent by the control room with the Twitch account
+    connected there: the profile never goes to public chat."""
+    if not REGIE_TOKEN:
+        log(f"!rgpd from {msg.display_name}: REGIE_TOKEN empty, nothing sent")
         return False
     if not msg.user_id:
         log(f"!rgpd from {msg.display_name}: unknown Twitch user id, nothing sent")
         return False
-    headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {TWITCH_WHISPER_TOKEN}"}
-    if not _whisper_sender_id:
-        # Without parameters, /users returns the account the token belongs to.
-        resp = requests.get(f"{HELIX_URL}/users", headers=headers, timeout=10)
-        resp.raise_for_status()
-        _whisper_sender_id = resp.json()["data"][0]["id"]
     resp = requests.post(
-        f"{HELIX_URL}/whispers",
-        params={"from_user_id": _whisper_sender_id, "to_user_id": msg.user_id},
-        headers=headers, json={"message": text}, timeout=10,
+        f"{REGIE_URL}/twitch/whisper", params={"token": REGIE_TOKEN},
+        json={"to_user_id": msg.user_id, "message": text}, timeout=15,
     )
-    if resp.status_code != 204:
+    if resp.status_code == 503:
+        log(f"!rgpd from {msg.display_name}: Twitch not connected in the control room, nothing sent")
+        return False
+    if resp.status_code != 200:
         log(f"!rgpd: whisper to {msg.display_name} refused ({resp.status_code}) {resp.text[:200]}")
         return False
     log(f"!rgpd: whisper sent to {msg.display_name}")
