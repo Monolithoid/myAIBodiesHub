@@ -109,7 +109,10 @@ The rosbridge connection is read from the drone's `.env`. Only numpy is needed
 
 After a gesture, the robot stays stiff in the start pose. Without a new gesture for
 `GESTURE_REST_DELAY` seconds (3 by default), the drone sends the return to rest,
-also validated by the guardian, and the robot relaxes at the end. A request that
+also validated by the guardian, and the robot relaxes at the end. That segment is
+built by the generator itself (`rest_segment()`), so it moves as fast as the
+dataset version allows: about 0.4 s at the factory limits (dataset exported with
+`rest_velocity_rad_s: factory`), about 5.6 s with older versions. A request that
 arrives during a gesture waits for it to finish; a more recent request replaces the
 one that was waiting.
 
