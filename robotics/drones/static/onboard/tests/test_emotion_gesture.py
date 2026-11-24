@@ -62,6 +62,11 @@ class Gesture(object):
 def _min_jerk(q0, q1, v, a):
     return {"t": [0.0, 1.0, 2.0], "q": [list(q0), [(x + y) / 2 for x, y in zip(q0, q1)], list(q1)]}
 
+def rest_segment(guardian, q0, q1, joints):
+    seg = _min_jerk(q0, q1, None, None)
+    seg["t"] = [x / 5 for x in seg["t"]]        # factory limits: much shorter
+    return seg
+
 class GestureGenerator(object):
     def __init__(self, data):
         self.emotions = data["emotions"]
@@ -249,6 +254,27 @@ class TestService(Base):
         self.now[0] += 10
         s.step()                                     # déjà au repos : plus rien
         self.assertEqual(len(self.bridge.trajectories()), 2)
+
+    def _back_to_rest(self, s):
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.7})
+        s.step()
+        self.bridge.robot("a", "done")
+        self.bridge.pose = dict(POSES["start"])
+        self.now[0] += 4.0
+        s.step()
+        return self.bridge.trajectories()[-1]
+
+    def test_back_to_rest_uses_the_generator_rest_segment(self):
+        rest = self._back_to_rest(self.service())
+        self.assertTrue(rest["relax_end"])
+        self.assertAlmostEqual(rest["times"][0][-1], 0.4)
+
+    def test_back_to_rest_with_an_older_generator(self):
+        s = self.service()
+        del s.lib.rest_segment                       # exported before rest_segment()
+        rest = self._back_to_rest(s)
+        self.assertTrue(rest["relax_end"])
+        self.assertAlmostEqual(rest["times"][0][-1], 2.0)
 
     def test_new_gesture_chains_without_rest(self):
         s = self.service()

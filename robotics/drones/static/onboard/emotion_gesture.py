@@ -666,7 +666,14 @@ class GestureService:
             q0 = [float(pose[j]) for j in joints]
             q1 = [float(rest[j]) for j in joints]
             g_ = gen.guardian
-            seg = lib._min_jerk(q0, q1, g_.rest_velocity * 0.8, g_.max_acceleration * 0.25)
+            segment = getattr(lib, "rest_segment", None)
+            if segment is not None:
+                # same segment as the generator's own rest <-> start (factory limits
+                # when the dataset was exported with rest_velocity_rad_s "factory")
+                seg = segment(g_, q0, q1, joints)
+            else:
+                # generator exported before rest_segment(): former slow profile
+                seg = lib._min_jerk(q0, q1, g_.rest_velocity * 0.8, g_.max_acceleration * 0.25)
             rep = g_.check_rest_transition(seg["t"], joints, seg["q"],
                                            start_state=dict(zip(joints, q0)))
         except Exception as exc:
