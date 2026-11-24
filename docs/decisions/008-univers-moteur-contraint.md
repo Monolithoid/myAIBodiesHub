@@ -53,4 +53,4 @@ Split, in line with "the robot is a puppet":
   (unlocking a movement, saying "good" or "not good") and learning from
   demonstration can be added later on this foundation.
 
-Update 2026-11: `motion_engine` removed from the code and the `nao-core` image (see PR #…).
+Update 2026-11: `motion_engine` removed from the code and the `nao-core` image (see PR #157).
