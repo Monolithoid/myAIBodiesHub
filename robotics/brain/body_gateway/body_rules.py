@@ -400,6 +400,10 @@ class SpeakingTracker:
     starts stops counting after start_grace_s, a speaking=true without its
     false after max_speaking_s.  The NAO has no speaking signal: a sentence it
     says itself counts for its estimated duration (speech_seconds).
+
+    started() tells when the last answer has begun (answer() marks where it
+    begins): its first sentence has started on every voice, so its gesture is
+    already playing and the next input can be prepared meanwhile.
     """
 
     def __init__(self, start_grace_s: float = 10.0, max_speaking_s: float = 120.0):
@@ -408,7 +412,13 @@ class SpeakingTracker:
         self._pending: dict[str, list[float]] = {}   # body → start deadlines, oldest first
         self._speaking: dict[str, float] = {}         # body → speaking=true time
         self._estimated_until = 0.0
+        self._answer: dict[str, int] = {}             # body → sentences of the last answer
         self._lock = threading.Lock()   # ROS callbacks and HTTP threads
+
+    def answer(self):
+        """A new answer starts: the next sentences said belong to it."""
+        with self._lock:
+            self._answer = {}
 
     def said(self, body_id: str, text: str, now: float | None = None,
              chars_per_s: float = SPEECH_CHARS_PER_S):
@@ -419,6 +429,7 @@ class SpeakingTracker:
     def _said(self, body_id, text, now, chars_per_s):
         if is_voice(body_id):
             self._pending.setdefault(body_id, []).append(now + self.start_grace_s)
+            self._answer[body_id] = self._answer.get(body_id, 0) + 1
         else:
             self._estimated_until = max(self._estimated_until,
                                         now + speech_seconds(text, chars_per_s))
@@ -433,11 +444,25 @@ class SpeakingTracker:
             else:
                 self._speaking.pop(body_id, None)
 
+    def _expire(self, now):
+        for body_id in list(self._pending):
+            self._pending[body_id] = [d for d in self._pending[body_id] if d > now]
+
+    def started(self, now: float | None = None) -> bool:
+        """The last answer's first sentence has started (or was given up) on
+        every voice; an answer without speech once the older sentences started."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._expire(now)
+            # Pending sentences are started oldest first: the answer has begun once
+            # fewer of them are left than it holds.
+            return all(not left or len(left) < self._answer.get(body_id, 0)
+                       for body_id, left in self._pending.items())
+
     def busy(self, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
         with self._lock:
-            for body_id in list(self._pending):
-                self._pending[body_id] = [d for d in self._pending[body_id] if d > now]
+            self._expire(now)
             return (any(self._pending.values())
                     or any(now - t < self.max_speaking_s for t in self._speaking.values())
                     or now < self._estimated_until)

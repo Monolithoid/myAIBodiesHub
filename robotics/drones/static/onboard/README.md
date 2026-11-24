@@ -112,8 +112,11 @@ also validated by the guardian, and the robot relaxes at the end. That segment i
 built by the generator itself (`rest_segment()`), so it moves as fast as the
 dataset version allows: about 0.4 s at the factory limits (dataset exported with
 `rest_velocity_rad_s: factory`), about 5.6 s with older versions. A request that
-arrives during a gesture waits for it to finish; a more recent request replaces the
-one that was waiting.
+arrives during a gesture waits for it to finish, then plays right away without going
+back to rest (twitch-input sends the next message while NAO plays the answer); a more
+recent request replaces the one that was waiting. A request that arrives during the
+return to rest stops it (`/nao/stop`, the posture is held) and starts from the
+measured posture.
 
 ### Speech / gesture synchronisation
 

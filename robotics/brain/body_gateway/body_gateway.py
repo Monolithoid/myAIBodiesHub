@@ -84,6 +84,9 @@ Environment variables:
                              spoken if that voice has not started it after this delay, default 10
   SPEAKING_MAX_S             GET /speaking: a speaking=true without its false stops counting
                              after this delay, default 120
+                             GET /speaking also returns "started": the first sentence of
+                             the last answer has started (twitch-input then sends the next
+                             message while NAO plays this one)
   DREAMING_HOUR_START/END    default 2 / 6
   DREAMING_BATTERY_THRESHOLD default 80.0
   DREAM_TICK_INTERVAL        seconds between dream ticks, default 300
@@ -798,9 +801,11 @@ class BodyGatewayNode(Node):
                 elif self.path == "/voice-pop":
                     self._voice_pop()
                 elif self.path == "/speaking":
-                    # twitch-input polls it to send the next message as soon as
-                    # the last answer has been spoken.
-                    self._json(200, {"speaking": node._speaking.busy()})
+                    # "speaking": the last answer is still being spoken;
+                    # "started": its first sentence has started, so twitch-input
+                    # sends the next message while NAO plays this one.
+                    self._json(200, {"speaking": node._speaking.busy(),
+                                     "started": node._speaking.started()})
                 elif self.path.startswith("/viewers/"):
                     self._viewer_show(self.path[len("/viewers/"):])
                 else:
@@ -1171,6 +1176,8 @@ class BodyGatewayNode(Node):
         are skipped.  Disconnected bodies get a warning but still receive the
         action — the driver will queue it for when the robot reconnects.
         """
+        # GET /speaking "started": the sentences said from here on are this answer's.
+        self._speaking.answer()
         # Speech ↔ gesture sync: the first sentence and the learned gesture share an id.
         sync = None
         if SPEECH_GESTURE_SYNC:

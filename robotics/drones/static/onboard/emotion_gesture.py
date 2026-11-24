@@ -19,9 +19,12 @@ Chain of a gesture:
     /nao/emotion_gesture_state → the state of each gesture and the version in service,
                                  plus owns_body / at_rest for the NAO driver
 
-After a gesture the robot stays stiff in the start pose; if it receives no new
-gesture for GESTURE_REST_DELAY seconds, the drone sends the return to rest
-(validated by the guardian) and the robot relaxes at the end.
+After a gesture the robot stays stiff in the start pose; a gesture received
+meanwhile is played right after, without going back to rest (twitch-input sends
+the next message while NAO plays the answer). If it receives no new gesture for
+GESTURE_REST_DELAY seconds, the drone sends the return to rest (validated by the
+guardian) and the robot relaxes at the end. A gesture asked during the return to
+rest stops it (/nao/stop, the posture is held) and starts from the measured posture.
 
     /nao/emotion_gesture_control ← {"op": "reload"}: rereads emotion_gesture.env
                                  ← {"op": "speech_offset", "ms": 150}: speech /
@@ -515,9 +518,10 @@ class GestureService:
         with self._lock:
             p = self._playing
             if self._busy():
-                # A gesture asked by the LLM stops a reflex in progress, then starts
-                # from the measured posture.
-                if (p.get("reflex") and not p.get("stopping") and self._pending is not None
+                # A gesture asked by the LLM stops a reflex or a return to rest in
+                # progress, then starts from the measured posture.
+                if ((p.get("reflex") or p.get("to_rest")) and not p.get("stopping")
+                        and self._pending is not None
                         and not self._pending.get("reflex")):
                     p["stopping"] = True
                     stop = True

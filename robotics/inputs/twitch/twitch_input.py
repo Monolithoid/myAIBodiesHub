@@ -12,10 +12,11 @@ service knows nothing about the outputs.
       │  only "!nao …" messages, filtered (twitch_chat.ChatFilter)
       ▼
     LatestQueue ── latest message only ──► body-gateway POST /chat
-    (single slot: when the robot is free it takes the newest message,
+    (single slot: when the robot is ready it takes the newest message,
      those received in between are dropped)
       ▲                                       │
-      └── robot free ◄── GET /speaking ◄──────┘  polled until the answer is spoken
+      └── robot ready ◄── GET /speaking ◄─────┘  polled until the answer has started
+                                                  (NEXT_MESSAGE_AT=end: until it is spoken)
                                                "[tchat Twitch] pseudo : message"
 
 Environment variables:
@@ -26,7 +27,11 @@ Environment variables:
   MAX_CHARS             longest question kept, default 200
   MAX_AGE_S             older messages are dropped, default 90
   POLL_S                seconds between two GET /speaking, default 0.3
-  SPEAKING_WAIT_MAX_S   longest wait for the end of an answer, default 120
+  SPEAKING_WAIT_MAX_S   longest wait for the start (or end) of an answer, default 120
+  NEXT_MESSAGE_AT       start (default) = the next message goes to the brain as soon as
+                        NAO starts saying the answer, so the next answer is ready when
+                        this one ends (the static drone plays it right after, without
+                        going back to rest); end = only once the answer has been spoken
   BLOCKLIST             comma-separated forbidden words, default empty
   IGNORED_USERS         comma-separated logins, default "nightbot,streamelements,moobot"
   MODS_ONLY             1 = only moderators and the broadcaster, default 0
@@ -72,6 +77,7 @@ MAX_CHARS        = int(os.environ.get("MAX_CHARS", "200"))
 MAX_AGE_S        = float(os.environ.get("MAX_AGE_S", "90"))
 POLL_S           = float(os.environ.get("POLL_S", "0.3"))
 SPEAKING_WAIT_MAX_S = float(os.environ.get("SPEAKING_WAIT_MAX_S", "120"))
+NEXT_MESSAGE_AT  = "end" if os.environ.get("NEXT_MESSAGE_AT", "start").strip().lower() == "end" else "start"
 BLOCKLIST        = _env_list("BLOCKLIST")
 IGNORED_USERS    = _env_list("IGNORED_USERS", "nightbot,streamelements,moobot")
 MODS_ONLY        = os.environ.get("MODS_ONLY", "0") == "1"
@@ -134,7 +140,7 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Worker: as soon as the robot is free, the latest message → brain
+# Worker: as soon as the robot is ready, the latest message → brain
 # ─────────────────────────────────────────────────────────────────────────────
 
 def worker_loop(inbox: twitch_chat.LatestQueue):
@@ -164,8 +170,8 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
                 log("cerveau occupé — message abandonné")
             else:
                 log(f"réponse à {msg.display_name} : {(result.get('speech') or '')[:80]!r}")
-        # The robot is free once the answer has been spoken, not after a fixed pause.
-        wait_until_spoken()
+        # The robot is ready once the answer has started (or been spoken), not after a fixed pause.
+        wait_for_answer(NEXT_MESSAGE_AT)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,20 +234,22 @@ def send_whisper(msg: twitch_chat.ChatMessage, text: str) -> bool:
     return True
 
 
-def wait_until_spoken():
-    """Poll body-gateway GET /speaking until the last answer has been spoken."""
+def wait_for_answer(at: str = "start"):
+    """Poll body-gateway GET /speaking until the last answer has started, or been spoken."""
     deadline = time.monotonic() + SPEAKING_WAIT_MAX_S
     while time.monotonic() < deadline:
         try:
             resp = requests.get(f"{BODY_GATEWAY_URL}/speaking", timeout=5)
             resp.raise_for_status()
-            if not resp.json().get("speaking"):
+            if twitch_chat.answer_ready(resp.json(), at):
                 return
         except (requests.RequestException, ValueError) as e:
             log(f"état « parle » inconnu ({e}) — message suivant sans attendre")
             return
         time.sleep(POLL_S)
-    log(f"toujours en train de parler après {SPEAKING_WAIT_MAX_S:.0f}s — message suivant")
+    log(f"réponse ni commencée ni finie après {SPEAKING_WAIT_MAX_S:.0f}s — message suivant"
+        if at == "start" else
+        f"toujours en train de parler après {SPEAKING_WAIT_MAX_S:.0f}s — message suivant")
 
 
 def main():
