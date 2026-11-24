@@ -188,7 +188,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 ### twitch-input
 
 **Image:** `$DOCKERHUB_USERNAME/twitch-input:latest` — **Code:** `robotics/inputs/twitch/`
-**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is ready it answers the newest one, and messages received in between are dropped. The robot is ready when NAO starts saying the answer: after each `/chat`, twitch-input polls `GET /speaking` on body-gateway until `started` (every `POLL_S` = 0.3 s, at most `SPEAKING_WAIT_MAX_S` = 120 s). The brain thus prepares the next answer while NAO plays the current one: its sentence is synthesized at once and waits behind the current one on each voice, its gesture waits on the static drone and starts as soon as the current one ends, without going back to rest.
+**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is ready it answers the newest one, and messages received in between are dropped. The robot is ready when NAO starts saying the answer: after each `/chat`, twitch-input polls `GET /speaking` on body-gateway until `started` (every `POLL_S` = 0.3 s, at most `SPEAKING_WAIT_MAX_S` = 120 s). The brain thus prepares the next answer while NAO plays the current one: its sentence is synthesized at once and waits behind the current one on each voice, its gesture waits on the static drone and starts as soon as the current one ends, without going back to rest. Its LEDs are held by the NAO driver until its sentence starts.
 
 | Variable (compose name) | Description |
 |---|---|
@@ -289,7 +289,7 @@ Formats defined by `robotics/drones/static/onboard/` (see its [README](../roboti
 | `/naoqi/leds` | cognitive_renderer | naoqi_driver | LED command |
 | `/naoqi/motion` | cognitive_renderer | naoqi_driver | Head joint command |
 | `/bodies/{id}/actuators/say` | body_gateway | naoqi_driver / static_driver | TTS text |
-| `/bodies/{id}/actuators/leds` | body_gateway | naoqi_driver | LED color |
+| `/bodies/{id}/actuators/leds` | body_gateway | naoqi_driver | LED color; with a `sync` id (answer with a learned gesture and a sentence) the driver holds it until that sentence starts (`go` on `/speech_gesture_sync`, `LED_SYNC_MAX_WAIT_S` = 20 s at most), so the color lasts as long as the sentence and the gesture |
 | `/bodies/{id}/actuators/motion` | body_gateway | naoqi_driver | Joint motion |
 | `/bodies/{id}/actuators/posture` | body_gateway | naoqi_driver | Posture preset |
 | `/bodies/{id}/actuators/move` | body_gateway | naoqi_driver | Walking command |

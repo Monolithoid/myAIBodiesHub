@@ -1221,7 +1221,7 @@ class BodyGatewayNode(Node):
                 try:
                     self._execute_action(body_id, action.get("type", ""), action,
                                          sync if (action is synced_speech or
-                                                  action.get("type") == "gesture") else None)
+                                                  action.get("type") in ("gesture", "leds")) else None)
                 except Exception as e:
                     self.get_logger().error(f"[{body_id}] Action error: {e}")
 
@@ -1259,7 +1259,12 @@ class BodyGatewayNode(Node):
             # Unknown color names default to white rather than silently emitting black.
             r, g, b = _COLORS.get(color_name, _COLORS["white"])
             msg = String()
-            msg.data = json.dumps({"group": "AllLeds", "r": r, "g": g, "b": b, "duration": 0.5})
+            order = {"group": "AllLeds", "r": r, "g": g, "b": b, "duration": 0.5}
+            if sync and not body_rules.is_voice(body_id):
+                # Lit by the NAO driver when this answer's sentence starts, not during
+                # the previous answer (the next one is prepared while NAO plays it).
+                order["sync"] = sync["id"]
+            msg.data = json.dumps(order)
             self._pub_leds[body_id].publish(msg)
 
         elif kind == "move":
