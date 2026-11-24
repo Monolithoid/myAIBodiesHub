@@ -243,3 +243,11 @@ class LatestQueue:
 def brain_prompt(msg: ChatMessage, question: str) -> str:
     """Text sent to body-gateway /chat; the format is described in its system prompt."""
     return f"[tchat Twitch] {msg.display_name} : {question}"
+
+
+def answer_ready(state: dict, at: str) -> bool:
+    """GET /speaking → may the next message go?  at="start": the last answer has
+    started (a body-gateway without "started" falls back to the end), "end": spoken."""
+    if not state.get("speaking"):
+        return True
+    return at == "start" and bool(state.get("started"))

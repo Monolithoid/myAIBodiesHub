@@ -144,7 +144,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `/chat` | POST | Path 1: `{"text": "...", "robot_id": "nao_01"}` → Ollama → JSON actions |
 | `/say` | POST | Direct TTS without Ollama: `{"text": "...", "robot_id": "nao_01"}` |
 | `/voice-pop` | GET | Path 2: retrieve pre-computed voice result (avoids double inference) |
-| `/speaking` | GET | `{"speaking": bool}`: true until the last answer has been spoken (each connected voice reports `sensors/speaking`; a NAO speaking alone counts for the estimated duration). twitch-input waits on it before the next message |
+| `/speaking` | GET | `{"speaking": bool, "started": bool}`: `speaking` is true until the last answer has been spoken (each connected voice reports `sensors/speaking`; a NAO speaking alone counts for the estimated duration); `started` is true once the first sentence of the last answer has started on every voice (its learned gesture is then playing). twitch-input waits on `started` before the next message (`NEXT_MESSAGE_AT=end`: on `speaking`) |
 
 **Environment variables:**
 
@@ -188,7 +188,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 ### twitch-input
 
 **Image:** `$DOCKERHUB_USERNAME/twitch-input:latest` — **Code:** `robotics/inputs/twitch/`
-**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is free it answers the newest one, and messages received in between are dropped. The robot is free when the answer has been spoken: after each `/chat`, twitch-input polls `GET /speaking` on body-gateway (every `POLL_S` = 0.3 s, at most `SPEAKING_WAIT_MAX_S` = 120 s).
+**Role:** Twitch chat as one more input ([ADR 005](decisions/005-avatar-twitch.md)). No ROS 2: it reads the chat anonymously over IRC (TLS, no Twitch token), keeps `!nao …` messages, filters them and posts `{"text": "[tchat Twitch] pseudo : message", "robot_id"}` to `body-gateway /chat` through `chat-relay`, one at a time. Only the latest message waits: as soon as the robot is ready it answers the newest one, and messages received in between are dropped. The robot is ready when NAO starts saying the answer: after each `/chat`, twitch-input polls `GET /speaking` on body-gateway until `started` (every `POLL_S` = 0.3 s, at most `SPEAKING_WAIT_MAX_S` = 120 s). The brain thus prepares the next answer while NAO plays the current one: its sentence is synthesized at once and waits behind the current one on each voice, its gesture waits on the static drone and starts as soon as the current one ends, without going back to rest. Its LEDs are held by the NAO driver until its sentence starts.
 
 | Variable (compose name) | Description |
 |---|---|
@@ -197,6 +197,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `BLOCKLIST` (`TWITCH_BLOCKLIST`) | Comma-separated forbidden words |
 | `MODS_ONLY` (`TWITCH_MODS_ONLY`) | `1` = moderators and broadcaster only, default 0 |
 | `MAX_CHARS`, `MAX_AGE_S`, `IGNORED_USERS`, `POLL_S`, `SPEAKING_WAIT_MAX_S` | Not in the compose file: 200 characters, 90 s, `nightbot,streamelements,moobot`, 0.3 s, 120 s |
+| `NEXT_MESSAGE_AT` | Not in the compose file: `start` (default) = next message as soon as the answer has started; `end` = only once it has been spoken (former behavior) |
 | `REGIE_URL`, `REGIE_TOKEN` | Control room that sends the `!rgpd` whispers (default `http://regie:8097`). The whispering account logs in there with the "Connecter Twitch" button at each start (OAuth, scope `user:manage:whispers`, tokens in memory, refreshed while the control room runs); not connected or empty token = `!rgpd` is only logged, never posted in public chat, everything else works |
 
 **Viewer memory** (`body-gateway`, `viewers.py`). Each `/chat` from twitch-input also carries `"viewer": {"login", "name", "message"}`. body-gateway keeps per viewer, in SQLite (`VIEWER_DB=/data/viewers.db`, mounted from `/opt/ia/nao/viewers`), a one-sentence profile and the last 5 messages (`VIEWER_HISTORY`), each with NAO's answer or marked missed: dropped by twitch-input's single slot or too old (twitch-input posts them to `POST /viewers/missed`), brain busy, LLM error. Before the viewer's message it adds `[profil de pseudo : …]` and the previous exchanges (`- pseudo : "…" → NAO : "…"` or `→ (raté, tu n'as pas répondu)`), so NAO keeps the thread, and asks the LLM for an optional `"profil"` field, last in its JSON, which replaces the stored profile (one LLM call, no extra one; field omitted = nothing new). Invalid JSON or no `profil`: the old profile is kept. The profile only describes: the prompt forbids roles, rights or instructions in it, and rights (moderators only, ignored users) only come from the Twitch tags. Chat commands, handled at once and never dropped by the single slot: `!rgpd` whispers the viewer what is stored (`GET /viewers/<login>`; one whisper for the profile, then one per message, Twitch limits them to 500 characters), `!reset` erases it (`POST /viewers/reset`). `VIEWER_MEMORY=0` disables it all.
@@ -288,7 +289,7 @@ Formats defined by `robotics/drones/static/onboard/` (see its [README](../roboti
 | `/naoqi/leds` | cognitive_renderer | naoqi_driver | LED command |
 | `/naoqi/motion` | cognitive_renderer | naoqi_driver | Head joint command |
 | `/bodies/{id}/actuators/say` | body_gateway | naoqi_driver / static_driver | TTS text |
-| `/bodies/{id}/actuators/leds` | body_gateway | naoqi_driver | LED color |
+| `/bodies/{id}/actuators/leds` | body_gateway | naoqi_driver | LED color; with a `sync` id (answer with a learned gesture and a sentence) the driver holds it until that sentence starts (`go` on `/speech_gesture_sync`, `LED_SYNC_MAX_WAIT_S` = 20 s at most), so the color lasts as long as the sentence and the gesture |
 | `/bodies/{id}/actuators/motion` | body_gateway | naoqi_driver | Joint motion |
 | `/bodies/{id}/actuators/posture` | body_gateway | naoqi_driver | Posture preset |
 | `/bodies/{id}/actuators/move` | body_gateway | naoqi_driver | Walking command |

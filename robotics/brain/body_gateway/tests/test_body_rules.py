@@ -246,6 +246,57 @@ class TestSpeakingTracker(unittest.TestCase):
         t.heard("obs_01", False, now=4)
         self.assertFalse(t.busy(now=4))
 
+    def test_started_when_the_first_sentence_of_the_answer_starts(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.answer()
+        t.said("static_01", "un", now=0)
+        t.said("static_01", "deux", now=0)
+        self.assertFalse(t.started(now=1))      # synthesis, gesture not started
+        t.heard("static_01", True, now=2)
+        self.assertTrue(t.started(now=2))       # second sentence still pending: started anyway
+        self.assertTrue(t.busy(now=2))
+
+    def test_next_answer_not_started_while_the_previous_one_plays(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.answer()
+        t.said("static_01", "réponse N", now=0)
+        t.heard("static_01", True, now=1)
+        t.answer()
+        t.said("static_01", "réponse N+1", now=3)   # waits behind N on the speaker
+        self.assertFalse(t.started(now=4))
+        t.heard("static_01", False, now=5)
+        t.heard("static_01", True, now=5.5)
+        self.assertTrue(t.started(now=5.5))
+
+    def test_started_on_every_voice(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.answer()
+        t.said("static_01", "salut", now=0)
+        t.said("obs_01", "salut", now=0)
+        t.heard("static_01", True, now=1)
+        self.assertFalse(t.started(now=1))
+        t.heard("obs_01", True, now=1.5)
+        self.assertTrue(t.started(now=1.5))
+
+    def test_started_when_given_up_or_spoken_by_the_nao(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        t.answer()
+        t.said("static_01", "bonjour", now=0)
+        self.assertTrue(t.started(now=11))      # never started: given up
+        t.answer()
+        t.said("nao_01", "bonjour", now=20)     # no speaking signal: at once
+        self.assertTrue(t.started(now=20))
+
+    def test_answer_without_speech(self):
+        t = body_rules.SpeakingTracker(start_grace_s=10)
+        self.assertTrue(t.started(now=0))
+        t.answer()
+        t.said("static_01", "un", now=0)
+        t.answer()                              # LEDs only
+        self.assertFalse(t.started(now=1))      # older sentence not started yet
+        t.heard("static_01", True, now=2)
+        self.assertTrue(t.started(now=2))
+
     def test_voice_that_never_starts_is_given_up(self):
         t = body_rules.SpeakingTracker(start_grace_s=10)
         t.said("static_01", "bonjour", now=0)

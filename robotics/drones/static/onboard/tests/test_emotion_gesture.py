@@ -297,6 +297,29 @@ class TestService(Base):
         self.assertIn(("b", "replaced"), self.bridge.states())
         self.assertFalse(s.gen.calls[-1][4])          # pas au repos : depuis la posture mesurée
 
+    def test_gesture_stops_the_return_to_rest(self):
+        s = self.service()
+        rest = self._back_to_rest(s)
+        self.bridge.robot(rest["id"], "playing")
+        s.on_request({"id": "b", "emotion": "fear", "intensity": 0.5})
+        s.step()
+        self.assertEqual(sum(1 for t, _ in self.bridge.out if t == "/nao/stop"), 1)
+        s.step()                                     # waits for "stopped"
+        self.assertEqual(sum(1 for t, _ in self.bridge.out if t == "/nao/stop"), 1)
+        self.bridge.pose = dict(POSES["start"])      # halfway: posture held
+        self.bridge.robot(rest["id"], "stopped")
+        s.step()
+        self.assertEqual(self.bridge.trajectories()[-1]["id"], "b")
+        self.assertFalse(s.gen.calls[-1][4])          # from the measured posture, not from rest
+
+    def test_reflex_does_not_stop_the_return_to_rest(self):
+        s = self.service()
+        rest = self._back_to_rest(s)
+        self.bridge.robot(rest["id"], "playing")
+        s.on_request({"id": "r", "emotion": "fear", "intensity": 0.3, "reflex": True})
+        s.step()
+        self.assertFalse(any(t == "/nao/stop" for t, _ in self.bridge.out))
+
     def test_old_generator_refused_with_reason(self):
         s = self.service()
         self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, old=True)).encode()

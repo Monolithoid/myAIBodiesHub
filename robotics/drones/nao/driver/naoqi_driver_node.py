@@ -43,6 +43,13 @@ Environment variables:
   RAW_MOTION         "0": only learned gestures move NAO; joint orders from the
                      LLM and cognitive_renderer, and
                      cognitive_renderer stiffness, are dropped. Default "1"
+  LED_SYNC_MAX_WAIT_S  an LED order linked to a sentence ("sync") waits for that
+                     sentence's start; shown anyway after this delay, default 20
+
+LEDs of an answer (led_sync.py): an /actuators/leds order with a "sync" id is
+held until the "go" of its sentence on /speech_gesture_sync, then turned on when
+the sentence starts; cognitive_renderer puts its profile back when the voice
+stops, so the color lasts as long as the sentence and the gesture.
 
 Motion decisions (the robot is a puppet: it crashes too often to decide):
   every /nao/motion, /nao/gesture and /nao/cmd_vel order goes through
@@ -79,6 +86,7 @@ except ImportError:
     import speech_services
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from led_sync import LedSync  # noqa: E402
 from motion_policy import MotionPolicy, load_limits, load_profile, parse_motion  # noqa: E402
 
 ROBOT_ID = os.environ.get("ROBOT_ID", "nao_01")
@@ -91,6 +99,7 @@ MOTION_LIMITS = os.environ.get("MOTION_LIMITS", "")
 # (LLM "motion"/"look", cognitive_renderer head animations) and
 # cognitive_renderer stiffness changes are dropped.  Same knob as body_gateway's LLM_MOTION.
 RAW_MOTION = os.environ.get("RAW_MOTION", "1").lower() not in ("0", "false", "no", "non", "off")
+LED_SYNC_MAX_WAIT_S = float(os.environ.get("LED_SYNC_MAX_WAIT_S", "20"))
 
 
 class NAOqiDriverNode(Node):
@@ -175,6 +184,11 @@ class NAOqiDriverNode(Node):
         self._motion = MotionPolicy(limits)
         self._profile_raw = None   # last motor profile applied, as sorted JSON
         self.create_timer(float(limits["min_interval"]), self._motion_tick)
+
+        # ── LEDs shown with their sentence (led_sync.py) ──────────────────────
+        self._led_sync = LedSync(LED_SYNC_MAX_WAIT_S)
+        self.create_subscription(String, "/speech_gesture_sync", self._on_speech_sync, 10)
+        self.create_timer(1.0, self._led_sync_tick)
 
         self.get_logger().info(
             f"naoqi_driver2 [{ROBOT_ID}] démarré"
@@ -479,8 +493,37 @@ class NAOqiDriverNode(Node):
                                    f"{data.get('reason', '')}")
 
     def _on_leds(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            data = None
+        sync = data.pop("sync", None) if isinstance(data, dict) else None
+        if sync:
+            # Answer prepared while NAO plays the previous one: lit with its sentence.
+            self._led_sync.hold(str(sync), data, time.time())
+            return
         self.get_logger().info(f"[{ROBOT_ID}] → /nao/leds")
         self.pub_nao_leds.publish(self._normalize_leds(msg.data))
+
+    def _on_speech_sync(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        released = self._led_sync.go(payload, time.time())
+        if released is None:
+            return
+        order, delay = released
+        self.get_logger().info(f"[{ROBOT_ID}] → /nao/leds dans {delay:.1f} s (phrase {payload.get('sync')})")
+        threading.Timer(delay, self._publish_leds, args=(order,)).start()
+
+    def _led_sync_tick(self):
+        for order in self._led_sync.expired(time.time()):
+            self.get_logger().warn(f"[{ROBOT_ID}] LEDs sans départ de leur phrase — allumées quand même")
+            self._publish_leds(order)
+
+    def _publish_leds(self, order: dict):
+        self.pub_nao_leds.publish(self._normalize_leds(json.dumps(order)))
 
     def _on_posture(self, msg: String):
         ok, why = self._motion.posture_allowed(msg.data, time.time())

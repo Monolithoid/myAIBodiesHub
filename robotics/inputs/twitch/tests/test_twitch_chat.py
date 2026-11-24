@@ -144,5 +144,20 @@ class TestDropped(unittest.TestCase):
         self.assertEqual(dropped, ["un", "deux"])
 
 
+class TestAnswerReady(unittest.TestCase):
+
+    def test_next_message_at_start(self):
+        self.assertFalse(twitch_chat.answer_ready({"speaking": True, "started": False}, "start"))
+        self.assertTrue(twitch_chat.answer_ready({"speaking": True, "started": True}, "start"))
+        self.assertTrue(twitch_chat.answer_ready({"speaking": False}, "start"))
+
+    def test_next_message_at_end(self):
+        self.assertFalse(twitch_chat.answer_ready({"speaking": True, "started": True}, "end"))
+        self.assertTrue(twitch_chat.answer_ready({"speaking": False, "started": True}, "end"))
+
+    def test_older_body_gateway_waits_for_the_end(self):
+        self.assertFalse(twitch_chat.answer_ready({"speaking": True}, "start"))
+
+
 if __name__ == "__main__":
     unittest.main()
