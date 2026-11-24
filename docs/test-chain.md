@@ -80,7 +80,7 @@ Checks that the required containers are in the `running` state.
 | `chat-relay` | Caddy proxy WebUI ↔ body-gateway | Yes |
 | `body-gateway` | ROS 2 brain + HTTP endpoint | Yes |
 | `naoqi-bridge` | HTTP bridge ↔ NAOqi SDK | Yes |
-| `nao-core` | naoqi_driver + cognitive_renderer + motion_engine | Yes |
+| `nao-core` | naoqi_driver + cognitive_renderer + static_driver | Yes |
 | `ollama` | LLM engine | Recommended |
 | `chromadb` | Vector memory | Optional |
 | `n8n` | Workflow orchestration | Optional |

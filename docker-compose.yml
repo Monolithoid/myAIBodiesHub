@@ -336,9 +336,8 @@ services:
       - DRONE_STATUS_TIMEOUT=${DRONE_STATUS_TIMEOUT:-90}
       - SPEAKING_SYNC=${NAO_SPEAKING_SYNC:-1}
       - OBS_DRONE_ID=${OBS_DRONE_ID:-obs_01}
-      # Constrained motor universe: arms only on LLM orders, motion-engine off.
+      # Constrained motor universe: arms only on LLM orders.
       - RENDERER_ARMS=${NAO_RENDERER_ARMS:-0}
-      - MOTION_ENGINE=${NAO_MOTION_ENGINE:-0}
       # LLM_MOTION=0: only learned gestures move NAO (no renderer head animation, no stiffness)
       - RAW_MOTION=${LLM_MOTION:-1}
     depends_on:

@@ -14,7 +14,7 @@ NAO (Wi-Fi, local network)
         └─► Outbound WebSocket ws://DRONE_IP:9090 (local network, no token)
               └─► static drone relay (Caddy): wss://rosbridge.$DOMAIN + token
                     └─► rosbridge-proxy → ros2-bridge (ROS 2 Humble, VPS)
-                    └─► nao-core (naoqi_driver + cognitive_renderer [+ motion_engine if MOTION_ENGINE=1])
+                    └─► nao-core (naoqi_driver + cognitive_renderer)
                           └─► body_gateway → Ollama (LLM)
 ```
 
@@ -466,7 +466,6 @@ its cognitive state profile.
 | `SPEAKING_SYNC` | `1` (`NAO_SPEAKING_SYNC`) | `0` disables the speaking animation |
 | `SPEAKING_TIMEOUT` | `120` | stop after this many seconds without `speaking=false` (0 = never) |
 | `RENDERER_ARMS` | `0` | `1` lets the profiles and the speaking animation move the arms and the energy set their stiffness |
-| `MOTION_ENGINE` | `0` | `1` starts `motion_engine` (free angles at 20 Hz, off in the constrained universe) |
 
 ### Dream engine
 

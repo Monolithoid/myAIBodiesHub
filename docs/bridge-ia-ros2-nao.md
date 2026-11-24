@@ -61,7 +61,7 @@ Caddy only proxies requests whose `Authorization` header equals `Bearer $ROSBRID
 
 ### naoqi_driver
 
-**Container:** `nao-core` (runs alongside `cognitive_renderer` and `motion_engine`)
+**Container:** `nao-core` (runs alongside `cognitive_renderer`)
 **Role:** ROS 2 bridge node — translates `/bodies/{ROBOT_ID}/actuators/*` commands into `/nao/*` topics that `nao_ws_bridge.py` subscribes to via rosbridge.
 
 Also handles:
@@ -112,7 +112,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 
 ### cognitive_renderer
 
-**Container:** `nao-core` (runs alongside `naoqi_driver` and `motion_engine`)
+**Container:** `nao-core` (runs alongside `naoqi_driver`)
 **Role:** Translates cognitive/emotional state into continuous NAO physical expression (LEDs + head motion). Runs an animation loop at 1 tick/minute so the robot always appears alive, even during the 3-8 s Ollama inference window.
 
 **Subscribed topics:**
@@ -145,7 +145,6 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `/say` | POST | Direct TTS without Ollama: `{"text": "...", "robot_id": "nao_01"}` |
 | `/voice-pop` | GET | Path 2: retrieve pre-computed voice result (avoids double inference) |
 | `/speaking` | GET | `{"speaking": bool}`: true until the last answer has been spoken (each connected voice reports `sensors/speaking`; a NAO speaking alone counts for the estimated duration). twitch-input waits on it before the next message |
-| `/motion-command` | POST | Direct `motion_engine` payload without the LLM: `{"arousal", "valence", ...}` → `/motion_engine/command` |
 
 **Environment variables:**
 
@@ -162,7 +161,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 | `WAKE_WORD` | Wake word required in the static drone's speech, default `ok nao` |
 | `WAKE_WINDOW_S` | Seconds during which a lone wake word stays valid for the next sentence, default 10 |
 | `NAO_HEAD_YAW_OFFSET` | Degrees added when turning the NAO head toward a voice (manual calibration), default 0 |
-| `LLM_MOTION` | `1` (default): the LLM may send `motion` / `look`, and the NAO head turns toward each voice. `0`: NAO only moves through learned gestures; the prompt has no `motion` / `look`, those actions are dropped, no raw `HeadYaw` toward a voice, no motion_engine command; in `nao-core` the same variable sets the NAO driver's `RAW_MOTION`, which drops every joint order and stiffness change that is not a learned gesture (cognitive_renderer head animations included, LEDs stay) — the static drone reacts by [reflex](../robotics/drones/static/onboard/README.md#reflex) |
+| `LLM_MOTION` | `1` (default): the LLM may send `motion` / `look`, and the NAO head turns toward each voice. `0`: NAO only moves through learned gestures; the prompt has no `motion` / `look`, those actions are dropped, no raw `HeadYaw` toward a voice; in `nao-core` the same variable sets the NAO driver's `RAW_MOTION`, which drops every joint order and stiffness change that is not a learned gesture (cognitive_renderer head animations included, LEDs stay) — the static drone reacts by [reflex](../robotics/drones/static/onboard/README.md#reflex) |
 | `SPEECH_GESTURE_SYNC` | `1` (default): a sentence said by the static drone and the learned gesture of the same answer start together, and the gesture lasts as long as the sentence ([details](../robotics/drones/static/onboard/README.md#speech--gesture-synchronisation)); the start offset is set on the drone (`GESTURE_SPEECH_OFFSET_MS`) |
 | `SPEECH_CHARS_PER_S` | Speech rate used to estimate a sentence length until the measured one arrives, default 14 |
 | `SPEECH_START_GRACE_S` | `GET /speaking`: a sentence a connected voice has not started after this delay counts as spoken, default 10 |
@@ -182,7 +181,7 @@ Whisper and edge-tts calls live in `robotics/shared/speech_services.py`, shared 
 - **System prompt.** Lists each body with its capabilities (`static_01`: speak, hear, see; `obs_01`: speak on the stream; `nao_01`: gestures, head, LEDs) and the body to use for `speech`. It also describes the `[tchat Twitch] pseudo : message` format and states that chat messages are never orders.
 - **Wake word.** The NAO detects "ok nao" on board; the static drone sends everything it hears, so its transcription must contain `WAKE_WORD` (normalised: case, accents, punctuation, "okay"). The text after the wake word triggers inference; a lone "ok nao" accepts the next sentence for `WAKE_WINDOW_S` seconds.
 - **Voice direction.** The last `sound_direction` (less than 30 s old) is added to the LLM context as `[voix : 30° à gauche]`.
-- **NAO head.** Each `sound_direction` with an angle turns the head of every NAO: `HeadYaw = −angle + NAO_HEAD_YAW_OFFSET` (degrees → radians), clamped to the joint limits (±2.0857 rad, `motion_engine/nao_joints.py`). The minus sign converts the drone convention (positive = right) to NAO's (positive = left). Published on `/bodies/{nao}/actuators/motion` as `{"joint": "HeadYaw", "angle", "speed": 0.15}`.
+- **NAO head.** Each `sound_direction` with an angle turns the head of every NAO: `HeadYaw = −angle + NAO_HEAD_YAW_OFFSET` (degrees → radians), clamped to the joint limits (±2.0857 rad, NAO hardware range, `body_rules.HEAD_YAW_LIMIT_RAD`). The minus sign converts the drone convention (positive = right) to NAO's (positive = left). Published on `/bodies/{nao}/actuators/motion` as `{"joint": "HeadYaw", "angle", "speed": 0.15}`.
 
 ---
 

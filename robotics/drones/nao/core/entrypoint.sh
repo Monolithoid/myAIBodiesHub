@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the ROS2 nodes in parallel: naoqi-driver, cognitive-renderer,
-# motion-engine (if MOTION_ENGINE=1), static-driver (static drone) unless DRONE_ID is empty, and
+# static-driver (static drone) unless DRONE_ID is empty, and
 # a second static-driver for the OBS voice if OBS_DRONE_ID is set (ADR 005).
 # If one stops, the container stops → Docker restarts it whole.
 # docker stop (SIGTERM) is relayed to all nodes, then we wait for them to end.
@@ -19,15 +19,6 @@ PIDS=()
 python3 -u /ros2_ws/naoqi_driver_node.py      &  PID_DRIVER=$!;   PIDS+=($!)
 python3 -u /ros2_ws/cognitive_renderer_node.py &  PID_RENDERER=$!; PIDS+=($!)
 echo "[nao-core] naoqi-driver(${PID_DRIVER})  cognitive-renderer(${PID_RENDERER})"
-
-# motion-engine sends free angles at 20 Hz: off in the constrained motor
-# universe (profile calibrated from the control room). MOTION_ENGINE=1 brings it back.
-if [ "${MOTION_ENGINE:-0}" = "1" ]; then
-    python3 -u -m motion_engine.node           &  PID_MOTION=$!; PIDS+=($!)
-    echo "[nao-core] motion-engine(${PID_MOTION})"
-else
-    echo "[nao-core] motion-engine off (MOTION_ENGINE=1 to start it)"
-fi
 
 if [ -n "${DRONE_ID:-}" ]; then
     python3 -u /ros2_ws/static_driver_node.py  &  PID_STATIC=$!; PIDS+=($!)
