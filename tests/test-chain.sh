@@ -22,7 +22,7 @@
 #
 #   body-gateway → publishes /bodies/nao_01/actuators/* (ROS2 DDS domain 42)
 #     ▼
-#   nao-core  (host network, DDS 42 — naoqi-driver + cognitive-renderer + motion-engine)
+#   nao-core  (host network, DDS 42 — naoqi-driver + cognitive-renderer)
 #     │  POST http://localhost:8090/say|motion|leds|…
 #     ▼
 #   naoqi-bridge  (ai-network, port 127.0.0.1:8090 exposed on the host)
@@ -226,12 +226,6 @@ if [ -n "$_C_CORE" ]; then
          'source /opt/ros/humble/setup.bash && ROS_DOMAIN_ID=42 \
           timeout 5 ros2 topic info /cognitive_state 2>/dev/null' \
          | grep -i 'publisher'"
-
-    _check "/motion_engine/command subscribed by motion-engine" \
-        "docker exec $_C_CORE bash -c \
-         'source /opt/ros/humble/setup.bash && ROS_DOMAIN_ID=42 \
-          timeout 5 ros2 topic info /motion_engine/command 2>/dev/null' \
-         | grep -i 'subscription'"
 else
     _skip "nao-core not available — ROS2 test skipped"
 fi

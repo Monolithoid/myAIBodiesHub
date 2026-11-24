@@ -44,7 +44,7 @@ RAW_MOTION_ACTIONS = ("motion", "look")
 # Bodies that only give NAO a voice: "speech" goes to every connected one.
 VOICE_TYPES = ("static", "obs")
 
-HEAD_YAW_LIMIT_RAD = 2.0857   # cf. motion_engine/nao_joints.py JOINT_LIMITS["HeadYaw"]
+HEAD_YAW_LIMIT_RAD = 2.0857   # NAO HeadYaw hardware range (cf. nao_ws_bridge.py _JOINT_HW_LIMITS)
 
 
 def body_type(body_id: str) -> str:

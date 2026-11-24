@@ -41,7 +41,7 @@ Environment variables:
   MOTION_LIMITS      JSON overriding motion_policy.DEFAULT_LIMITS, e.g.
                      '{"min_move_time": 0.5, "rest_delay": 5}', default empty
   RAW_MOTION         "0": only learned gestures move NAO; joint orders from the
-                     LLM, cognitive_renderer and motion_engine, and
+                     LLM and cognitive_renderer, and
                      cognitive_renderer stiffness, are dropped. Default "1"
 
 Motion decisions (the robot is a puppet: it crashes too often to decide):
@@ -88,7 +88,7 @@ NAO_STATUS_TIMEOUT = float(os.environ.get("NAO_STATUS_TIMEOUT", "90.0"))
 TTS_VOICE = os.environ.get("TTS_VOICE", "fr-FR-DeniseNeural")
 MOTION_LIMITS = os.environ.get("MOTION_LIMITS", "")
 # 0 = NAO only moves through learned gestures (static drone generator): joint orders
-# (LLM "motion"/"look", cognitive_renderer head animations, motion_engine) and
+# (LLM "motion"/"look", cognitive_renderer head animations) and
 # cognitive_renderer stiffness changes are dropped.  Same knob as body_gateway's LLM_MOTION.
 RAW_MOTION = os.environ.get("RAW_MOTION", "1").lower() not in ("0", "false", "no", "non", "off")
 

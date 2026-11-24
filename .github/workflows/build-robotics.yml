@@ -2,7 +2,7 @@ name: Build & Push — Robotics images
 
 # Publishes seven images to Docker Hub:
 #   monolithoid/naoqi-bridge  → Python 3.12 Alpine, Flask HTTP bridge to NAO
-#   monolithoid/nao-core      → ROS2 Humble, naoqi-driver + cognitive-renderer + motion-engine
+#   monolithoid/nao-core      → ROS2 Humble, naoqi-driver + cognitive-renderer
 #                               + static-driver (static drone, ADR 004)
 #   monolithoid/body-gateway  → ROS2 Humble, LLM ↔ ROS2 bus bridge
 #   monolithoid/ros2-bridge   → ROS2 Humble + rosbridge_server WebSocket :9090

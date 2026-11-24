@@ -160,7 +160,6 @@ ia-agent/
 │       │   ├── bridge/      → Flask HTTP bridge to NAO (naoqi-bridge container)
 │       │   ├── driver/      → ROS 2 node: topics → HTTP to naoqi-bridge
 │       │   ├── cognitive_renderer/ → ROS 2 node: cognitive state → LEDs / head
-│       │   ├── motion_engine/ → ROS 2 package: biomechanical synthesis (emotion → movement)
 │       │   └── core/        → Dockerfile + entrypoint of the nao-core container
 │       ├── static/          → Static drone (ADR 004): onboard/ (Raspberry Pi / PC) + driver/ (VPS ROS 2 node)
 │       ├── obs/             → NAO's voice on the stream: OBS overlay (ADR 005)

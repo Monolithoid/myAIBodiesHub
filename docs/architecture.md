@@ -31,7 +31,6 @@ ia-agent/
 │       │   ├── bridge/      → Flask HTTP bridge to NAO (naoqi-bridge container)
 │       │   ├── driver/      → ROS 2 node: /bodies/*/actuators/* → /nao/*
 │       │   ├── cognitive_renderer/ → ROS 2 node: cognitive state → LEDs / head
-│       │   ├── motion_engine/ → ROS 2 package: biomechanical synthesis (emotion → movement)
 │       │   └── core/        → Dockerfile + entrypoint of the nao-core container
 │       ├── static/          → Static drone (ADR 004): onboard/ (Raspberry Pi / PC) + driver/ (VPS ROS 2 node)
 │       ├── obs/             → NAO's voice on the stream: OBS overlay (ADR 005)
@@ -64,7 +63,7 @@ ia-agent/
 | `chromadb` | Vector memory | 8000 | Internal only |
 | `whisper-asr` | Speech transcription (STT) | 9000 | Internal only |
 | `naoqi-bridge` | Python 2.7 HTTP bridge → NAOqi SDK | 8090 | Internal (host) |
-| `nao-core` | ROS 2 Humble: naoqi_driver + cognitive_renderer + motion_engine + static_driver (×2: static drone and OBS voice) | — | host network |
+| `nao-core` | ROS 2 Humble: naoqi_driver + cognitive_renderer + static_driver (×2: static drone and OBS voice) | — | host network |
 | `body-gateway` | ROS 2 brain: LLM ↔ robotic bodies | 8095 | host network |
 | `ros2-bridge` | rosbridge_server WebSocket | 9090 | host network |
 | `rosbridge-proxy` | Caddy proxy: Traefik → ros2-bridge | 80 | robotics-net |

@@ -1,7 +1,7 @@
 FROM ros:humble-ros-base
 
 # Build context: robotics/ (to include robotics/shared/)
-# Brings naoqi-driver, cognitive-renderer and motion-engine together in one container,
+# Brings naoqi-driver and cognitive-renderer together in one container,
 # plus static-driver, the static drone's driver (ADR 004): same dependencies
 # (Whisper, edge-tts), same ROS 2 network.
 
@@ -27,13 +27,12 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 WORKDIR /ros2_ws
 
-# Scripts of the four nodes and shared module (Whisper + edge-tts)
+# Scripts of the three nodes and shared module (Whisper + edge-tts)
 COPY shared/speech_services.py                               ./speech_services.py
 COPY drones/nao/driver/naoqi_driver_node.py                  ./naoqi_driver_node.py
 COPY drones/nao/driver/motion_policy.py                      ./motion_policy.py
 COPY drones/nao/cognitive_renderer/cognitive_renderer_node.py ./cognitive_renderer_node.py
 COPY drones/nao/cognitive_renderer/speaking_animation.py      ./speaking_animation.py
-COPY drones/nao/motion_engine/motion_engine/                 ./motion_engine/
 COPY drones/static/driver/static_driver_node.py              ./static_driver_node.py
 
 # Entrypoint
