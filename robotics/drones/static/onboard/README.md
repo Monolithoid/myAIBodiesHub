@@ -145,11 +145,13 @@ body_gateway ── say {"text", "sync"} ──► static_driver_node: edge-tts,
    gestures into it and fits their tempo within a margin set by the intensity; the
    whole is capped at the guardian maximum duration. Since dataset `v0.0.6`, the
    `gesture` segment starts and ends at the start pose (moves from and back to it
-   included) and lasts about the speech; only a `rest_to_start` segment comes before
-   it when the robot is at rest. A robot neither at rest nor at the start pose (more
-   than the guardian `start_tolerance` away) gets no gesture: it is refused
-   (`start_mismatch`) and the sentence starts right away. With `v0.0.4`, separate
-   moves from and back to the start pose came around the gesture. The drone
+   included) and lasts about the speech. Rest is any posture that is not the start
+   pose (more than the guardian `start_tolerance` away, hands included), not a pose
+   that is checked: the drone then asks `from_rest=True` and a `rest_to_start`
+   segment goes from the measured posture to the start pose before the gesture
+   (dataset `v0.0.7` or later; `v0.0.6` refuses a posture away from the calibrated
+   rest pose with `not_at_rest`). With `v0.0.4`, separate moves from and back to the
+   start pose came around the gesture. The drone
    no longer stretches or tightens anything: the movement is played as generated. The
    `sent` state reports `draws` (learned gestures blended) and `time_scale` (the
    generator's tempo factor). `GESTURE_MATCH_SPEECH=0` asks for a single learned gesture
