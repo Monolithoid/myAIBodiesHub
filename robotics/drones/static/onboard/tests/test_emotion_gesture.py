@@ -106,8 +106,16 @@ class GestureGenerator(object):
         if getattr(self, "latent_dims", None):
             t = kw.get("temperature", 1.0)
             inputs = {"temperature": t, "latent": {"arms": [0.0] * 4 if t == 0.0 else [(seed or 0) % 7, 0.0, 0.0, 0.0]}}
-        return Gesture(joints, [0.0, 0.5, 1.0], rows, _Report(ok, "" if ok else "velocity"), None, [], inputs,
-                       ["note"], {})
+        times, sequence = [0.0, 0.5, 1.0], None
+        if kw.get("duration_s"):
+            # one movement of the requested length, capped like the real guardian
+            d = min(float(kw["duration_s"]), self.guardian.max_duration_s)
+            times = [0.0, d / 2, d]
+            sequence = {"draws": int(d) + 1, "time_scale": 1.1, "duration_s": d}
+        g = Gesture(joints, times, rows, _Report(ok, "" if ok else "velocity"), None, [], inputs,
+                    ["note"], {})
+        g.sequence = sequence
+        return g
 '''
 
 POSES = {"rest": {"LShoulderPitch": 1.4, "HeadYaw": 0.0}, "start": {"LShoulderPitch": 0.8, "HeadYaw": 0.0}}
@@ -385,46 +393,67 @@ class TestSpeechSync(Base):
     def go(self):
         return [d for t, d in self.bridge.out if t == eg.SYNC_TOPIC and d.get("kind") == "go"]
 
-    def test_gesture_fitted_to_measured_speech_and_speech_released_at_start(self):
+    def test_generator_asked_for_the_measured_speech_duration(self):
         s = self.service(speech_offset_ms=200.0, speech_wait_s=0.5)
         self.bridge.subs[eg.SYNC_TOPIC]({"data": json.dumps({"kind": "speech", "sync": "s-1", "speech_s": 3.0})})
         s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
+        self.assertEqual(s.gen.kwargs[-1]["duration_s"], 3.0)
         (traj,) = self.bridge.trajectories()
-        self.assertAlmostEqual(traj["times"][0][-1], 3.0)          # 1 s appris → 3 s de parole
+        self.assertAlmostEqual(traj["times"][0][-1], 3.0)          # the generator's length, as is
         (go,) = self.go()
         self.assertEqual(go["sync"], "s-1")
-        self.assertAlmostEqual(go["at"], 1000.2)
-        self.assertAlmostEqual(go["in_s"], 0.2)                     # same, as a delay (OBS voice)                    # départ du geste + 200 ms
+        self.assertAlmostEqual(go["at"], 1000.2)                    # start of the gesture + 200 ms
+        self.assertAlmostEqual(go["in_s"], 0.2)                     # same, as a delay (OBS voice)
         sent = [d for t, d in self.bridge.out if t == "/nao/emotion_gesture_state" and d["state"] == "sent"][-1]
-        self.assertEqual(sent["time_scale"], 3.0)
         self.assertEqual(sent["speech_s"], 3.0)
+        self.assertEqual(sent["draws"], 4)
+        self.assertEqual(sent["time_scale"], 1.1)
+        self.assertEqual(sent["duration_s"], 3.0)
         self.assertEqual(self.slept, [])
 
     def test_estimate_used_when_measure_missing(self):
         s = self.service(speech_wait_s=0.0)
         s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
+        self.assertEqual(s.gen.kwargs[-1]["duration_s"], 2.0)
         self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 2.0)
 
     def test_measured_first_sentence_plus_estimated_rest(self):
-        s = self.service(speech_wait_s=0.5, scale_max=10.0)
+        s = self.service(speech_wait_s=0.5)
         s.on_sync({"kind": "speech", "sync": "s-1", "speech_s": 2.5})
         self.assertEqual(s.speech_seconds({"id": "s-1", "speech_s": 5.0, "speech_s_first": 2.0}), 5.5)
 
-    def test_scale_clamped(self):
-        s = self.service(speech_wait_s=0.0, scale_max=1.5)
+    def test_drone_never_stretches_the_gesture(self):
+        # The generator caps at its guardian maximum (15 s): the drone plays it as is.
+        s = self.service(speech_wait_s=0.0)
         s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5,
-                      "sync": {"id": "s-1", "speech_s": 9.0}})
+                      "sync": {"id": "s-1", "speech_s": 20.0}})
         s.step()
-        self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.5)
+        self.assertEqual(s.gen.kwargs[-1]["duration_s"], 20.0)
+        self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 15.0)
 
-    def test_match_speech_off_keeps_learned_speed(self):
+    def test_every_try_gets_the_duration(self):
+        self.files["generator/nao_gesture.json"] = json.dumps(dict(self.data, cvae=True, refuse_drawn=["fear"])).encode()
+        s = self.service(speech_wait_s=0.0)
+        s.on_request({"id": "a", "emotion": "fear", "intensity": 0.5, "sync": self.SYNC})
+        s.step()
+        self.assertEqual([k["duration_s"] for k in s.gen.kwargs[-3:]], [2.0, 2.0, 2.0])
+        self.assertEqual(s.gen.kwargs[-1]["temperature"], 0.0)
+
+    def test_match_speech_off_keeps_a_single_gesture(self):
         s = self.service(speech_wait_s=0.0, match_speech=False)
         s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5, "sync": self.SYNC})
         s.step()
+        self.assertNotIn("duration_s", s.gen.kwargs[-1])
         self.assertAlmostEqual(self.bridge.trajectories()[0]["times"][0][-1], 1.0)
         self.assertEqual(len(self.go()), 1)
+
+    def test_no_duration_without_speech(self):
+        s = self.service()
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})
+        s.step()
+        self.assertNotIn("duration_s", s.gen.kwargs[-1])
 
     def test_negative_offset_delays_the_gesture(self):
         s = self.service(speech_wait_s=0.0, speech_offset_ms=-300.0)
@@ -459,54 +488,17 @@ class TestSpeechSync(Base):
 class _G(object):
     def __init__(self, times, segments):
         self.times, self.segments = times, segments
-        self.joints, self.positions = ["J"], [[0.0] for _ in times]
 
 
-class _Gen(object):
-    class guardian(object):
-        ok = True
-        min_window = 0.0     # plus court que ça : accélérations trop fortes
-
-        @classmethod
-        def check_trajectory(cls, t, joints, q, check_duration=True):
-            class R(object):
-                pass
-            r = R()
-            r.ok = cls.ok and t[-1] - t[0] >= cls.min_window - 1e-9
-            return r
-
-
-class TestFitToSpeech(unittest.TestCase):
+class TestExpressiveWindow(unittest.TestCase):
     SEGS = [("rest_to_start", 0.0, 1.0), ("start_to_gesture", 1.0, 1.5), ("gesture", 1.5, 2.5),
             ("gesture_to_start", 2.5, 3.0)]
 
-    def test_only_the_expressive_part_is_stretched(self):
-        g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
-        self.assertEqual(eg.fit_to_speech(_Gen, g, 4.0), 2.0)
-        self.assertEqual(g.times, [0.0, 1.0, 3.0, 5.0])            # passage au départ inchangé
-        self.assertEqual(g.segments[2], ("gesture", 2.0, 4.0))
-        self.assertEqual(eg.expressive_window(g), (1.0, 5.0))
+    def test_from_start_to_gesture_to_back_at_start(self):
+        self.assertEqual(eg.expressive_window(_G([0.0, 3.0], list(self.SEGS))), (1.0, 3.0))
 
-    def test_faster_only_if_guardian_accepts(self):
-        _Gen.guardian.ok = False
-        try:
-            g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
-            self.assertEqual(eg.fit_to_speech(_Gen, g, 1.0), 1.0)
-            self.assertEqual(g.times, [0.0, 1.0, 2.0, 3.0])
-        finally:
-            _Gen.guardian.ok = True
-        g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
-        self.assertEqual(eg.fit_to_speech(_Gen, g, 1.6), 0.8)
-        self.assertEqual(g.times, [0.0, 1.0, 1.8, 2.6])
-
-    def test_strongest_accepted_compression(self):
-        _Gen.guardian.min_window = 1.8       # fenêtre de 2 s : au mieux x0.9
-        try:
-            g = _G([0.0, 1.0, 2.0, 3.0], list(self.SEGS))
-            scale = eg.fit_to_speech(_Gen, g, 1.4)
-            self.assertTrue(0.9 <= scale < 0.92, scale)
-        finally:
-            _Gen.guardian.min_window = 0.0
+    def test_whole_movement_without_segments(self):
+        self.assertEqual(eg.expressive_window(_G([0.0, 2.0], [])), (0.0, 2.0))
 
 
 class TestReflex(Base):
