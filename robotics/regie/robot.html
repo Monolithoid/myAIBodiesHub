@@ -335,7 +335,7 @@ function renderGestures(st) {
   last.textContent = "";
   last.append(h("span", "", (st.id ? st.id + " · " : "") + (G_STATE[st.state] || st.state)));
   if (st.emotion) last.append(h("span", "muted", ` · ${st.emotion} ${st.intensity ?? ""}`));
-  if (st.sync) last.append(h("div", "muted", `parole ${st.speech_s ?? "?"} s · geste ×${st.time_scale ?? 1}` +
+  if (st.sync) last.append(h("div", "muted", `parole ${st.speech_s ?? "?"} s · geste ${st.duration_s ?? "?"} s, ${st.draws ?? 1} tirage(s) ×${st.time_scale ?? 1}` +
                                            ` · parole à ${st.speech_after_s ?? "?"} s de l'envoi du geste`));
   if (st.speech_offset_ms !== undefined) {
     document.getElementById("gOffsetNow").textContent = `en service : ${Math.round(st.speech_offset_ms)} ms`;

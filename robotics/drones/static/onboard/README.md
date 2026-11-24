@@ -63,8 +63,7 @@ repository, at the version written **by hand** in `emotion_gesture.env`:
 
 ```bash
 cp emotion_gesture.env.example emotion_gesture.env
-# then set a tag or a full commit:
-# GESTURE_DATASET_REF=v2026-11-18
+# GESTURE_DATASET_REF=v0.0.4 by default; change it for another tag or a full commit
 ```
 
 The service never follows `main` on its own. The files are checked (sha256 from
@@ -132,18 +131,21 @@ body_gateway ── say {"text", "sync"} ──► static_driver_node: edge-tts,
              │                              └─ /drones/{id}/audio_out {"mp3", "sync"} ─► static_drone.py
              │                                                                (sentence held back)
              └─ gesture {"…", "sync"} ──► NAO driver ──► emotion_gesture.py
-                                          1. generates the gesture, waits for the measured sentence duration
-                                          2. fits the expressive part to that duration
+                                          1. waits for the measured sentence duration
+                                          2. generate(..., duration_s=that duration): one movement
                                           3. /nao/trajectory → robot
                                              /speech_gesture_sync {"kind": "go", "at"} ─► the sentence starts
 ```
 
-1. **Duration**: the expressive part of the gesture (start pose → gesture → back to
-   the start pose) is stretched to last as long as the speech, up to x3
-   (`GESTURE_SPEECH_SCALE_MAX`). If longer than the speech, it is only sped up if the
-   guardian still accepts it (`GESTURE_SPEECH_SCALE_MIN`); with the current models,
-   already slowed down to the acceleration limits, this is rarely the case.
-   `GESTURE_MATCH_SPEECH=0` keeps the learned speed.
+1. **Duration**: the drone asks the generator for one movement as long as the speech
+   (`generate(..., duration_s=speech_s)`). The generator blends several learned
+   gestures into it and fits their tempo within a margin set by the intensity; the
+   `gesture` segment lasts about the speech, the moves from and back to the start pose
+   come around it, and the whole is capped at the guardian maximum duration. The drone
+   no longer stretches or tightens anything: the movement is played as generated. The
+   `sent` state reports `draws` (learned gestures blended) and `time_scale` (the
+   generator's tempo factor). `GESTURE_MATCH_SPEECH=0` asks for a single learned gesture
+   instead. The generator must accept `duration_s` (dataset `v0.0.4` or later).
 2. **Start**: the sentence starts at the beginning of the expressive part, plus
    `GESTURE_SPEECH_OFFSET_MS` (`emotion_gesture.env`): **positive = speech after the
    gesture, negative = before**. It makes up for what the drone cannot see (network to

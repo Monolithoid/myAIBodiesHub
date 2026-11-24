@@ -32,11 +32,11 @@ by body_gateway with a "sync" id):
 
     /nao/emotion_gesture   ← {..., "sync": {"id", "speech_s", "speech_s_first"}}
     /speech_gesture_sync   ← {"kind": "speech", "sync", "speech_s"}  (measured MP3 duration)
-    1. the gesture is generated, then the service waits for the measured sentence
-       duration (GESTURE_SPEECH_WAIT_S at most, otherwise body_gateway's estimate);
-    2. the expressive part (start → gesture → back to start) is stretched or
-       tightened to last as long as the speech (GESTURE_SPEECH_SCALE_MIN/MAX;
-       tightened only if the guardian still accepts it);
+    1. the service waits for the measured sentence duration (GESTURE_SPEECH_WAIT_S
+       at most, otherwise body_gateway's estimate);
+    2. the generator is asked for one movement of that duration
+       (generate(..., duration_s=speech_s)): it blends several learned gestures and
+       fits their tempo within its own margin; the drone no longer stretches anything;
     3. /speech_gesture_sync → {"kind": "go", "sync", "at", "in_s"}: the drone's speaker
        (static_drone.py) and the OBS voice (obs_agent.py, which uses `in_s`, the
        delay from now, since its clock is not the drone's) say the sentence at
@@ -90,8 +90,7 @@ def read_settings():
     """Rereads emotion_gesture.env (pinned by hand), then .env (rosbridge connection)."""
     for key in ("GESTURE_DATASET_REPO", "GESTURE_DATASET_REF", "GESTURE_CACHE_DIR",
                 "GESTURE_REST_DELAY", "GESTURE_RATE_HZ", "GESTURE_SPEECH_OFFSET_MS",
-                "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_SCALE_MIN", "GESTURE_SPEECH_SCALE_MAX",
-                "GESTURE_SPEECH_WAIT_S", "GESTURE_REFLEX", "GESTURE_REFLEX_SOUND",
+                "GESTURE_MATCH_SPEECH", "GESTURE_SPEECH_WAIT_S", "GESTURE_REFLEX", "GESTURE_REFLEX_SOUND",
                 "GESTURE_REFLEX_MOTION", "GESTURE_REFLEX_COOLDOWN_S",
                 "GESTURE_REFLEX_AZIMUTH_OFFSET_DEG", "GESTURE_REFLEX_NAO_ID",
                 "GESTURE_LATENT_TEMPERATURE"):
@@ -114,8 +113,6 @@ def read_settings():
         # Synchronisation avec la parole
         "speech_offset_ms": _clamp_offset_ms(_env_float("GESTURE_SPEECH_OFFSET_MS", 0.0)),
         "match_speech": _env("GESTURE_MATCH_SPEECH", "1").lower() not in ("0", "false", "no", "non", "off"),
-        "scale_min": _env_float("GESTURE_SPEECH_SCALE_MIN", 0.7),
-        "scale_max": _env_float("GESTURE_SPEECH_SCALE_MAX", 3.0),
         "speech_wait_s": _env_float("GESTURE_SPEECH_WAIT_S", 3.0),
         # Reflex: reaction to what the drone perceives, without the LLM
         "reflex": _env("GESTURE_REFLEX", "1").lower() not in ("0", "false", "no", "non", "off"),
@@ -187,80 +184,22 @@ def _clamp_offset_ms(ms):
 
 
 # ======================================================================
-# Durée du geste calée sur la parole
+# Start of the expressive part (where the sentence starts)
 # ======================================================================
 
 EXPRESSIVE = ("start_to_gesture", "gesture_to_start")
 
 
 def expressive_window(g):
-    """(début, fin) en s de la partie expressive : départ → geste → retour au départ.
+    """(start, end) in s of the expressive part: start pose → gesture → back to start.
 
-    Sans segments (ancien générateur), tout le mouvement."""
+    Without segments, the whole movement."""
     segs = dict((name, (float(a), float(b))) for name, a, b in (getattr(g, "segments", None) or []))
     if all(n in segs for n in EXPRESSIVE):
         return segs[EXPRESSIVE[0]][0], segs[EXPRESSIVE[1]][1]
     if "gesture" in segs:
         return segs["gesture"]
     return float(g.times[0]), float(g.times[-1])
-
-
-def warp_times(times, a, b, scale):
-    """Étire (scale > 1) ou resserre l'intervalle [a, b] ; ce qui suit est décalé d'autant."""
-    out = []
-    for t in times:
-        if t <= a:
-            out.append(t)
-        elif t <= b:
-            out.append(a + (t - a) * scale)
-        else:
-            out.append(t + (b - a) * (scale - 1.0))
-    return out
-
-
-def fit_to_speech(gen, g, speech_s, scale_min=0.7, scale_max=3.0):
-    """Cale la partie expressive du geste `g` sur `speech_s` secondes de parole.
-
-    Étirer ne fait que baisser vitesses et accélérations : toujours accepté.
-    Resserrer les augmente : on garde le resserrement le plus fort que le guardian
-    accepte encore sur la partie expressive (souvent aucun : le générateur a déjà
-    ralenti le geste jusqu'aux limites).  Renvoie le facteur appliqué (1.0 =
-    inchangé) et modifie `g` (times, segments)."""
-    a, b = expressive_window(g)
-    if not speech_s or speech_s <= 0 or b - a <= 0:
-        return 1.0
-    scale = max(float(scale_min), min(float(scale_max), float(speech_s) / (b - a)))
-    if abs(scale - 1.0) < 0.02:
-        return 1.0
-    if scale < 1.0:
-        check = getattr(gen.guardian, "check_trajectory", None)
-        if check is None:
-            return 1.0
-        idx = [i for i, t in enumerate(g.times) if a - 1e-9 <= t <= b + 1e-9]
-        rows = [list(g.positions[i]) for i in idx]
-
-        def accepted(sc):
-            tw = warp_times([float(g.times[i]) for i in idx], a, b, sc)
-            return check([t - tw[0] for t in tw], list(g.joints), rows, check_duration=False).ok
-
-        if not accepted(scale):
-            ok, bad = 1.0, scale            # recherche du resserrement accepté le plus fort
-            for _ in range(6):
-                mid = (ok + bad) / 2.0
-                if accepted(mid):
-                    ok = mid
-                else:
-                    bad = mid
-            if ok > 0.98:
-                return 1.0
-            scale = ok
-    times = warp_times([float(t) for t in g.times], a, b, scale)
-    g.times = times
-    if getattr(g, "segments", None):
-        g.segments = [(name, round(warp_times([x], a, b, scale)[0], 4),
-                       round(warp_times([y], a, b, scale)[0], 4)) for name, x, y in g.segments]
-    return round(scale, 3)
-
 
 
 # ======================================================================
@@ -607,7 +546,14 @@ class GestureService:
             self.state(gid, "refused", reason="aucun générateur en service")
             self.release_speech(req, "aucun générateur")
             return
+        sync = self._sync(req)
         try:
+            # Sentence duration first: the generator fills it with one movement
+            # (duration_s). The posture is measured after this wait.
+            speech_s = self.speech_seconds(sync) if sync else None
+            fit = {}
+            if speech_s and speech_s > 0 and self.settings.get("match_speech", True):
+                fit = {"duration_s": speech_s}
             pose = self.measure()
             joints = self._joints(gen)
             missing = [j for j in joints if j not in pose]
@@ -622,7 +568,7 @@ class GestureService:
             tries = generation_tries(gen, event, self.settings.get("latent_temperature"))
             for i, kw in enumerate(tries):
                 g = gen.generate(emotion, intensity, current_pose=pose, from_rest=from_rest,
-                                 return_to="start", **kw)
+                                 return_to="start", **dict(kw, **fit))
                 if g.ok:
                     break
         except Exception as exc:
@@ -633,15 +579,11 @@ class GestureService:
             self.state(gid, "refused", reason=g.report.summary())
             self.release_speech(req, "geste refusé")
             return
-        sync = self._sync(req)
         timing = {}
         if sync:
-            speech_s = self.speech_seconds(sync)
-            scale = 1.0
-            if self.settings.get("match_speech", True):
-                scale = fit_to_speech(gen, g, speech_s, self.settings.get("scale_min", 0.7),
-                                      self.settings.get("scale_max", 3.0))
-            timing = {"sync": sync["id"], "speech_s": speech_s, "time_scale": scale,
+            seq = getattr(g, "sequence", None) or {}
+            timing = {"sync": sync["id"], "speech_s": speech_s,
+                      "time_scale": seq.get("time_scale", 1.0), "draws": seq.get("draws"),
                       "speech_offset_ms": self.settings.get("speech_offset_ms", 0.0)}
         self._send(gid, g, pose, relax_end=False, to_rest=False, sync=sync, timing=timing,
                    reflex=bool(req.get("reflex")),
