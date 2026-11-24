@@ -523,6 +523,13 @@ class TestExpressiveWindow(unittest.TestCase):
     def test_whole_movement_without_segments(self):
         self.assertEqual(eg.expressive_window(_G([0.0, 2.0], [])), (0.0, 2.0))
 
+    def test_start_pose_inside_the_gesture(self):
+        # dataset v0.0.6 or later: no transition segments, the gesture starts and ends
+        # at the start pose; only the move from rest comes before it
+        self.assertEqual(eg.expressive_window(_G([0.0, 3.0], [("gesture", 0.0, 3.0)])), (0.0, 3.0))
+        self.assertEqual(eg.expressive_window(
+            _G([0.0, 3.4], [("rest_to_start", 0.0, 0.4), ("gesture", 0.4, 3.4)])), (0.4, 3.4))
+
 
 class TestReflex(Base):
     """What the drone perceives (sound, motion) -> short gesture, through the NAO driver."""

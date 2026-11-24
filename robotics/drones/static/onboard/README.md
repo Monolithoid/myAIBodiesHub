@@ -143,13 +143,19 @@ body_gateway ── say {"text", "sync"} ──► static_driver_node: edge-tts,
 1. **Duration**: the drone asks the generator for one movement as long as the speech
    (`generate(..., duration_s=speech_s)`). The generator blends several learned
    gestures into it and fits their tempo within a margin set by the intensity; the
-   `gesture` segment lasts about the speech, the moves from and back to the start pose
-   come around it, and the whole is capped at the guardian maximum duration. The drone
+   whole is capped at the guardian maximum duration. Since dataset `v0.0.6`, the
+   `gesture` segment starts and ends at the start pose (moves from and back to it
+   included) and lasts about the speech; only a `rest_to_start` segment comes before
+   it when the robot is at rest. A robot neither at rest nor at the start pose (more
+   than the guardian `start_tolerance` away) gets no gesture: it is refused
+   (`start_mismatch`) and the sentence starts right away. With `v0.0.4`, separate
+   moves from and back to the start pose came around the gesture. The drone
    no longer stretches or tightens anything: the movement is played as generated. The
    `sent` state reports `draws` (learned gestures blended) and `time_scale` (the
    generator's tempo factor). `GESTURE_MATCH_SPEECH=0` asks for a single learned gesture
    instead. The generator must accept `duration_s` (dataset `v0.0.4` or later).
-2. **Start**: the sentence starts at the beginning of the expressive part, plus
+2. **Start**: the sentence starts at the beginning of the expressive part (the
+   `gesture` segment; with `v0.0.4`, the move to the gesture before it), plus
    `GESTURE_SPEECH_OFFSET_MS` (`emotion_gesture.env`): **positive = speech after the
    gesture, negative = before**. It makes up for what the drone cannot see (network to
    the robot, `angleInterpolation` start-up, speaker latency): tune it by eye and ear,
