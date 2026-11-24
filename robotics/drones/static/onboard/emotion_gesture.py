@@ -564,7 +564,9 @@ class GestureService:
             if missing:
                 raise GestureError("angles manquants : " + ", ".join(missing))
             pose = dict((j, float(pose[j])) for j in joints)
-            from_rest = self._is_at_rest(gen, pose)
+            # Rest is any posture before the start pose (not a checked pose): away from
+            # the start pose, the generator adds rest_to_start from the measured posture.
+            from_rest = not self._is_at_start(gen, pose)
             emotion, intensity = req.get("emotion"), float(req.get("intensity", 0.5))
             event = req.get("event") or None
             # A new learned gesture each time (CVAE); refused: the fallbacks of
@@ -714,10 +716,10 @@ class GestureService:
                                                           if "hands" in gen.models]
 
     @staticmethod
-    def _is_at_rest(gen, pose):
-        rest, tol = gen.guardian.pose("rest"), 2 * gen.guardian.start_tolerance
-        hands = set(gen.groups.get("hands") or [])
-        return all(abs(pose[j] - rest[j]) <= tol for j in pose if j in rest and j not in hands)
+    def _is_at_start(gen, pose):
+        # same rule as the generator's start_mismatch check (hands included)
+        start, tol = gen.guardian.pose("start"), gen.guardian.start_tolerance
+        return all(abs(pose[j] - start[j]) <= tol for j in pose if j in start)
 
     def run(self, announce_every=30.0):
         last = 0.0

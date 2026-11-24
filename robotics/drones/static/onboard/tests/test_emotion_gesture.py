@@ -227,6 +227,14 @@ class TestFetch(Base):
 
 class TestService(Base):
 
+    def test_any_posture_before_the_start_pose_counts_as_rest(self):
+        s = self.service()
+        for pose, from_rest in (({"LShoulderPitch": 1.1, "HeadYaw": 0.5}, True),    # head turned
+                                ({"LShoulderPitch": 0.83, "HeadYaw": 0.0}, False)):  # within tolerance
+            self.bridge.pose = dict(pose)
+            s.play({"id": "p", "emotion": "joy", "intensity": 0.5})
+            self.assertIs(s.gen.calls[-1][4], from_rest)
+
     def test_gesture_from_rest_then_back_to_rest(self):
         s = self.service()
         s.on_request({"id": "a", "emotion": "joy", "intensity": 0.7, "event": {"azimuth_deg": 30}})
@@ -237,7 +245,7 @@ class TestService(Base):
         self.assertEqual(traj["start"], POSES["rest"])
         call = s.gen.calls[-1]
         self.assertEqual(call[2], {"azimuth_deg": 30})
-        self.assertTrue(call[4])                     # mesuré au repos
+        self.assertTrue(call[4])                     # pas à la pose de départ
         self.assertEqual(call[5], "start")
         self.assertTrue(self.bridge.last_state()["owns_body"])     # le driver laisse la main
         self.bridge.robot("a", "playing")
