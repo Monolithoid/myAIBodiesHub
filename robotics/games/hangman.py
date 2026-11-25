@@ -16,7 +16,9 @@ Rules:
     HANGMAN_MAX_ERRORS errors (7 by default);
   - points: 1 per letter revealed, 3 + letters still hidden for the word;
   - NAO plays too, with its own points: letters when a viewer asks it, and the
-    word when it says it in a sentence (move "said", checked by the code).
+    word when it says it in a sentence (move "said", checked by the code), at
+    any time; HANGMAN_NAO_MIN_FOUND (e.g. 0.5) makes it wait until that share of
+    the word is found, its sentence being replaced by a teasing one before.
 """
 
 import json
@@ -33,6 +35,9 @@ WORDS_PATH = os.environ.get("HANGMAN_WORDS",
                                          "words", "hangman_fr.json"))
 MAX_ERRORS = int(os.environ.get("HANGMAN_MAX_ERRORS", "7"))
 MIN_LETTERS = int(os.environ.get("HANGMAN_MIN_LETTERS", "6"))
+# NAO's own guess counts once this share of the word is found; 0 (default) = at
+# any time, NAO's sentence is never changed.
+NAO_MIN_FOUND = float(os.environ.get("HANGMAN_NAO_MIN_FOUND", "0"))
 DEFINITION_MAX_CHARS = 200
 
 LEVELS = {"facile": "easy", "moyen": "medium", "difficile": "hard",
@@ -84,7 +89,8 @@ class Hangman(Game):
     start_help = '"options": {"difficulty": "facile|moyen|difficile"} (moyen si rien n\'est demandé)'
 
     def __init__(self, words: dict | None = None, rng: random.Random | None = None,
-                 max_errors: int = MAX_ERRORS):
+                 max_errors: int = MAX_ERRORS, nao_min_found: float = NAO_MIN_FOUND):
+        self.nao_min_found = nao_min_found
         self._words = words
         self._rng = rng or random.Random()
         self.max_errors = max_errors
@@ -206,6 +212,15 @@ class Hangman(Game):
         if kind == "said" and player.is_nao:
             # NAO said the word in a sentence (body-gateway asked /check): its own guess.
             if leaks(str(move.get("text", "")), self.word):
+                found = 1 - self.hidden_count() / max(1, len(self.target))
+                if found < self.nao_min_found:
+                    # Too early: NAO keeps its idea to itself, its sentence is not said.
+                    return Event("nao_holds", "NAO a une idée du mot mais laisse chercher.",
+                                 self._rng.choice([
+                                     "J'ai bien une petite idée, mais je vous laisse chercher !",
+                                     "Je crois savoir… mais je ne dis rien, à vous de jouer !",
+                                     "Hé hé, j'ai ma petite idée. Allez, encore quelques lettres !"]),
+                                 ok=False, mood="frimeur")
                 return self._won(player, WORD_BONUS + self.hidden_count(), f"{player.label()} dit le mot")
             return Event("invalid", "NAO n'a pas dit le mot.", ok=False)
         return Event("invalid", "Ce coup n'existe pas au pendu : on propose une lettre ou le mot entier.",

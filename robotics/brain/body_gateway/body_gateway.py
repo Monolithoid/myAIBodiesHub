@@ -1161,9 +1161,16 @@ class BodyGatewayNode(Node):
                 continue
             result = GAMES.play({"type": "game_move", "move": {"type": "said", "text": text}},
                                 game_link.NAO_PLAYER, text)
-            if result is None or not (result.get("event") or {}).get("ok"):
-                return parsed
-            return self._game_reaction(interaction, body_id, result, game_link.NAO_PLAYER["name"])
+            event = (result or {}).get("event") or {}
+            if event.get("ok"):
+                return self._game_reaction(interaction, body_id, result,
+                                           game_link.NAO_PLAYER["name"])
+            # Too early (or game-master unreachable): the word is not said.
+            self._emit("game", interaction, event=event.get("kind", "nao_holds"), ok=False,
+                       text="phrase de NAO remplacée : elle donnait le mot trop tôt")
+            actions = [{**a, "text": event.get("say") or "Je ne dis rien, à vous de jouer !"}
+                       if a is action else a for a in parsed.get("actions", [])]
+            return self._nao_says_the_word(interaction, body_id, {**parsed, "actions": actions})
         return parsed
 
     def _reveal_after_speech(self, version):

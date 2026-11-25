@@ -34,6 +34,14 @@
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
   #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
   #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
+  /* Ranking of the game (points of every game played, NAO included). */
+  #scores { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.15);
+            font-size: 16px; color: #d6d6de; }
+  #scores:empty { display: none; }
+  #scores .head { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fd3ff; }
+  #scores .row { display: flex; justify-content: space-between; }
+  #scores .row.first { color: #ffe08a; font-weight: 700; }
+  #scores .inline span { margin-right: 14px; }
 </style>
 </head>
 <body>
@@ -42,6 +50,7 @@
   <div id="view"></div>
   <div id="event"></div>
   <div id="footer"></div>
+  <div id="scores"></div>
 </div>
 <script>
 "use strict";
@@ -107,6 +116,28 @@ function fitText(el, maxPx, minPx) {
   }
 }
 
+// Ranking: the top 3 on one line during the game, the top 5 as a list at the end.
+const MEDALS = ["🥇", "🥈", "🥉"];
+function renderScores(scores, over) {
+  const el = document.getElementById("scores");
+  el.replaceChildren();
+  const top = (scores && scores.top) || [];
+  if (!top.length) return;
+  el.append(text("div", "head", "Classement"));
+  if (over) {
+    top.slice(0, 5).forEach((s, i) => {
+      const row = text("div", i === 0 ? "row first" : "row", "");
+      row.append(text("span", "", (MEDALS[i] || `${i + 1}.`) + " " + s.name),
+                 text("span", "", s.points + " pts"));
+      el.append(row);
+    });
+  } else {
+    const line = text("div", "inline", "");
+    top.slice(0, 3).forEach((s, i) => line.append(text("span", "", `${MEDALS[i]} ${s.name} ${s.points}`)));
+    el.append(line);
+  }
+}
+
 const END_KINDS = new Set(["won", "lost", "cancelled", "over"]);
 let hideTimer = null;
 
@@ -135,6 +166,7 @@ function render(state) {
     hideTimer = setTimeout(() => panel.classList.remove("shown"), 20000);
   }
   document.getElementById("event").textContent = last ? (last.say || last.text) : "";
+  renderScores(state.scores, !activity);
   panel.classList.add("shown");
 }
 
