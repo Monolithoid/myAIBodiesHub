@@ -101,6 +101,15 @@ Environment variables:
   VIEWER_PROFILE_MAX         longest viewer profile kept, in characters, default 200
   VIEWER_HISTORY             last messages kept per viewer, with NAO's answer, default 5
 
+Games with the viewers (ADR 010, game_link.py): with GAME_MASTER_URL and GAME_TOKEN,
+the prompt of a /chat message lists the games, or the running game's public state;
+a start_game / game_move action is forwarded to game-master, which settles it, and
+a second LLM call writes NAO's reaction to the settled event (the first answer is
+not played).  POST /game-event {"event", "state"}: an event game-master announces
+by itself (game stopped from the control room…), NAO reacts to it.
+  GAME_MASTER_URL            default empty (no games), compose: http://127.0.0.1:8098
+  GAME_TOKEN                 game-master's API secret
+
 Twitch viewers (viewers.py): twitch-input adds {"viewer": {"login", "name",
 "message"}} to /chat.  The viewer's one-sentence profile and last messages,
 each with NAO's answer or marked missed, go before the message; the LLM may add
@@ -130,6 +139,7 @@ from std_msgs.msg import Bool, Float32, String
 import body_rules
 import brain_client
 import events
+import game_link
 import persona
 import viewers
 
@@ -181,6 +191,9 @@ if os.environ.get("VIEWER_MEMORY", "1").lower() in ("0", "false", "no", "non", "
     VIEWER_DB = ""
 VIEWER_PROFILE_MAX  = int(os.environ.get("VIEWER_PROFILE_MAX", str(viewers.PROFILE_MAX_CHARS)))
 VIEWER_HISTORY      = int(os.environ.get("VIEWER_HISTORY", str(viewers.HISTORY_SIZE)))
+# Games with the viewers (ADR 010): disabled without the URL or the token.
+GAMES = game_link.GameLink(os.environ.get("GAME_MASTER_URL", "").strip(),
+                           os.environ.get("GAME_TOKEN", "").strip())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompts
@@ -864,6 +877,12 @@ class BodyGatewayNode(Node):
                     self._viewer_reset()
                 elif self.path == "/viewers/missed":
                     self._viewer_missed()
+                elif self.path == "/game-event":
+                    body = self._read_json()
+                    if body is not None:
+                        result = node._game_event(body if isinstance(body, dict) else {})
+                        self._json(200 if result.get("ok") else
+                                   (400 if result.get("error") == "missing event" else 503), result)
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -976,10 +995,13 @@ class BodyGatewayNode(Node):
                 login = str(viewer["login"])
                 context = viewers.context_lines(str(viewer.get("name") or login),
                                                 self._viewers.get(login))
+            game_state = GAMES.state()
             parsed = self._decide(
                 interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7,
-                viewer_context=context,
+                viewer_context=context, extra_system=game_link.prompt_section(game_state),
             )
+            profile = parsed.get("profil")
+            parsed = self._play_game(interaction, body_id, parsed, viewer, source, user_input)
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -995,7 +1017,7 @@ class BodyGatewayNode(Node):
             # or no "profil" field keeps the old profile.
             answered = True
             self._remember(viewer, speech_text,
-                           viewers.clean_profile(parsed.get("profil"), VIEWER_PROFILE_MAX))
+                           viewers.clean_profile(profile, VIEWER_PROFILE_MAX))
             return {
                 "thoughts": parsed.get("thoughts", ""),
                 "emotion":  parsed.get("emotion", "neutral"),
@@ -1028,6 +1050,82 @@ class BodyGatewayNode(Node):
                                  str(viewer.get("message") or ""), answer, profile)
         except Exception as e:
             self.get_logger().error(f"Viewer memory: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Games with the viewers (ADR 010): game-master decides, the LLM speaks
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _play_game(self, interaction: str, body_id: str, parsed: dict, viewer: dict | None,
+                   source: str, user_input: str) -> dict:
+        """A start_game / game_move action → game-master settles it → NAO's reaction.
+
+        Returns the answer to play: the reaction, or the first answer without its
+        game actions when there is none or game-master cannot be reached.
+        """
+        action = game_link.game_action(parsed.get("actions", []))
+        if action is None:
+            return parsed
+        parsed = {**parsed, "actions": game_link.without_game_actions(parsed.get("actions", []))}
+        player = game_link.player_of(viewer, source)
+        message = str((viewer or {}).get("message") or user_input)
+        result = GAMES.play(action, player, message)
+        if result is None:
+            self.get_logger().warn(f"game-master injoignable — action {action.get('type')} ignorée")
+            self._emit("error", interaction, message="game-master injoignable")
+            return parsed
+        return self._game_reaction(interaction, body_id, result, (viewer or {}).get("name", ""))
+
+    def _game_reaction(self, interaction: str, body_id: str, result: dict,
+                       player_name: str = "") -> dict:
+        """Second LLM call: NAO reacts to the event settled by game-master."""
+        event, state = result.get("event") or {}, result.get("state")
+        self._emit("game", interaction, event=event.get("kind", ""), ok=bool(event.get("ok")),
+                   text=event.get("text", ""), by=player_name,
+                   game=((state or {}).get("activity") or {}).get("game", ""))
+        try:
+            parsed = self._decide(
+                interaction, body_id, game_link.reaction_input(event, state, player_name),
+                _AWAKE_SYSTEM, 0.7,
+                extra_system=game_link.prompt_section(state) + "\n" + game_link.REACTION_RULES,
+            )
+        except brain_client.BRAIN_ERRORS as e:
+            # The API is late: game-master's canned sentence, so the game goes on.
+            self.get_logger().error(f"LLM error (game reaction): {e}")
+            self._emit("error", interaction, message=f"LLM : {e}")
+            parsed = {}
+        actions = game_link.without_game_actions(parsed.get("actions", []))
+        if not any(a.get("type") == "speech" and str(a.get("text", "")).strip() for a in actions):
+            actions.append({"body": self._speech_body(body_id), "type": "speech",
+                            "text": event.get("say") or event.get("text", "")})
+        return {**parsed, "actions": actions}
+
+    def _game_event(self, body: dict) -> dict:
+        """POST /game-event: an event game-master announces by itself (stop, timer)."""
+        event = body.get("event") if isinstance(body.get("event"), dict) else {}
+        if not event.get("text"):
+            return {"error": "missing event"}
+        body_id = next((b for b in BODY_REGISTRY if not body_rules.is_voice(b)), BODY_REGISTRY[0])
+        if not self._infer_lock.acquire(timeout=25):
+            self._emit("ignored", source="game", body=body_id, text=event["text"], reason="busy")
+            return {"error": "busy"}
+        interaction = events.new_id()
+        self._emit("input", interaction, source="game", body=body_id, text=event["text"], author="")
+        try:
+            self._publish_cognitive("thinking")
+            parsed = self._game_reaction(interaction, body_id,
+                                         {"event": event, "state": body.get("state")})
+            self._publish_emotion(parsed.get("emotion", "neutral"))
+            self._publish_energy(parsed.get("energy", "medium"))
+            self._publish_cognitive("responding")
+            self._dispatch_actions(parsed.get("actions", []), interaction)
+            return {"ok": True}
+        except Exception as e:
+            self.get_logger().error(f"Game event error: {e}")
+            self._emit("error", interaction, message=str(e))
+            return {"error": str(e)}
+        finally:
+            self._infer_lock.release()
+            self._publish_cognitive("listening")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Asynchronous inference (sonar proximity, bumper touch, dream ticks)
@@ -1088,14 +1186,18 @@ class BodyGatewayNode(Node):
                 self._publish_cognitive("listening")
 
     def _decide(self, interaction: str, body_id: str, user_input: str,
-                template: str, temperature: float, viewer_context: str = "") -> dict:
+                template: str, temperature: float, viewer_context: str = "",
+                extra_system: str = "") -> dict:
         """One LLM call: prompt → parsed JSON, published on /events as a decision.
 
         viewer_context: profile lines of the Twitch viewer who speaks (viewers.py);
         the rules asking for the "profil" field are then added to the system prompt.
+        extra_system: more rules at the end of the system prompt (games, game_link.py).
         """
         started = time.monotonic()
         system = self._system_prompt(template)
+        if extra_system:
+            system += "\n" + extra_system
         user = self._user_content(body_id, user_input)
         if viewer_context:
             system += "\n" + viewers.PROMPT_RULES

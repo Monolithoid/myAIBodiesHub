@@ -106,8 +106,20 @@ class TestViewerCommands(unittest.TestCase):
     def test_commands(self):
         self.assertEqual(twitch_chat.viewer_command("!rgpd"), "rgpd")
         self.assertEqual(twitch_chat.viewer_command(" !RESET "), "reset")
-        for text in ("!reset tout", "!rgpdx", "!nao reset", "reset"):
+        self.assertEqual(twitch_chat.viewer_command("!stop"), "stop")
+        for text in ("!reset tout", "!rgpdx", "!nao reset", "reset", "!stop le jeu"):
             self.assertIsNone(twitch_chat.viewer_command(text), text)
+
+    def test_roles_from_badges(self):
+        def roles(tags):
+            return twitch_chat.parse_privmsg(
+                f"@{tags} :bob!bob@bob.tmi.twitch.tv PRIVMSG #chan :!nao salut").roles
+        self.assertEqual(roles("badges=;mod=0"), [])
+        self.assertEqual(roles("badges=broadcaster/1;mod=0"), ["broadcaster", "moderator"])
+        self.assertEqual(roles("badges=moderator/1;mod=1"), ["moderator"])
+        self.assertEqual(roles("badges=vip/1,subscriber/12"), ["vip", "subscriber"])
+        self.assertEqual(roles("badges=founder/0"), ["subscriber"])
+        self.assertEqual(roles("badges=;subscriber=1"), ["subscriber"])
 
     def test_user_id(self):
         msg = twitch_chat.parse_privmsg(

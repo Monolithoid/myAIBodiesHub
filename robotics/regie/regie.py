@@ -60,6 +60,11 @@ Environment variables:
   TWITCH_CLIENT_ID      Twitch app client id, for the "!rgpd" whispers (optional)
   TWITCH_CLIENT_SECRET  Twitch app client secret (optional; empty = no Twitch button)
   TWITCH_REDIRECT_URI   default https://<host of the request>/twitch/callback
+  GAME_MASTER_URL   games service (ADR 010), default http://game-master:8098
+  GAME_TOKEN        its API secret (empty = no "Annuler le jeu" button action)
+
+"Annuler le jeu" (POST /game/stop?token=…) cancels the running game in
+game-master, which has NAO announce it.
 """
 
 import collections
@@ -73,6 +78,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from twitch_auth import TwitchAuth
@@ -90,6 +96,8 @@ NAO_ID          = os.environ.get("NAO_ID", "nao_01")
 TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "").strip()
 TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "").strip()
 TWITCH_REDIRECT_URI  = os.environ.get("TWITCH_REDIRECT_URI", "").strip()
+GAME_MASTER_URL = os.environ.get("GAME_MASTER_URL", "http://game-master:8098").rstrip("/")
+GAME_TOKEN      = os.environ.get("GAME_TOKEN", "").strip()
 
 PAGE_HTML = pathlib.Path(__file__).with_name("regie.html")
 ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
@@ -345,6 +353,9 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/twitch/whisper":
             self._twitch_whisper()
             return
+        if url.path == "/game/stop":
+            self._stop_game()
+            return
         if url.path == "/twitch/logout":
             TWITCH.logout()
             self._send(200, b'{"ok": true}', "application/json")
@@ -399,6 +410,27 @@ class Handler(BaseHTTPRequestHandler):
         code, error = TWITCH.whisper(to_user_id, message)
         self._send(code, json.dumps({"ok": code == 200, "error": error}).encode(),
                    "application/json")
+
+    def _stop_game(self):
+        """"Annuler le jeu": game-master stops the running game, NAO announces it."""
+        if not GAME_TOKEN:
+            self._send(503, json.dumps({"error": "GAME_TOKEN non configuré sur la régie"}).encode(),
+                       "application/json")
+            return
+        req = urllib.request.Request(
+            GAME_MASTER_URL + "/stop", method="POST",
+            data=json.dumps({"player": {"name": "la régie", "source": "regie"}}).encode(),
+            headers={"Authorization": f"Bearer {GAME_TOKEN}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read()
+        except OSError as e:
+            log(f"game stop failed: {e}")
+            self._send(502, json.dumps({"error": f"game-master injoignable : {e}"}).encode(),
+                       "application/json")
+            return
+        log("game stop requested from the page")
+        self._send(200, body, "application/json")
 
     def _redirect(self, location: str):
         self.send_response(302)

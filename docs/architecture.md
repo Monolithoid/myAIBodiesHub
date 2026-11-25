@@ -71,19 +71,20 @@ ia-agent/
 | `twitch-input` | Twitch chat input "!nao" → body-gateway | — | ai-network |
 | `obs-agent` | NAO's voice on the stream (OBS overlay, body `obs_01`) | 8096 | Public (`obs.$DOMAIN`, token) |
 | `regie` | Control room: live `/events` stream (inputs, LLM decisions, actions) | 8097 | Public (`regie.$DOMAIN`, token) |
+| `game-master` | Games with the viewers: the code decides, the LLM speaks (ADR 010) | 8098 | Public overlay (`games.$DOMAIN`, token); API on 127.0.0.1 for body-gateway |
 | `bitterbot-gateway` *(disabled)* | AI agent with long-term memory | 19001 | SSH tunnel |
 
 ## Docker networks
 
 ```
 ai-network (bridge, internet)
-  └── ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge, chat-relay, twitch-input
+  └── ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge, chat-relay, twitch-input, game-master
 
 bitterbot-net (bridge, internal — no internet access)
   └── (reserved for bitterbot-gateway — see ADR 003)
 
 robotics-net (bridge, internet)
-  └── rosbridge-proxy, naoqi-bridge, obs-agent, regie
+  └── rosbridge-proxy, naoqi-bridge, obs-agent, regie, twitch-input, game-master
 
 host network
   └── nao-core, body-gateway, ros2-bridge  (ROS 2 DDS domain 42)

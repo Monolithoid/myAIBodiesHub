@@ -37,6 +37,8 @@ Environment variables:
   MODS_ONLY             1 = only moderators and the broadcaster, default 0
   REGIE_URL             control room that sends the "!rgpd" whispers, default http://regie:8097
   REGIE_TOKEN           its page secret (optional; empty = "!rgpd" is only logged)
+  GAME_MASTER_URL       games service (ADR 010), default http://game-master:8098
+  GAME_TOKEN            its API secret (empty = "!stop" is only logged)
 
 The Twitch account that whispers is connected in the control room ("Connecter
 Twitch" button, once per start): this service holds no Twitch token.  Not
@@ -49,6 +51,11 @@ the single slot are sent to POST /viewers/missed and kept as missed.  Two chat c
   !rgpd    whispers the viewer what is stored about them (never in public chat),
            one whisper for the profile then one per message
   !reset   erases it
+  !stop    (moderators and the broadcaster) cancels the running game; NAO announces it
+
+Games (ADR 010) need nothing else here: they go through "!nao" in natural
+language.  The viewer's chat badges are forwarded ("roles") so game-master
+can check who may start a game.
 """
 
 import os
@@ -83,6 +90,8 @@ IGNORED_USERS    = _env_list("IGNORED_USERS", "nightbot,streamelements,moobot")
 MODS_ONLY        = os.environ.get("MODS_ONLY", "0") == "1"
 REGIE_URL        = os.environ.get("REGIE_URL", "http://regie:8097").rstrip("/")
 REGIE_TOKEN      = os.environ.get("REGIE_TOKEN", "").strip()
+GAME_MASTER_URL  = os.environ.get("GAME_MASTER_URL", "http://game-master:8098").rstrip("/")
+GAME_TOKEN       = os.environ.get("GAME_TOKEN", "").strip()
 
 TWITCH_IRC_HOST = "irc.chat.twitch.tv"
 TWITCH_IRC_PORT = 6697
@@ -157,7 +166,8 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
                     "text": twitch_chat.brain_prompt(msg, question),
                     "robot_id": ROBOT_ID,
                     # body-gateway keeps a short profile per viewer (viewers.py).
-                    "viewer": {"login": msg.user, "name": msg.display_name, "message": question},
+                    "viewer": {"login": msg.user, "name": msg.display_name, "message": question,
+                               "roles": msg.roles},   # game-master: who may start a game
                 },
                 timeout=180,
             )
@@ -180,7 +190,9 @@ def worker_loop(inbox: twitch_chat.LatestQueue):
 
 def viewer_command(command: str, msg: twitch_chat.ChatMessage):
     try:
-        if command == "reset":
+        if command == "stop":
+            stop_game(msg)
+        elif command == "reset":
             resp = requests.post(f"{BODY_GATEWAY_URL}/viewers/reset",
                                  json={"login": msg.user}, timeout=10)
             resp.raise_for_status()
@@ -195,6 +207,22 @@ def viewer_command(command: str, msg: twitch_chat.ChatMessage):
                     break
     except (requests.RequestException, ValueError, KeyError, IndexError) as e:
         log(f"!{command} from {msg.display_name} failed: {e}")
+
+
+def stop_game(msg: twitch_chat.ChatMessage):
+    """"!stop": a moderator cancels the running game; game-master has NAO announce it."""
+    if not msg.is_mod:
+        log(f"!stop from {msg.display_name} ignored: moderators only")
+        return
+    if not GAME_TOKEN:
+        log(f"!stop from {msg.display_name}: GAME_TOKEN empty, nothing sent")
+        return
+    resp = requests.post(f"{GAME_MASTER_URL}/stop", timeout=10,
+                         headers={"Authorization": f"Bearer {GAME_TOKEN}"},
+                         json={"player": {"login": msg.user, "name": msg.display_name,
+                                          "roles": msg.roles, "source": "twitch"}})
+    resp.raise_for_status()
+    log(f"!stop from {msg.display_name}: {resp.json().get('event', {}).get('kind')}")
 
 
 def report_missed(msg: twitch_chat.ChatMessage, question: str):

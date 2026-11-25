@@ -21,6 +21,7 @@ Summary view of all the project's containers, their roles and how they exchange 
 | **chat-relay** | Lightweight Caddy reverse proxy. Makes body-gateway (host network) reachable from ai-network for open-webui and twitch-input. | `open-webui`, `twitch-input` → HTTP chat requests (HTTP/JSON, port 8095) | `body-gateway` (host) ← relayed HTTP requests (HTTP/JSON, port 8095) |
 | **twitch-input** | Twitch chat input (ADR 005). Reads the chat over anonymous IRC, keeps `!nao …` messages, filters them (length, links, banned words, per-viewer delay, moderators-only option) and sends them one by one to the brain. Refuses to start without `TWITCH_CHANNEL`. | Twitch → chat messages (IRC over TLS, `irc.chat.twitch.tv:6697`); `chat-relay` ← brain response (HTTP/JSON, ignored) | `chat-relay` → `{"text": "[tchat Twitch] nickname : message", "robot_id"}` (HTTP/JSON, `POST /chat`) |
 | **obs-agent** | NAO's voice on the stream (ADR 005): body `obs_01` with the `speech` capability. A rosbridge client like the static drone; serves the overlay `https://<obs-agent domain>/overlay?token=$OBS_TOKEN` (domain chosen in Coolify), to open as an OBS browser source. Only "connected" while the overlay is open. | `rosbridge-proxy` ← `/drones/obs_01/audio_out` (base64 MP3) and `/bodies/obs_01/actuators/say` (subtitle); OBS → overlay opening (HTTPS through Traefik) | `rosbridge-proxy` → `/drones/obs_01/status` (heartbeat) and `/drones/obs_01/speaking` (Bool); OBS ← HTML overlay + audio (OBS mixer) |
+| **game-master** | Games with the stream's viewers (ADR 010, [games.md](games.md)): settles each move by code and returns the public state (never the solution); one activity at a time; scores in SQLite; OBS overlay `https://<game-master domain>/overlay?token=$GAME_TOKEN`. Refuses to start without `GAME_TOKEN`. | `body-gateway` → `POST /start`, `/move`, `GET /state` (HTTP/JSON, `127.0.0.1:8098`); `regie`, `twitch-input` → `POST /stop` | `body-gateway` ← announced events (`POST /game-event` through `chat-relay`); OBS ← overlay (HTML + SSE) |
 | **regie** | Control room (ADR 007): page `https://<regie domain>/?token=$REGIE_TOKEN` (domain chosen in Coolify) showing live each input, the LLM decision and the actions routed to the bodies. Read-only rosbridge client. | `rosbridge-proxy` ← `/events` (JSON published by body-gateway), `/cognitive_state`, `/emotion_state` | browser ← HTML page + SSE stream (HTTPS through Traefik) |
 | **bitterbot-gateway** *(disabled)* | Autonomous agent with long-term memory (SQLite) and a dream engine. Disabled since ADR 003 in favour of direct Ollama calls from body-gateway. | `ollama` ← generated text (HTTP/JSON) | `ollama` → inference requests (HTTP/JSON) |
 
@@ -80,6 +81,19 @@ Twitch chat "!nao …"
 Speech goes out on every connected voice, whatever the input: an answer to
 "ok nao" is also heard on the stream if the overlay is open.
 
+### Games with the viewers (ADR 010)
+
+```
+Twitch chat "!nao je propose le E"
+  └─► twitch-input (+ chat badges) → chat-relay → body-gateway (POST /chat)
+        ├─► LLM: the message becomes {"type": "game_move", ...}
+        ├─► game-master (127.0.0.1:8098, POST /move): settled by code → event + public state
+        │     └─► OBS overlay updated (SSE)
+        └─► LLM: NAO's reaction to the event → voices, gesture, LEDs
+control room "Annuler le jeu" / "!stop" (moderator) → game-master POST /stop
+  └─► chat-relay → body-gateway POST /game-event → NAO announces it
+```
+
 ### User chat through a browser
 
 ```
@@ -110,7 +124,7 @@ NAO, static drone or obs-agent (outbound WebSocket)
 
 | Network | Type | Member containers | Internet access |
 |---|---|---|---|
-| `ai-network` | bridge | ollama, open-webui, n8n, chromadb, naoqi-bridge, whisper-asr, chat-relay, twitch-input | yes |
+| `ai-network` | bridge | ollama, open-webui, n8n, chromadb, naoqi-bridge, whisper-asr, chat-relay, twitch-input, game-master | yes |
 | `bitterbot-net` | bridge (internal) | *(reserved for bitterbot-gateway)* | no |
-| `robotics-net` | bridge | rosbridge-proxy, naoqi-bridge, obs-agent, regie | yes |
+| `robotics-net` | bridge | rosbridge-proxy, naoqi-bridge, obs-agent, regie, twitch-input, game-master | yes |
 | host | — | ros2-bridge, nao-core, body-gateway | through the host |

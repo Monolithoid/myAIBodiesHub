@@ -383,6 +383,9 @@ services:
       # Twitch viewer profiles (viewers.py); VIEWER_MEMORY=0 disables them
       - VIEWER_MEMORY=${VIEWER_MEMORY:-1}
       - VIEWER_DB=/data/viewers.db
+      # Games with the viewers (ADR 010): game-master on the host's loopback
+      - GAME_MASTER_URL=http://127.0.0.1:8098
+      - GAME_TOKEN=${GAME_TOKEN:-}
     volumes:
       # NAO's personality, reread on every LLM call (persona.py)
       - /opt/ia/nao/persona:/opt/nao/persona:ro
@@ -517,9 +520,12 @@ services:
       # "!rgpd" whispers are sent by the control room (Twitch account connected there)
       - REGIE_URL=http://regie:8097
       - REGIE_TOKEN=${REGIE_TOKEN:-}
+      # "!stop" (moderators) cancels the running game (ADR 010)
+      - GAME_MASTER_URL=http://game-master:8098
+      - GAME_TOKEN=${GAME_TOKEN:-}
     networks:
       - ai-network
-      - robotics-net   # reaches regie for the "!rgpd" whispers
+      - robotics-net   # reaches regie for the "!rgpd" whispers, game-master for "!stop"
     depends_on:
       - chat-relay
 
@@ -588,10 +594,48 @@ services:
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
       - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:-}
       - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}
+      # "Annuler le jeu" button (ADR 010)
+      - GAME_MASTER_URL=http://game-master:8098
+      - GAME_TOKEN=${GAME_TOKEN:-}
     networks:
       - robotics-net
     depends_on:
       - rosbridge-proxy
+
+  # ----------------------------------------------------------
+  # GAME MASTER — games with the stream's viewers (ADR 010)
+  #
+  # The code decides, the LLM speaks. Viewers play through "!nao" in
+  # natural language: body-gateway's LLM turns the message into a move,
+  # game-master settles it and returns the public state (never the
+  # solution), then the LLM writes NAO's reaction. One activity at a time.
+  # Without GAME_TOKEN, the container refuses to start.
+  # body-gateway (host network) reaches it on 127.0.0.1:8098; the
+  # control room and twitch-input ("!stop") on robotics-net.
+  # OBS overlay (browser source): https://<game-master domain>/overlay?token=$GAME_TOKEN
+  # Domain: to choose in Coolify (Domains field of the service), with the
+  # container port, e.g. https://games.${DOMAIN}:8098.
+  # ----------------------------------------------------------
+  game-master:
+    image: ${DOCKERHUB_USERNAME}/game-master:latest
+    container_name: game-master
+    restart: unless-stopped
+    environment:
+      - GAME_TOKEN=${GAME_TOKEN:-}
+      - BODY_GATEWAY_URL=http://chat-relay:8095
+      - GAME_START_ROLES=${GAME_START_ROLES:-everyone}
+      - MOVE_COOLDOWN_S=${MOVE_COOLDOWN_S:-0}
+      - GAMES_DB_PATH=/data/games.db
+    ports:
+      - "127.0.0.1:8098:8098"
+    volumes:
+      # Scores (SQLite)
+      - /opt/ia/nao/games:/data
+    networks:
+      - ai-network     # reaches body-gateway through chat-relay (POST /game-event)
+      - robotics-net   # reached by regie and twitch-input
+    depends_on:
+      - chat-relay
 
 # ============================================================
 # NETWORKS
@@ -608,6 +652,7 @@ services:
 # robotics-net (bridge, internet access):
 #   rosbridge-proxy — Caddy WebSocket proxy to ros2-bridge (host)
 #   naoqi-bridge, obs-agent, regie — rosbridge-proxy clients (token)
+#   game-master — reached by regie and twitch-input (also on ai-network)
 #
 # ROS2 nodes (ros2-bridge, nao-core, body-gateway):
 #   network_mode: host — ROS2 Humble DDS (domain 42) on the host network.
