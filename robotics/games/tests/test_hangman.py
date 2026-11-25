@@ -141,11 +141,15 @@ class TestMoves(unittest.TestCase):
         event = g.on_move({"type": "word", "word": "araignées"}, BOB)
         self.assertEqual(event.kind, "bad")
         self.assertEqual(g.errors, 1)
+        g.on_move({"type": "word", "word": "Ananas"}, ALICE)
+        self.assertEqual(g.public_view()["wrong_words"], ["ARAIGNEES", "ANANAS"])
+        self.assertIn("mots faux : ARAIGNEES, ANANAS", g.summary())
+        self.assertEqual(g.public_view()["tried"], [])   # words are not letters
         event = g.on_move({"type": "word", "word": "araignée"}, BOB)
         self.assertEqual(event.kind, "word_refused")
         self.assertFalse(event.ok)
         self.assertEqual(letter(g, "a", BOB).kind, "good")   # letters still allowed
-        self.assertEqual(g.on_move({"type": "word", "word": "araignée"}, ALICE).kind, "won")
+        self.assertEqual(g.on_move({"type": "word", "word": "araignée"}, Player("carol", "Carol")).kind, "won")
 
     def test_lost_after_max_errors(self):
         g = game(max_errors=3)

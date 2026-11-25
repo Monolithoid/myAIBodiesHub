@@ -153,6 +153,11 @@ function renderGame(state) {
       const wrong = new Set(v.wrong || []);
       (v.tried || []).forEach(c => tried.append(el("span", { className: wrong.has(c) ? "bad" : "" }, c), " "));
       box.append(tried);
+      if ((v.wrong_words || []).length) {
+        const words = el("div", {}, "Mots faux : ");
+        v.wrong_words.forEach(w => words.append(el("span", { className: "bad" }, w), " "));
+        box.append(words);
+      }
       box.append(el("div", { className: "muted" }, `Erreurs : ${v.errors} / ${v.max_errors}`));
     } else {
       box.append(el("div", {}, a.summary || ""));

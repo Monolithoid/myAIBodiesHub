@@ -100,6 +100,7 @@ class Hangman(Game):
         self.tried: list[str] = []          # letters, in the order they were played
         self.errors = 0
         self.no_word: set[str] = set()      # logins who proposed a wrong word
+        self.wrong_words: list[str] = []    # wrong words, in the order they were proposed
         self.definition = ""
         self._ask: dict | None = None
         self._over = False
@@ -128,6 +129,7 @@ class Hangman(Game):
             "mask": self.mask(), "letters": len(self.target),
             "tried": [c.upper() for c in self.tried],
             "wrong": [c.upper() for c in self.wrong_letters()],
+            "wrong_words": [w.upper() for w in self.wrong_words],
             "errors": self.errors, "max_errors": self.max_errors,
             "definition": self.definition, "level": LEVEL_NAMES[self.level],
         }
@@ -140,6 +142,8 @@ class Hangman(Game):
         wrong = self.wrong_letters()
         if wrong:
             parts.append("lettres absentes : " + ", ".join(c.upper() for c in wrong))
+        if self.wrong_words:
+            parts.append("mots faux : " + ", ".join(w.upper() for w in self.wrong_words))
         # No definition here: this goes to the LLM, which would guess the word from it.
         return " ; ".join(parts)
 
@@ -274,6 +278,8 @@ class Hangman(Game):
             return self._won(player, WORD_BONUS + self.hidden_count(), f"{who} trouve le mot")
         if player.login:
             self.no_word.add(player.login)
+        if guess not in self.wrong_words:
+            self.wrong_words.append(guess)
         return self._error(f"{who} propose le mot « {raw.strip()} » : ce n'est pas le bon. "
                            f"{who} ne peut plus proposer de mot.",
                            self._rng.choice([f"Non {who}, ce n'est pas ça !",

@@ -57,8 +57,8 @@ Twitch "!nao je propose le E"
 - End: word found, or `HANGMAN_MAX_ERRORS` errors (7). Points: 1 per letter revealed,
   3 + the letters still hidden for the word.
 - Overlay: the word (`R _ _ _ _ T _ _ _ X`), the definition, the letters tried (wrong
-  ones struck out), the gallows drawn step by step with the errors; it stays on screen
-  a little while after the end with the solution.
+  ones struck out), the wrong words proposed, the gallows drawn step by step with the
+  errors; it stays on screen a little while after the end with the solution.
 
 ### Hidden LLM calls
 
