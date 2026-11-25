@@ -1012,7 +1012,8 @@ class BodyGatewayNode(Node):
                 viewer_context=context, extra_system=game_link.prompt_section(game_state),
             )
             profile = parsed.get("profil")
-            parsed = self._play_game(interaction, body_id, parsed, viewer, source, user_input)
+            parsed = self._play_game(interaction, body_id, parsed, viewer, source, user_input,
+                                     game_state)
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -1067,18 +1068,22 @@ class BodyGatewayNode(Node):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _play_game(self, interaction: str, body_id: str, parsed: dict, viewer: dict | None,
-                   source: str, user_input: str) -> dict:
+                   source: str, user_input: str, game_state: dict | None = None) -> dict:
         """A start_game / game_move action → game-master settles it → NAO's reaction.
 
         Returns the answer to play: the reaction, or the first answer without its
         game actions when there is none or game-master cannot be reached.
         """
+        message = str((viewer or {}).get("message") or user_input)
         action = game_link.game_action(parsed.get("actions", []))
         if action is None:
-            return parsed
+            # The LLM forgot the action in an unambiguous case ("e", "on joue au pendu ?").
+            action = game_link.fallback_action(message, game_state)
+            if action is None:
+                return parsed
+            self.get_logger().info(f"Action de jeu déduite par le code : {action}")
         parsed = {**parsed, "actions": game_link.without_game_actions(parsed.get("actions", []))}
         player = game_link.player_of(viewer, source)
-        message = str((viewer or {}).get("message") or user_input)
         result = GAMES.play(action, player, message)
         # Hidden LLM calls game-master asks for (hangman definition): outside NAO's prompt.
         for _ in range(game_link.MAX_ASKS):
