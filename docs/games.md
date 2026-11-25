@@ -27,6 +27,31 @@ Twitch "!nao je propose le E"
   in the chat; NAO announces it.
 - When the LLM is late, NAO says a canned sentence given by game-master.
 
+## Hangman
+
+- Start: "!nao on joue au pendu ?" (optionally "facile", "moyen", "difficile"; medium
+  by default). A French common noun of 6 to 12 letters is drawn from
+  [`robotics/games/words/hangman_fr.json`](../robotics/games/words/README.md)
+  (Lexique 3.83, CC BY-SA 4.0).
+- Right after the draw, a **hidden LLM call** writes a short definition. The code
+  checks it gives nothing away (the word, its stem, its letters spelled out); otherwise
+  the game goes on without a definition. NAO reads the definition when the game starts.
+- Moves: a letter ("!nao je propose le E"), or the whole word at any time. Letters are
+  compared without accents. A wrong word costs an error, and that viewer may no longer
+  propose a word in this game (letters still allowed).
+- End: word found, or `HANGMAN_MAX_ERRORS` errors (7). Points: 1 per letter revealed,
+  3 + the letters still hidden for the word.
+- Overlay: the word (`R _ _ _ _ T _ _ _ X`), the definition, the letters tried (wrong
+  ones struck out), the gallows drawn step by step with the errors; it stays on screen
+  a little while after the end with the solution.
+
+### Hidden LLM calls
+
+When a game needs the LLM for something NAO must not see, game-master's answer holds
+an `ask` (`{"id", "purpose", "system", "user"}`). body-gateway runs that call outside
+NAO's prompt and posts the text to `POST /answer`; only its purpose goes to `/events`.
+The mystery's archivist will use the same path.
+
 ## Services
 
 | Service | Role in the games |
@@ -47,6 +72,7 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /start` | `{"game", "player", "message", "options"}` | `{"event", "state"}` |
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
+| `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
 | `GET /overlay?token=…` | — | OBS page (Server-Sent Events from `/overlay/stream`) |
 
 `player` is `{"login", "name", "roles", "source"}`; `roles` among `broadcaster`,
@@ -61,6 +87,8 @@ room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points"}`:
 | `GAME_TOKEN` | game-master, body-gateway, twitch-input, regie | — | API and overlay secret (game-master refuses to start without it; empty elsewhere = games off) |
 | `GAME_START_ROLES` | game-master | `everyone` | who may start a game: `everyone`, or a comma list among `moderator`, `vip`, `subscriber` (the streamer always may) |
 | `MOVE_COOLDOWN_S` | game-master | `0` | per-viewer delay between two moves |
+| `HANGMAN_MAX_ERRORS` | game-master | `7` | errors before the hangman game is lost |
+| `HANGMAN_MIN_LETTERS` | game-master | `6` | shortest hangman word (the list holds 6 to 12 letters) |
 | `GAMES_DB_PATH` | game-master | `/data/games.db` | scores (volume `/opt/ia/nao/games`) |
 | `GAME_MASTER_URL` | body-gateway | empty (compose: `http://127.0.0.1:8098`) | empty = no games in the prompt |
 
@@ -72,10 +100,12 @@ Overlay in OBS: give game-master a domain in Coolify (container port 8098, e.g.
 
 A game is a `game_core.Game` subclass registered in `game_master.GAMES`:
 
-- `id`, `name`, `how_to_play` (the moves and their JSON form, in French, for the LLM);
+- `id`, `name`, `how_to_play` (the moves and their JSON form, in French, for the LLM),
+  `start_help` (start options, in French);
 - `start(player, options)` and `on_move(move, player)` return an `Event`;
 - `summary()` (public state for the LLM), `public_view()` (overlay), `is_over()`;
-- optional: `recap()`, `on_tick(now)` (an event announced by NAO).
+- optional: `recap()`, `on_tick(now)` (an event announced by NAO), `pending_ask()` /
+  `on_answer()` (hidden LLM call).
 
 The overlay has a default view (`view.big`, `view.lines`); a game may add its own
 renderer in `overlay.html` (`views[<id>]`).

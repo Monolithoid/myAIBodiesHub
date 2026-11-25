@@ -18,6 +18,10 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
   POST /start {"game", "player", "message", "options"}  → {"event", "state"}
   POST /move  {"move", "player"}                         → {"event", "state"}
   POST /stop  {"player"}                                 → {"event", "state"}, announced by NAO
+  POST /answer {"id", "text", "player"}                  → {"event", "state"}: text of a
+                                   hidden LLM call ("" = failed)
+  An answer may also hold "ask": {"id", "purpose", "system", "user"}, a hidden LLM call
+  body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
   GET  /overlay?token=…            OBS page; /overlay/stream?token=… its SSE feed
 
 "player" is {"login", "name", "roles": [...], "source"}: roles are the chat badges
@@ -33,6 +37,8 @@ Environment variables:
                       among moderator, vip, subscriber (the streamer always may)
   MOVE_COOLDOWN_S     per-viewer delay between two moves, default 0 (none)
   GAMES_DB_PATH       SQLite file of the scores, default /data/games.db; empty = no scores
+  HANGMAN_MAX_ERRORS  errors before the hangman game is lost, default 7
+  HANGMAN_MIN_LETTERS shortest hangman word, default 6 (the list holds 6 to 12 letters)
 """
 
 import hmac
@@ -49,6 +55,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import requests
 
 import game_core
+import hangman
 
 GAME_TOKEN       = os.environ.get("GAME_TOKEN", "").strip()
 GAME_PORT        = int(os.environ.get("GAME_PORT", "8098"))
@@ -60,8 +67,8 @@ GAMES_DB_PATH    = os.environ.get("GAMES_DB_PATH", "/data/games.db").strip()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Games offered to the viewers: id → Game class.  Filled by the games themselves.
-GAMES: dict = {}
+# Games offered to the viewers: id → Game class.
+GAMES: dict = {hangman.Hangman.id: hangman.Hangman}
 
 
 def log(text: str):
@@ -173,6 +180,8 @@ def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer 
                                      str(body.get("message", "")), body.get("options") or {})
             elif url.path == "/move":
                 event = master.move(body.get("move") or {}, player)
+            elif url.path == "/answer":
+                event = master.answer(str(body.get("id", "")), str(body.get("text", "")), player)
             elif url.path == "/stop":
                 event = master.stop(player)
                 if event.ok and announcer is not None:
@@ -181,7 +190,11 @@ def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer 
                 self._json(404, {"error": "not found"})
                 return
             log(f"{url.path[1:]} by {player.label()}: {event.kind} — {event.text[:80]}")
-            self._json(200, {"event": event.to_dict(), "state": master.state()})
+            answer = {"event": event.to_dict(), "state": master.state()}
+            ask = master.pending_ask()
+            if ask is not None and url.path != "/stop":
+                answer["ask"] = ask
+            self._json(200, answer)
 
         def _stream(self):
             q = feed.subscribe()

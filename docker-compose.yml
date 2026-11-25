@@ -626,6 +626,9 @@ services:
       - GAME_START_ROLES=${GAME_START_ROLES:-everyone}
       - MOVE_COOLDOWN_S=${MOVE_COOLDOWN_S:-0}
       - GAMES_DB_PATH=/data/games.db
+      # Hangman: errors allowed, shortest word drawn (the list holds 6 to 12 letters)
+      - HANGMAN_MAX_ERRORS=${HANGMAN_MAX_ERRORS:-7}
+      - HANGMAN_MIN_LETTERS=${HANGMAN_MIN_LETTERS:-6}
     ports:
       - "127.0.0.1:8098:8098"
     volumes:

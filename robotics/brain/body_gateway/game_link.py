@@ -7,6 +7,10 @@ game-master decides, the LLM speaks.  For a "!nao" message:
   2. the LLM may answer with a start_game or game_move action (game_action);
   3. body-gateway forwards it to game-master (GameLink.start / move), which
      settles it and returns the event and the new public state;
+  3b. when game-master needs the LLM for something NAO must not see (the hangman
+     word's definition), its answer holds an "ask": body-gateway runs that hidden
+     call outside NAO's prompt (hidden_messages) and posts the text back
+     (GameLink.answer), which settles the event;
   4. a second LLM call writes NAO's reaction to that event (REACTION_RULES,
      reaction_input); the first answer is not played, so NAO never announces a
      result it did not get from game-master.
@@ -52,13 +56,15 @@ def prompt_section(state: dict | None) -> str:
         ])
     if not games:
         return ""
-    names = "; ".join(f"{g.get('name', '')} (\"{g.get('id', '')}\")" for g in games)
-    return "\n".join([
-        _SECTION_HEAD,
-        f"Jeux disponibles : {names}.",
-        'Seulement quand un message demande clairement de lancer une partie, ajoute l\'action '
-        '{"type": "start_game", "game": "<id du jeu>"}.',
-    ])
+    lines = [_SECTION_HEAD, "Jeux disponibles :"]
+    for g in games:
+        line = f"- {g.get('name', '')} : \"game\": \"{g.get('id', '')}\""
+        if g.get("start"):
+            line += f", options possibles : {g['start']}"
+        lines.append(line)
+    lines.append('Seulement quand un message demande clairement de lancer une partie, ajoute '
+                 'l\'action {"type": "start_game", "game": "<id du jeu>", "options": {...}}.')
+    return "\n".join(lines)
 
 
 REACTION_RULES = """
@@ -73,6 +79,8 @@ explique-le simplement.\
 def reaction_input(event: dict, state: dict | None, player_name: str = "") -> str:
     """User message of the reaction call: the settled event and the public state."""
     lines = [f"[jeu] {event.get('text', '')}"]
+    if event.get("mood"):
+        lines.append(f"[jeu] Ton suggéré : {event['mood']}")
     if player_name:
         lines.append(f"[jeu] Joueur : {player_name}")
     activity = (state or {}).get("activity")
@@ -80,6 +88,17 @@ def reaction_input(event: dict, state: dict | None, player_name: str = "") -> st
         lines.append(f"[jeu] État public de la partie de {activity.get('name', '')} : "
                      f"{activity.get('summary', '')}")
     return "\n".join(lines)
+
+
+MAX_ASKS = 3   # hidden calls chained for one move, at most
+
+
+def hidden_messages(ask: dict) -> list | None:
+    """Messages of a hidden LLM call asked by game-master, or None if malformed."""
+    if not isinstance(ask, dict) or not ask.get("id") or not ask.get("user"):
+        return None
+    return [{"role": "system", "content": str(ask.get("system", ""))},
+            {"role": "user", "content": str(ask["user"])}]
 
 
 def game_action(actions: list) -> dict | None:
@@ -138,6 +157,15 @@ class GameLink:
         else:
             move = action.get("move")
             path, body = "/move", {"move": move if isinstance(move, dict) else {}, "player": player}
+        return self._post(path, body)
+
+    def answer(self, ask: dict, text: str, player: dict) -> dict | None:
+        """Text of a hidden LLM call ("" = failed) → {"event", "state"[, "ask"]} or None."""
+        if not self.enabled:
+            return None
+        return self._post("/answer", {"id": str(ask.get("id", "")), "text": text, "player": player})
+
+    def _post(self, path: str, body: dict) -> dict | None:
         try:
             resp = self._http.post(f"{self.url}{path}", json=body, headers=self._headers(),
                                    timeout=self.timeout)

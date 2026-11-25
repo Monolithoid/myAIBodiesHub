@@ -13,7 +13,8 @@ import requests  # noqa: E402
 
 import game_link  # noqa: E402
 
-CATALOG = {"activity": None, "games": [{"id": "hangman", "name": "Pendu", "how": "…"}]}
+CATALOG = {"activity": None, "games": [{"id": "hangman", "name": "Pendu", "how": "…",
+                                       "start": '"options": {"difficulty": "facile|moyen"}'}]}
 RUNNING = {"activity": {"game": "hangman", "name": "Pendu", "summary": "R _ _ _ T, 2 erreurs",
                         "how": 'une lettre : {"type": "letter", "letter": "e"}'},
            "games": CATALOG["games"]}
@@ -56,7 +57,7 @@ class TestPrompt(unittest.TestCase):
 
     def test_catalog(self):
         text = game_link.prompt_section(CATALOG)
-        self.assertIn('Pendu ("hangman")', text)
+        self.assertIn('- Pendu : "game": "hangman", options possibles : "options": {"difficulty"', text)
         self.assertIn("start_game", text)
         self.assertNotIn("game_move", text)
 
@@ -75,6 +76,15 @@ class TestPrompt(unittest.TestCase):
             "[jeu] Le E est dans le mot.", "[jeu] Joueur : Alice",
             "[jeu] État public de la partie de Pendu : R _ _ _ T, 2 erreurs"])
         self.assertEqual(game_link.reaction_input({"text": "Annulée."}, CATALOG), "[jeu] Annulée.")
+        self.assertIn("[jeu] Ton suggéré : joie",
+                      game_link.reaction_input({"text": "Gagné.", "mood": "joie"}, None))
+
+    def test_hidden_messages(self):
+        ask = {"id": "a1", "purpose": "définition", "system": "Définis.", "user": "Mot : chat"}
+        self.assertEqual(game_link.hidden_messages(ask), [
+            {"role": "system", "content": "Définis."}, {"role": "user", "content": "Mot : chat"}])
+        self.assertIsNone(game_link.hidden_messages({"id": "a1"}))
+        self.assertIsNone(game_link.hidden_messages(None))
 
 
 class TestActions(unittest.TestCase):
@@ -133,6 +143,15 @@ class TestGameLink(unittest.TestCase):
         link.play({"type": "game_move", "move": "e"}, player, "e")
         self.assertEqual(session.calls[1][1], "http://gm/move")
         self.assertEqual(session.calls[1][2]["json"], {"move": {}, "player": player})
+
+    def test_answer(self):
+        session = FakeSession(FakeResponse({"event": {"kind": "started"}, "state": RUNNING}))
+        link = game_link.GameLink("http://gm", "s", session)
+        self.assertEqual(link.answer({"id": "a1"}, "Petit animal.", {"source": "webui"})["event"],
+                         {"kind": "started"})
+        self.assertEqual(session.calls[0][1], "http://gm/answer")
+        self.assertEqual(session.calls[0][2]["json"],
+                         {"id": "a1", "text": "Petit animal.", "player": {"source": "webui"}})
 
     def test_play_answer_without_event_is_none(self):
         link = game_link.GameLink("http://gm", "s", FakeSession(FakeResponse({"error": "x"})))

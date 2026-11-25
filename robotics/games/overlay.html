@@ -20,6 +20,15 @@
   #view .big { font: 700 36px/1.2 ui-monospace, "Cascadia Mono", monospace; letter-spacing: 0.12em;
                word-break: break-all; }
   #view .line { color: #d6d6de; }
+  /* Hangman */
+  .hangman { display: flex; gap: 16px; align-items: flex-start; }
+  .hangman svg { flex: none; width: 120px; height: 140px; }
+  .hangman svg .part { stroke: #f4f4f6; stroke-width: 5; stroke-linecap: round; fill: none; }
+  .hangman .side { flex: 1; min-width: 0; }
+  .hangman .def { font-size: 18px; font-style: italic; color: #cfe6ff; margin-top: 6px; }
+  .hangman .tried { margin-top: 8px; font: 600 20px ui-monospace, monospace; letter-spacing: 0.1em; }
+  .hangman .tried .bad { color: #ff7b7b; text-decoration: line-through; }
+  .hangman .errors { font-size: 15px; color: #a8a8b8; }
   #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
   #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
 </style>
@@ -49,6 +58,40 @@ function defaultView(view, el) {
   for (const line of view.lines || []) el.append(text("div", "line", line));
 }
 
+// Hangman: the word (R _ _ _ T), the definition, the letters tried (wrong ones
+// struck out in red) and the gallows drawn step by step with the errors.
+const GALLOWS = [
+  "M10 130 H80", "M30 130 V12", "M30 12 H85", "M85 12 V30",            // base, post, beam, rope
+  "M85 30 m-11 11 a11 11 0 1 0 22 0 a11 11 0 1 0 -22 0",              // head
+  "M85 52 V90", "M85 62 L68 78 M85 62 L102 78", "M85 90 L70 115 M85 90 L100 115",  // body, arms, legs
+];
+views.hangman = (view, el) => {
+  const box = document.createElement("div");
+  box.className = "hangman";
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", "0 0 120 140");
+  const max = Math.max(1, view.max_errors || GALLOWS.length);
+  const shown = Math.round((view.errors || 0) * GALLOWS.length / max);
+  GALLOWS.slice(0, shown).forEach(d => {
+    const path = document.createElementNS(svgNS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "part");
+    svg.append(path);
+  });
+  const side = text("div", "side", "");
+  side.append(text("div", "big", view.mask || ""));
+  if (view.definition) side.append(text("div", "def", view.definition));
+  const tried = text("div", "tried", "");
+  const wrong = new Set(view.wrong || []);
+  for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c + " "));
+  side.append(tried);
+  side.append(text("div", "errors", `Erreurs : ${view.errors || 0} / ${view.max_errors || ""}` +
+                                    (view.level ? ` · niveau ${view.level}` : "")));
+  box.append(svg, side);
+  el.append(box);
+};
+
 const END_KINDS = new Set(["won", "lost", "cancelled", "over"]);
 let hideTimer = null;
 
@@ -69,8 +112,10 @@ function render(state) {
     document.getElementById("footer").textContent =
       activity.last_player ? "Dernier coup : " + activity.last_player : "Lancée par " + activity.started_by;
   } else {
-    // Game just over: the last event stays on screen a little while.
-    document.getElementById("title").textContent = "Partie terminée";
+    // Game just over: its last view and the last event stay on screen a little while.
+    const final = state.final;
+    if (final) (views[final.game] || defaultView)(final.view || {}, viewEl);
+    document.getElementById("title").textContent = (final ? final.name + " — " : "") + "partie terminée";
     document.getElementById("footer").textContent = "";
     hideTimer = setTimeout(() => panel.classList.remove("shown"), 20000);
   }

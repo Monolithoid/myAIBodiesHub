@@ -10,6 +10,12 @@ the public state.
   Player       who plays: Twitch login, name, roles (chat badges), source
   GameMaster   one activity at a time, who may start, per-viewer delay, recap,
                stop, scores; notifies a listener (overlay) on each change
+
+Hidden LLM calls: a game may need the LLM for something NAO must not see (the
+definition of the hangman word, the mystery's archivist).  It then exposes
+Game.pending_ask(), {"id", "purpose", "system", "user"}; game-master returns it
+with the event, body-gateway runs that call outside NAO's prompt and posts the
+text back (GameMaster.answer → Game.on_answer), which settles the event.
   ScoreStore   points per game and per viewer (SQLite)
 """
 
@@ -59,16 +65,18 @@ class Event:
     say      canned sentence NAO says if the LLM does not answer
     ok       False when the request was refused (no game, busy, not allowed…)
     points   {login: points} won with this move
+    mood     tone suggested to NAO's reaction (joie, déception, suspense…), optional
     """
     kind: str
     text: str
     say: str = ""
     ok: bool = True
     points: dict = field(default_factory=dict)
+    mood: str = ""
 
     def to_dict(self) -> dict:
         return {"kind": self.kind, "text": self.text, "say": self.say or self.text,
-                "ok": self.ok, "points": dict(self.points)}
+                "ok": self.ok, "points": dict(self.points), "mood": self.mood}
 
 
 class Game:
@@ -76,10 +84,13 @@ class Game:
 
     how_to_play  for the LLM, in French: the moves and their JSON form, e.g.
                  'une lettre : {"type": "letter", "letter": "e"}'
+    start_help   for the LLM, in French: the start options, e.g.
+                 '"options": {"difficulty": "facile|moyen|difficile"}'
     """
     id = ""
     name = ""
     how_to_play = ""
+    start_help = ""
 
     def start(self, player: Player, options: dict) -> Event:
         raise NotImplementedError
@@ -105,6 +116,14 @@ class Game:
 
     def is_over(self) -> bool:
         return False
+
+    def pending_ask(self) -> dict | None:
+        """Hidden LLM call the game waits for ({"id", "purpose", "system", "user"})."""
+        return None
+
+    def on_answer(self, ask_id: str, text: str) -> Event | None:
+        """Text of a hidden call ("" when it failed) → the event it settles."""
+        return None
 
 
 def allowed_to_start(player: Player, start_roles: list[str]) -> bool:
@@ -136,11 +155,12 @@ class GameMaster:
         self._last_move: dict = {}      # login → clock of its last move
         self._last_event: dict | None = None
         self._last_player = ""
+        self._final: dict | None = None   # last view of the game that just ended (overlay)
 
     # ── Read ────────────────────────────────────────────────────────────────
 
     def catalog(self) -> list[dict]:
-        return [{"id": gid, "name": f.name, "how": f.how_to_play}
+        return [{"id": gid, "name": f.name, "how": f.how_to_play, "start": f.start_help}
                 for gid, f in self._factories.items()]
 
     def state(self) -> dict:
@@ -155,11 +175,15 @@ class GameMaster:
                     "started_by": self._started_by, "last_player": self._last_player,
                 }
             return {"activity": activity, "games": self.catalog(),
-                    "last_event": self._last_event}
+                    "last_event": self._last_event, "final": self._final}
 
     @property
     def busy(self) -> bool:
         return self._game is not None
+
+    def pending_ask(self) -> dict | None:
+        with self._lock:
+            return self._game.pending_ask() if self._game is not None else None
 
     # ── Write ───────────────────────────────────────────────────────────────
 
@@ -191,6 +215,7 @@ class GameMaster:
                 self._game = game
                 self._started_by = player.label()
                 self._last_move.clear()
+                self._final = None
             return self._done(event, player)
 
     def move(self, move: dict, player: Player) -> Event:
@@ -216,6 +241,19 @@ class GameMaster:
             event = game.on_move(move, player)
             if event.ok and player.login:
                 self._last_move[player.login] = now
+            return self._finish_if_over(event, player)
+
+    def answer(self, ask_id: str, text: str, player: Player) -> Event:
+        """Text of a hidden LLM call the running game asked for."""
+        with self._lock:
+            game = self._game
+            ask = game.pending_ask() if game is not None else None
+            if ask is None or ask.get("id") != ask_id:
+                return self._done(Event("no_ask", "Aucun appel caché en attente.", ok=False),
+                                  player, count=False)
+            event = game.on_answer(ask_id, str(text or ""))
+            if event is None:
+                event = Event("answered", "Réponse reçue.")
             return self._finish_if_over(event, player)
 
     def tick(self) -> Event | None:
@@ -247,6 +285,7 @@ class GameMaster:
             for login, pts in event.points.items():
                 self.scores.add(game.id, login, names.get(login, login), int(pts))
         if game is not None and game.is_over():
+            self._final = {"game": game.id, "name": game.name, "view": game.public_view()}
             self._game = None
         return self._done(event, player)
 
