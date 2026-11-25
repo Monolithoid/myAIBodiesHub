@@ -210,6 +210,20 @@ class TestGesturesOnly(unittest.TestCase):
         self.assertIn('"motion"', body_rules.gestures_label(["joy"]))    # default unchanged
 
 
+class TestFirstGestureOnly(unittest.TestCase):
+    def test_keeps_the_first_gesture_and_everything_else(self):
+        actions = [{"type": "speech", "text": "a"}, {"type": "gesture", "emotion": "joy"},
+                   {"type": "leds", "color": "blue"}, {"type": "gesture", "emotion": "fear"},
+                   {"type": "speech", "text": "b"}]
+        self.assertEqual(body_rules.first_gesture_only(actions),
+                         [actions[0], actions[1], actions[2], actions[4]])
+
+    def test_unchanged_with_one_or_no_gesture(self):
+        one = [{"type": "speech", "text": "a"}, {"type": "gesture", "emotion": "joy"}]
+        self.assertEqual(body_rules.first_gesture_only(one), one)
+        self.assertEqual(body_rules.first_gesture_only(one[:1]), one[:1])
+
+
 class TestSpeakingTracker(unittest.TestCase):
 
     def test_idle_at_start(self):
