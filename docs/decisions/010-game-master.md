@@ -34,14 +34,26 @@ of their own around this loop.
 3. **First come, first served**, no vote: the first valid move wins; moves are locked
    while NAO is speaking its reaction (`GET /speaking`).
 4. **One activity at a time.** A running game (including a murder mystery spread over
-   several streams) blocks the start of any other game until it is solved or
-   cancelled (control room button, or `!stop` from a moderator).
+   several streams) blocks the start of any other game, and of any other long
+   activity such as a told story, until it is solved or cancelled (control room
+   button, or `!stop` from a moderator). The same holds the other way round: a running
+   activity blocks the start of a game.
 5. **NAO never writes in the chat**: results and scores are given by voice and on
-   an OBS overlay served by `game-master`.
-6. **`game-master` is a separate container** (`robotics/games/`, plain Python, no
+   an OBS overlay served by `game-master`. The overlay always shows where the game
+   stands, so that a viewer arriving mid-game can follow:
+   - hangman: the word with its progress (`R _ _ _ _ T _ _ _ X`), the letters
+     already tried, and the gallows drawn step by step with the errors;
+   - murder mystery: the case (victim, setting), the suspects, weapons and places
+     with the ones already cleared crossed out, the clues revealed so far, and that
+     an investigation is running.
+6. **Recap on request**: a viewer may ask NAO to recap the game (for the mystery:
+   the case, the cards left and the clues revealed). This is a `game_move` of type
+   recap; `game-master` sends the public state back and NAO retells it, like any
+   other reaction.
+7. **`game-master` is a separate container** (`robotics/games/`, plain Python, no
    ROS 2): testable without ROS, restartable without stopping the brain. Scores and
    saved games live in SQLite on a volume.
-7. **Murder mystery on a fixed skeleton**: 6 suspects, 6 weapons, 6 places; the
+8. **Murder mystery on a fixed skeleton**: 6 suspects, 6 weapons, 6 places; the
    solution is drawn by the code. The LLM generates the story from a context given
    by a viewer in one single attempt (no fallback pack); on failure no game starts.
    A hidden "archivist" LLM call, the only one that sees the file, returns a card id
@@ -53,7 +65,7 @@ Split:
 
 | Where | What |
 |---|---|
-| `game-master` (new) | rules, state, `MoveGate` (first valid move, lock while NAO speaks), `Announcer` (event → `body-gateway`), roles, scores, overlay (SSE, `$GAME_TOKEN`) |
+| `game-master` (new) | rules, state, recap, `MoveGate` (first valid move, lock while NAO speaks), `Announcer` (event → `body-gateway`), roles, scores, overlay (SSE, `$GAME_TOKEN`) |
 | `body-gateway` | `POST /game-event` (inference with the game prompt, `source: game` on `/events`), `start_game` / `game_move` actions forwarded to `game-master` |
 | `twitch-input` | forwards the viewer's role (chat badges) |
 | control room | "cancel the game" button |
