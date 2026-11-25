@@ -29,6 +29,7 @@
   .hangman .big { white-space: nowrap; word-break: normal; letter-spacing: 0.06em; }
   .hangman .def { font-size: 18px; font-style: italic; color: #cfe6ff; margin-top: 6px; }
   .hangman .tried { margin-top: 8px; font: 600 20px ui-monospace, monospace; letter-spacing: 0.1em; }
+  .hangman .tried span { margin-right: 0.45em; }
   .hangman .tried .bad { color: #ff7b7b; text-decoration: line-through; }
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
   #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
@@ -86,7 +87,7 @@ views.hangman = (view, el) => {
   if (view.definition) side.append(text("div", "def", view.definition));
   const tried = text("div", "tried", "");
   const wrong = new Set(view.wrong || []);
-  for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c + " "));
+  for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c));
   side.append(tried);
   side.append(text("div", "errors", `Erreurs : ${view.errors || 0} / ${view.max_errors || ""}` +
                                     (view.level ? ` · niveau ${view.level}` : "")));

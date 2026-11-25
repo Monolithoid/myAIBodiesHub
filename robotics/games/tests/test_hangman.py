@@ -134,6 +134,7 @@ class TestMoves(unittest.TestCase):
         self.assertEqual(event.points, {"bob": hangman.WORD_BONUS + 6})
         self.assertIn("araignée", event.text)
         self.assertEqual(g.public_view()["mask"], "A R A I G N E E")
+        self.assertEqual(g.public_view()["tried"], ["A"])   # only the letters played
 
     def test_wrong_word_costs_an_error_and_bars_the_viewer(self):
         g = game()
@@ -154,6 +155,7 @@ class TestMoves(unittest.TestCase):
         self.assertEqual(event.kind, "lost")
         self.assertIn("araignée", event.text)
         self.assertTrue(g.is_over())
+        self.assertEqual(g.mask(), "A R A I G N E E")   # word shown once lost
 
     def test_summary_never_holds_the_word(self):
         g = game()
