@@ -36,8 +36,8 @@ Twitch "!nao je propose le E"
   overlay shows it), but it may find the word from the letters found: while a game
   runs, body-gateway asks game-master (`/check`) about each sentence, and one that
   holds the solution is played as NAO's guess (move `said`). NAO then wins and
-  reacts as a show-off, once `HANGMAN_NAO_MIN_FOUND` of the word is found (half by
-  default); before, its sentence is replaced by a teasing one.
+  reacts as a show-off, at any time by default (`HANGMAN_NAO_MIN_FOUND` can make it
+  wait until part of the word is found).
 - **Ranking** on the overlay: points of every game played (NAO included), top 3
   during a game, top 5 at the end.
 
@@ -116,7 +116,7 @@ it to the speech, since the LLM may drop it.
 | `GAMES_DB_PATH` | game-master | `/data/games.db` | scores (volume `/opt/ia/nao/games`) |
 | `OVERLAY_HOLD_S` | game-master | `30` | longest a new state waits for `/reveal` before the overlay shows it (`0` = at once) |
 | `GAME_REVEAL_MAX_S` | body-gateway | `25` | longest body-gateway waits for NAO to finish speaking before revealing |
-| `HANGMAN_NAO_MIN_FOUND` | game-master | `0.5` | share of the word found before NAO's own guess counts; before, its sentence holding the word is replaced by a teasing one |
+| `HANGMAN_NAO_MIN_FOUND` | game-master | `0` | share of the word found before NAO's own guess counts (`0` = at any time); before, its sentence holding the word is replaced by a teasing one |
 | `GAME_MASTER_URL` | body-gateway | empty (compose: `http://127.0.0.1:8098`) | empty = no games in the prompt |
 
 Overlay in OBS: give game-master a domain in Coolify (container port 8098, e.g.

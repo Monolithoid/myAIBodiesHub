@@ -172,6 +172,7 @@ class TestNaoPlays(unittest.TestCase):
 
     def test_nao_holds_its_guess_while_too_little_is_found(self):
         g = game()   # araignée: nothing found yet
+        g.nao_min_found = 0.5
         event = g.on_move({"type": "said", "text": "une araignée ?"}, self.NAO)
         self.assertEqual(event.kind, "nao_holds")
         self.assertFalse(event.ok)

@@ -16,9 +16,9 @@ Rules:
     HANGMAN_MAX_ERRORS errors (7 by default);
   - points: 1 per letter revealed, 3 + letters still hidden for the word;
   - NAO plays too, with its own points: letters when a viewer asks it, and the
-    word when it says it in a sentence (move "said", checked by the code), once
-    HANGMAN_NAO_MIN_FOUND of the word is found (half by default); before, its
-    sentence is replaced by a teasing one.
+    word when it says it in a sentence (move "said", checked by the code), at
+    any time; HANGMAN_NAO_MIN_FOUND (e.g. 0.5) makes it wait until that share of
+    the word is found, its sentence being replaced by a teasing one before.
 """
 
 import json
@@ -35,8 +35,9 @@ WORDS_PATH = os.environ.get("HANGMAN_WORDS",
                                          "words", "hangman_fr.json"))
 MAX_ERRORS = int(os.environ.get("HANGMAN_MAX_ERRORS", "7"))
 MIN_LETTERS = int(os.environ.get("HANGMAN_MIN_LETTERS", "6"))
-# NAO's own guess counts once this share of the word is found (it is too good before).
-NAO_MIN_FOUND = float(os.environ.get("HANGMAN_NAO_MIN_FOUND", "0.5"))
+# NAO's own guess counts once this share of the word is found; 0 (default) = at
+# any time, NAO's sentence is never changed.
+NAO_MIN_FOUND = float(os.environ.get("HANGMAN_NAO_MIN_FOUND", "0"))
 DEFINITION_MAX_CHARS = 200
 
 LEVELS = {"facile": "easy", "moyen": "medium", "difficile": "hard",
