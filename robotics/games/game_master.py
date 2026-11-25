@@ -22,7 +22,10 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
                                    hidden LLM call ("" = failed)
   An answer may also hold "ask": {"id", "purpose", "system", "user"}, a hidden LLM call
   body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
-  GET  /overlay?token=…            OBS page; /overlay/stream?token=… its SSE feed
+  POST /reveal {"version"}                               → {"revealed"}: NAO has said
+                                   the result, the overlay may show the state of that version
+  GET  /overlay?token=…            OBS page; /overlay/stream?token=… its SSE feed (each
+                                   new state held until /reveal, OVERLAY_HOLD_S at most)
 
 "player" is {"login", "name", "roles": [...], "source"}: roles are the chat badges
 forwarded by twitch-input (broadcaster, moderator, vip, subscriber); a source
@@ -30,6 +33,8 @@ other than "twitch" (Open WebUI, control room) is the streamer.
 
 Environment variables:
   GAME_TOKEN          secret of the API and of the overlay (required)
+  OVERLAY_HOLD_S      longest a new state waits for /reveal before the overlay
+                      shows it anyway, default 30 (0 = show at once)
   GAME_PORT           default 8098
   BODY_GATEWAY_URL    where events not asked by body-gateway are announced
                       (POST /game-event), default http://chat-relay:8095
@@ -64,6 +69,7 @@ GAME_START_ROLES = [r.strip().lower() for r in
                     os.environ.get("GAME_START_ROLES", game_core.EVERYONE).split(",") if r.strip()]
 MOVE_COOLDOWN_S  = float(os.environ.get("MOVE_COOLDOWN_S", "0"))
 GAMES_DB_PATH    = os.environ.get("GAMES_DB_PATH", "/data/games.db").strip()
+OVERLAY_HOLD_S   = float(os.environ.get("OVERLAY_HOLD_S", "30"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -105,6 +111,56 @@ class Feed:
                 pass   # a stalled page misses an update, the next one carries the full state
 
 
+class Stage:
+    """What the overlay shows.  A new state is held until NAO has said it
+    (POST /reveal from body-gateway, with the state's version), so the overlay
+    never gives a result away before NAO; OVERLAY_HOLD_S at most (0 = no hold)."""
+
+    def __init__(self, feed: Feed, initial: dict, hold_s: float = OVERLAY_HOLD_S,
+                 clock=time.monotonic):
+        self._feed = feed
+        self._hold_s = hold_s
+        self._clock = clock
+        self._held: list[tuple[int, dict, float]] = []   # (version, state, since), oldest first
+        self._lock = threading.Lock()
+        self.shown = initial
+
+    def changed(self, state: dict):
+        if self._hold_s <= 0:
+            self._show(state)
+            return
+        with self._lock:
+            self._held.append((int(state.get("version", 0)), state, self._clock()))
+
+    def reveal(self, version: int) -> bool:
+        """Shows the newest held state up to this version; False if none."""
+        with self._lock:
+            ready = [h for h in self._held if h[0] <= version]
+            if not ready:
+                return False
+            self._held = [h for h in self._held if h[0] > version]
+        self._show(ready[-1][1])
+        return True
+
+    def expire(self):
+        """States held longer than OVERLAY_HOLD_S are shown anyway (NAO never said them)."""
+        with self._lock:
+            limit = self._clock() - self._hold_s
+            late = [h for h in self._held if h[2] <= limit]
+        if late:
+            self.reveal(late[-1][0])
+
+    def subscribe(self) -> queue.Queue:
+        return self._feed.subscribe()
+
+    def unsubscribe(self, q: queue.Queue):
+        self._feed.unsubscribe(q)
+
+    def _show(self, state: dict):
+        self.shown = state
+        self._feed.publish(state)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Announcer: events nobody asked body-gateway for (stop, timer) → NAO says them
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,7 +191,7 @@ class Announcer:
 # HTTP
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer | None,
+def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announcer | None,
                  token: str):
 
     class Handler(BaseHTTPRequestHandler):
@@ -174,6 +230,14 @@ def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer 
             body = self._read_json()
             if body is None:
                 return
+            if url.path == "/reveal":
+                try:
+                    version = int(body.get("version"))
+                except (TypeError, ValueError):
+                    self._json(400, {"error": "version required"})
+                    return
+                self._json(200, {"revealed": stage.reveal(version)})
+                return
             player = game_core.Player.from_dict(body.get("player"))
             if url.path == "/start":
                 event = master.start(str(body.get("game", "")), player,
@@ -197,24 +261,24 @@ def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer 
             self._json(200, answer)
 
         def _stream(self):
-            q = feed.subscribe()
+            q = stage.subscribe()
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
-                data = master.state()
+                data = stage.shown
                 while True:
                     self.wfile.write(f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
                     self.wfile.flush()
                     try:
                         data = q.get(timeout=15)
                     except queue.Empty:
-                        data = master.state()   # keep-alive, also heals a missed update
+                        data = stage.shown   # keep-alive, also heals a missed update
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
-                feed.unsubscribe(q)
+                stage.unsubscribe(q)
 
         def _read_json(self):
             try:
@@ -246,9 +310,10 @@ def make_handler(master: game_core.GameMaster, feed: Feed, announcer: Announcer 
     return Handler
 
 
-def tick_loop(master: game_core.GameMaster, announcer: Announcer):
+def tick_loop(master: game_core.GameMaster, announcer: Announcer, stage: Stage):
     while True:
         time.sleep(1.0)
+        stage.expire()
         try:
             event = master.tick()
         except Exception as e:   # a broken game must not stop the service
@@ -268,15 +333,15 @@ def main():
     if GAMES_DB_PATH:
         os.makedirs(os.path.dirname(GAMES_DB_PATH) or ".", exist_ok=True)
         scores = game_core.ScoreStore(GAMES_DB_PATH)
-    feed = Feed()
     master = game_core.GameMaster(GAMES, GAME_START_ROLES, MOVE_COOLDOWN_S, scores)
-    master.on_change = lambda: feed.publish(master.state())
+    stage = Stage(Feed(), master.state())
+    master.on_change = lambda: stage.changed(master.state())
     announcer = Announcer(BODY_GATEWAY_URL)
-    threading.Thread(target=tick_loop, args=(master, announcer), daemon=True).start()
+    threading.Thread(target=tick_loop, args=(master, announcer, stage), daemon=True).start()
     log(f":{GAME_PORT} | games: {', '.join(GAMES) or 'none'} | start: {', '.join(GAME_START_ROLES)}"
         f" | move delay: {MOVE_COOLDOWN_S:g}s | events → {BODY_GATEWAY_URL}/game-event")
     ThreadingHTTPServer(("0.0.0.0", GAME_PORT),
-                        make_handler(master, feed, announcer, GAME_TOKEN)).serve_forever()
+                        make_handler(master, stage, announcer, GAME_TOKEN)).serve_forever()
 
 
 if __name__ == "__main__":

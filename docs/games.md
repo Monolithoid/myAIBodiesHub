@@ -76,7 +76,13 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
+| `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
 | `GET /overlay?token=…` | — | OBS page (Server-Sent Events from `/overlay/stream`) |
+
+**No spoiler on the overlay**: every state carries a `version`. game-master holds
+each new state; body-gateway posts `/reveal` once NAO has finished saying its
+reaction, so the overlay never shows a result before NAO says it. A state nobody
+reveals is shown after `OVERLAY_HOLD_S`.
 
 `player` is `{"login", "name", "roles", "source"}`; `roles` among `broadcaster`,
 `moderator`, `vip`, `subscriber`. A source other than `twitch` (Open WebUI, control
@@ -95,6 +101,8 @@ it to the speech, since the LLM may drop it.
 | `HANGMAN_MAX_ERRORS` | game-master | `7` | errors before the hangman game is lost |
 | `HANGMAN_MIN_LETTERS` | game-master | `6` | shortest hangman word (the list holds 6 to 12 letters) |
 | `GAMES_DB_PATH` | game-master | `/data/games.db` | scores (volume `/opt/ia/nao/games`) |
+| `OVERLAY_HOLD_S` | game-master | `30` | longest a new state waits for `/reveal` before the overlay shows it (`0` = at once) |
+| `GAME_REVEAL_MAX_S` | body-gateway | `25` | longest body-gateway waits for NAO to finish speaking before revealing |
 | `GAME_MASTER_URL` | body-gateway | empty (compose: `http://127.0.0.1:8098`) | empty = no games in the prompt |
 
 Overlay in OBS: give game-master a domain in Coolify (container port 8098, e.g.

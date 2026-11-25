@@ -160,6 +160,7 @@ class GameMaster:
         self._last_event: dict | None = None
         self._last_player = ""
         self._final: dict | None = None   # last view of the game that just ended (overlay)
+        self.version = 0                  # bumped on every change: the overlay reveals by version
 
     # ── Read ────────────────────────────────────────────────────────────────
 
@@ -179,7 +180,8 @@ class GameMaster:
                     "started_by": self._started_by, "last_player": self._last_player,
                 }
             return {"activity": activity, "games": self.catalog(),
-                    "last_event": self._last_event, "final": self._final}
+                    "last_event": self._last_event, "final": self._final,
+                    "version": self.version}
 
     @property
     def busy(self) -> bool:
@@ -297,6 +299,7 @@ class GameMaster:
         self._last_event = {**event.to_dict(), "by": player.label()}
         if count and event.ok and player.login:
             self._last_player = player.label()
+        self.version += 1
         if self.on_change is not None:
             try:
                 self.on_change()

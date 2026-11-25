@@ -184,6 +184,52 @@ class TestGameMaster(unittest.TestCase):
             self.assertEqual(scores.top("other"), [])
 
 
+class TestStage(unittest.TestCase):
+
+    def setUp(self):
+        self.now = 0.0
+        self.feed = game_master.Feed()
+        self.q = self.feed.subscribe()
+        self.stage = game_master.Stage(self.feed, {"version": 0}, hold_s=15,
+                                       clock=lambda: self.now)
+
+    def published(self):
+        out = []
+        while not self.q.empty():
+            out.append(self.q.get_nowait()["version"])
+        return out
+
+    def test_held_until_revealed(self):
+        self.stage.changed({"version": 1})
+        self.stage.changed({"version": 2})
+        self.stage.changed({"version": 3})
+        self.assertEqual(self.published(), [])
+        self.assertEqual(self.stage.shown["version"], 0)
+        self.assertTrue(self.stage.reveal(2))
+        self.assertEqual(self.published(), [2])
+        self.assertFalse(self.stage.reveal(2))        # already shown
+        self.assertTrue(self.stage.reveal(9))         # newest held up to 9
+        self.assertEqual(self.stage.shown["version"], 3)
+
+    def test_shown_anyway_after_the_hold(self):
+        self.stage.changed({"version": 1})
+        self.now = 10.0
+        self.stage.changed({"version": 2})
+        self.stage.expire()
+        self.assertEqual(self.published(), [])
+        self.now = 15.0
+        self.stage.expire()
+        self.assertEqual(self.published(), [1])
+        self.now = 25.0
+        self.stage.expire()
+        self.assertEqual(self.published(), [2])
+
+    def test_no_hold(self):
+        stage = game_master.Stage(self.feed, {"version": 0}, hold_s=0)
+        stage.changed({"version": 1})
+        self.assertEqual(self.published(), [1])
+
+
 class TestHttp(unittest.TestCase):
 
     def setUp(self):
@@ -191,7 +237,9 @@ class TestHttp(unittest.TestCase):
         self.master = GameMaster({"count": CountGame})
         announcer = game_master.Announcer.__new__(game_master.Announcer)
         announcer.announce = lambda event, state: self.announced.append(event.kind)
-        handler = game_master.make_handler(self.master, game_master.Feed(), announcer, "secret")
+        self.stage = game_master.Stage(game_master.Feed(), self.master.state())
+        self.master.on_change = lambda: self.stage.changed(self.master.state())
+        handler = game_master.make_handler(self.master, self.stage, announcer, "secret")
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -210,6 +258,15 @@ class TestHttp(unittest.TestCase):
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def test_reveal(self):
+        _, answer = self._call("/start", {"game": "count", "player": {"login": "a"},
+                                          "message": "on joue ?"})
+        version = answer["state"]["version"]
+        self.assertEqual(self.stage.shown["activity"], None)   # held: NAO has not spoken
+        self.assertEqual(self._call("/reveal", {"version": version}), (200, {"revealed": True}))
+        self.assertEqual(self.stage.shown["activity"]["game"], "count")
+        self.assertEqual(self._call("/reveal", {})[0], 400)
 
     def test_ping_needs_no_token(self):
         self.assertEqual(self._call("/ping", token=""), (200, {"ok": True, "service": "game-master"}))

@@ -228,6 +228,18 @@ class GameLink:
             return None
         return self._post("/answer", {"id": str(ask.get("id", "")), "text": text, "player": player})
 
+    def reveal(self, version) -> bool:
+        """NAO has said the result: the overlay may show the state of this version."""
+        if not self.enabled or version is None:
+            return False
+        try:
+            resp = self._http.post(f"{self.url}/reveal", json={"version": int(version)},
+                                   headers=self._headers(), timeout=self.timeout)
+            resp.raise_for_status()
+            return bool(resp.json().get("revealed"))
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            return False
+
     def _post(self, path: str, body: dict) -> dict | None:
         try:
             resp = self._http.post(f"{self.url}{path}", json=body, headers=self._headers(),
