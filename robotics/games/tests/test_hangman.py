@@ -11,7 +11,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import hangman  # noqa: E402
-from game_core import GameMaster, Player  # noqa: E402
+from game_core import GameMaster, Player, ScoreStore  # noqa: E402
 
 ALICE = Player("alice", "Alice")
 BOB = Player("bob", "Bob")
@@ -170,12 +170,21 @@ class TestNaoPlays(unittest.TestCase):
 
     NAO = Player("nao", "NAO", source="nao")
 
+    def test_nao_holds_its_guess_while_too_little_is_found(self):
+        g = game()   # araignée: nothing found yet
+        event = g.on_move({"type": "said", "text": "une araignée ?"}, self.NAO)
+        self.assertEqual(event.kind, "nao_holds")
+        self.assertFalse(event.ok)
+        self.assertNotIn("araign", event.say)
+        self.assertFalse(g.is_over())
+
     def test_nao_says_the_word_and_wins(self):
         g = game()   # araignée
         letter(g, "a")
+        letter(g, "e")   # 4 of 8 letters found: half of the word
         event = g.on_move({"type": "said", "text": "Je parie sur une ARAIGNEE !"}, self.NAO)
         self.assertEqual((event.kind, event.mood), ("won", "frimeur"))
-        self.assertEqual(event.points, {"nao": hangman.WORD_BONUS + 6})
+        self.assertEqual(event.points, {"nao": hangman.WORD_BONUS + 4})
         self.assertIn("frimeur", event.text)
         self.assertTrue(g.is_over())
 
@@ -216,6 +225,20 @@ class TestThroughGameMaster(unittest.TestCase):
         self.assertNotIn("trompe", recap.text)
         self.assertEqual(recap.read, "Indice : Grand animal gris à trompe.")
         self.assertEqual(master.catalog()[0]["start"], hangman.Hangman.start_help)
+
+    def test_scores_in_the_state(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            master = GameMaster({"hangman": FixedHangman},
+                                scores=ScoreStore(os.path.join(tmp, "s.db")))
+            self.assertIsNone(master.state()["scores"])
+            master.start("hangman", ALICE, "pendu ?", {"difficulty": "difficile"})
+            master.move({"type": "letter", "letter": "c"}, ALICE)
+            self.assertEqual(master.state()["scores"],
+                             {"game": "hangman", "top": [{"name": "Alice", "points": 1}]})
+            master.move({"type": "word", "word": "coeur"}, BOB)
+            top = master.state()["scores"]["top"]           # kept after the end
+            self.assertEqual(top[0], {"name": "Bob", "points": hangman.WORD_BONUS + 4})
 
     def test_final_view_kept_after_the_end(self):
         master = GameMaster({"hangman": FixedHangman})

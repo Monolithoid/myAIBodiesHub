@@ -192,8 +192,11 @@ class GameMaster:
                     "summary": game.summary(), "view": game.public_view(),
                     "started_by": self._started_by, "last_player": self._last_player,
                 }
+            shown = game.id if game is not None else (self._final or {}).get("game")
+            top = self.scores.top(shown) if self.scores is not None and shown else []
             return {"activity": activity, "games": self.catalog(),
                     "last_event": self._last_event, "final": self._final,
+                    "scores": {"game": shown, "top": top} if shown else None,
                     "version": self.version}
 
     @property
