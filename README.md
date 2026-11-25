@@ -34,6 +34,7 @@ Self-hosted AI stack on an Ubuntu VPS, deployed with Docker Compose and managed 
 | [ADR 007](docs/decisions/007-regie-topic-events.md) | Control room: body-gateway publishes its streams on the standard ROS topic `/events` |
 | [ADR 008](docs/decisions/008-univers-moteur-contraint.md) | Constrained motor universe: motor profile calibrated from the control room |
 | [ADR 009](docs/decisions/009-gestes-appris.md) | Learned gestures (nao-emotion-motion): generated on the static drone, played by the robot |
+| [ADR 010](docs/decisions/010-game-master.md) | Games with the viewers: `game-master` decides by code, the LLM only speaks |
 
 ---
 
