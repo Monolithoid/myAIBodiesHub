@@ -200,6 +200,52 @@ class TestNaoPlays(unittest.TestCase):
         self.assertFalse(g.is_over())
 
 
+class TestLivesPerPlayer(unittest.TestCase):
+
+    def test_a_hanged_viewer_is_out_the_others_go_on(self):
+        g = game(max_errors=2)          # araignée; players of the game = the ones present
+        letter(g, "a")                  # Alice plays
+        letter(g, "z", BOB)
+        event = letter(g, "x", BOB)     # Bob's 2nd error: hanged, Alice still there
+        self.assertEqual(event.kind, "bad")
+        self.assertIn("Bob est pendu", event.text)
+        self.assertFalse(g.is_over())
+        self.assertEqual(letter(g, "w", BOB).kind, "hanged")
+        self.assertEqual(g.on_move({"type": "word", "word": "araignée"}, BOB).kind, "hanged")
+        view = g.public_view()
+        self.assertEqual((view["errors"], view["errors_of"]), (2, "Bob"))
+        self.assertEqual(view["players"], [{"name": "Bob", "errors": 2, "hanged": True}])
+        self.assertIn("pendus (ne jouent plus) : Bob", g.summary())
+        self.assertEqual(letter(g, "v").kind, "bad")   # Alice: 1 error of her own
+        self.assertEqual(letter(g, "u").kind, "lost")  # Alice hanged too: nobody left
+        self.assertEqual(g.public_view()["mask"], "A R A I G N E E")
+
+    def test_lost_when_everyone_in_the_chat_is_hanged(self):
+        clock = [0.0]
+        master = GameMaster({"hangman": FixedHangman}, clock=lambda: clock[0])
+        master.apply({"presence_min": 10})
+        master.start("hangman", ALICE, "pendu ?", {"difficulty": "difficile"})   # cœur
+        master.seen(["carol"])                       # Carol only writes in the chat
+        for c in "zxwvtsq":
+            event = master.move({"type": "letter", "letter": c}, BOB)
+        self.assertEqual(event.kind, "bad")          # Bob hanged; Alice and Carol still there
+        self.assertIsNone(master.tick())
+        clock[0] = 11 * 60                           # nobody wrote for 11 minutes
+        master.seen(["bob"])                         # only Bob, hanged, is still in the chat
+        event = master.tick()
+        self.assertEqual(event.kind, "lost")
+        self.assertIsNone(master.state()["activity"])
+
+    def test_nao_hanged(self):
+        g = game(max_errors=1)
+        nao = Player("nao", "NAO", source="nao")
+        letter(g, "a")
+        self.assertEqual(letter(g, "z", nao).kind, "bad")    # NAO hanged, Alice goes on
+        event = g.on_move({"type": "said", "text": "araignée"}, nao)
+        self.assertEqual(event.kind, "hanged")
+        self.assertFalse(g.is_over())
+
+
 class TestThroughGameMaster(unittest.TestCase):
 
     def test_check_blocks_the_word_while_running(self):

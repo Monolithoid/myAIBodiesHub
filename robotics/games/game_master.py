@@ -24,6 +24,8 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
   body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
   POST /check {"text"}                                   → {"leak"}: NAO's text gives the
                                    running game's solution away (it is then not said)
+  POST /seen {"logins": [...]}     viewers who just wrote in the chat (twitch-input): a
+                                   game knows who is still there (memory only)
   GET  /settings                   {"values", "schema"}: settings of the control room
   POST /settings {key: value, …}   → {"values"}, 400 {"error"} when a value is refused
   GET  /scores?game=&n=            {"game", "top"}: ranking
@@ -48,7 +50,10 @@ Environment variables:
                       among moderator, vip, subscriber (the streamer always may)
   MOVE_COOLDOWN_S     per-viewer delay between two moves, default 0 (none)
   GAMES_DB_PATH       SQLite file of the scores, default /data/games.db; empty = no scores
-  HANGMAN_MAX_ERRORS  errors before the hangman game is lost, default 7
+  HANGMAN_MAX_ERRORS  errors of one player before they are hanged, default 7 (the game is
+                      lost when every viewer still in the chat is hanged)
+  PRESENCE_MIN        a viewer who wrote in the chat (or played) within these minutes
+                      is still there, default 10
   HANGMAN_MIN_LETTERS shortest hangman word, default 6 (the list holds 6 to 12 letters)
 """
 
@@ -76,14 +81,17 @@ GAME_START_ROLES = [r.strip().lower() for r in
 MOVE_COOLDOWN_S  = float(os.environ.get("MOVE_COOLDOWN_S", "0"))
 GAMES_DB_PATH    = os.environ.get("GAMES_DB_PATH", "/data/games.db").strip()
 OVERLAY_HOLD_S   = float(os.environ.get("OVERLAY_HOLD_S", "30"))
+PRESENCE_MIN     = float(os.environ.get("PRESENCE_MIN", "10"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Settings the control room may change (/jeux page); the variables above are
 # the defaults.  Who may start and the delay apply at once, the rest at the next game.
 SETTINGS_SCHEMA = [
-    {"key": "hangman_max_errors", "label": "Pendu : erreurs permises", "type": "int",
-     "min": 3, "max": 12, "default": hangman.MAX_ERRORS},
+    {"key": "hangman_max_errors", "label": "Pendu : erreurs permises par joueur", "type": "int",
+     "min": 3, "max": 12, "default": hangman.MAX_ERRORS,
+     "help": "au-delà, le joueur est pendu ; la partie est perdue quand tous ceux encore "
+             "dans le chat le sont"},
     {"key": "hangman_min_letters", "label": "Pendu : longueur minimale des mots", "type": "int",
      "min": 6, "max": 12, "default": max(6, hangman.MIN_LETTERS),
      "help": "la liste va de 6 à 12 lettres"},
@@ -95,6 +103,9 @@ SETTINGS_SCHEMA = [
      "help": "le streamer peut toujours"},
     {"key": "move_cooldown_s", "label": "Délai entre deux coups d'un spectateur (s)", "type": "float",
      "min": 0, "max": 120, "default": MOVE_COOLDOWN_S},
+    {"key": "presence_min", "label": "Présence dans le chat (min)", "type": "float",
+     "min": 1, "max": 60, "default": PRESENCE_MIN,
+     "help": "un spectateur qui a écrit (ou joué) depuis ce délai compte comme encore là"},
     {"key": "overlay_hold_s", "label": "Attente maximale de l'overlay (s)", "type": "float",
      "min": 0, "max": 120, "default": OVERLAY_HOLD_S,
      "help": "le résultat s'affiche quand NAO a fini de parler, ou après ce délai"},
@@ -267,6 +278,11 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
                 return
             body = self._read_json()
             if body is None:
+                return
+            if url.path == "/seen":
+                logins = body.get("logins")
+                master.seen(logins if isinstance(logins, list) else [])
+                self._json(200, {"ok": True})
                 return
             if url.path == "/check":
                 self._json(200, {"leak": master.check(str(body.get("text", "")))})

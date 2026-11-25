@@ -10,10 +10,13 @@ tried and the errors.
 
 Rules:
   - letters compared without accents (é = e), first come first served;
+  - every player has their own lives: HANGMAN_MAX_ERRORS errors (7 by default),
+    then they are hanged and may no longer play this game;
   - a viewer may propose the whole word at any time: a wrong word costs an error,
     and that viewer may not propose a word again in this game;
-  - won when every letter is found or the word is proposed; lost after
-    HANGMAN_MAX_ERRORS errors (7 by default);
+  - won when every letter is found or the word is proposed; lost when every
+    viewer still in the chat is hanged (GameMaster.present: wrote in the chat or
+    played lately; without it, the players of the game).  Otherwise it goes on;
   - points: 1 per letter revealed, 3 + letters still hidden for the word;
   - NAO plays too, with its own points: letters when a viewer asks it, and the
     word when it says it in a sentence (move "said", checked by the code), at
@@ -46,6 +49,11 @@ LEVEL_NAMES = {"easy": "facile", "medium": "moyen", "hard": "difficile"}
 WORD_BONUS = 3
 
 _words_cache: dict | None = None
+
+
+def key(player: Player) -> str:
+    """A player's key for their lives: the login (the name when there is none)."""
+    return (player.login or player.label()).lower()
 
 
 def plain(text: str) -> str:
@@ -98,7 +106,11 @@ class Hangman(Game):
         self.word = ""
         self.level = "medium"
         self.tried: list[str] = []          # letters, in the order they were played
-        self.errors = 0
+        self.errors = 0                     # all players together
+        self.errors_by: dict[str, int] = {} # player key → their errors
+        self.names: dict[str, str] = {}     # player key → name shown
+        self.last_error = ""                # key of the last player who erred (gallows)
+        self._players: set[str] = set()     # keys of the players who made a move
         self.no_word: set[str] = set()      # logins who proposed a wrong word
         self.wrong_words: list[str] = []    # wrong words, in the order they were proposed
         self.definition = ""
@@ -124,19 +136,34 @@ class Hangman(Game):
     def wrong_letters(self) -> list[str]:
         return [c for c in self.tried if c not in self.target]
 
+    def hanged(self) -> list[str]:
+        """Keys of the players out of lives, in the order of their errors."""
+        return [k for k, n in self.errors_by.items() if n >= self.max_errors]
+
     def public_view(self) -> dict:
+        ranked = sorted(self.errors_by.items(), key=lambda kv: -kv[1])
         return {
             "mask": self.mask(), "letters": len(self.target),
             "tried": [c.upper() for c in self.tried],
             "wrong": [c.upper() for c in self.wrong_letters()],
             "wrong_words": [w.upper() for w in self.wrong_words],
-            "errors": self.errors, "max_errors": self.max_errors,
+            # The gallows shows the last player who erred.
+            "errors": self.errors_by.get(self.last_error, 0), "max_errors": self.max_errors,
+            "errors_of": self.names.get(self.last_error, ""),
+            "players": [{"name": self.names.get(k, k), "errors": n,
+                         "hanged": n >= self.max_errors} for k, n in ranked],
             "definition": self.definition, "level": LEVEL_NAMES[self.level],
         }
 
     def summary(self) -> str:
         parts = [f"mot de {len(self.target)} lettres : {self.mask()}",
-                 f"erreurs : {self.errors}/{self.max_errors}"]
+                 f"{self.max_errors} erreurs permises par joueur"]
+        if self.errors_by:
+            parts.append("erreurs par joueur : " + ", ".join(
+                f"{self.names.get(k, k)} {n}" for k, n in self.errors_by.items()))
+        if self.hanged():
+            parts.append("pendus (ne jouent plus) : " + ", ".join(
+                self.names.get(k, k) for k in self.hanged()))
         if self.tried:
             parts.append("lettres essayées : " + ", ".join(c.upper() for c in self.tried))
         wrong = self.wrong_letters()
@@ -202,7 +229,7 @@ class Hangman(Game):
     def _started_event(self, waiting: bool = False) -> Event:
         n = len(self.target)
         text = (f"{self._started_by} lance une partie de pendu, niveau {LEVEL_NAMES[self.level]} : "
-                f"un mot de {n} lettres, {self.max_errors} erreurs permises.")
+                f"un mot de {n} lettres, {self.max_errors} erreurs permises par joueur.")
         say = f"C'est parti pour un pendu ! Un mot de {n} lettres."
         read = ""
         if self.definition:
@@ -215,8 +242,24 @@ class Hangman(Game):
 
     # ── Moves ───────────────────────────────────────────────────────────────
 
+    def on_tick(self, now: float) -> Event | None:
+        # A viewer left the chat: those still there may all be hanged.
+        if self._over or not self.hanged() or not self._everyone_hanged():
+            return None
+        return self._lost("Les joueurs encore dans le chat sont tous pendus.")
+
     def on_move(self, move: dict, player: Player) -> Event:
         kind = move.get("type")
+        if kind in ("letter", "word") and not player.is_nao:
+            self._players.add(key(player))
+        if kind in ("letter", "word", "said") and self.errors_by.get(key(player), 0) >= self.max_errors:
+            who = player.label()
+            if player.is_nao:
+                return Event("hanged", "NAO est pendu : il ne peut plus jouer cette partie.",
+                             "Je suis pendu, je n'ai plus le droit de jouer… mais j'ai ma petite idée !",
+                             ok=False, mood="frimeur")
+            return Event("hanged", f"{who} est pendu : il ne peut plus jouer cette partie.",
+                         f"Désolé {who}, tu es pendu : tu ne joues plus cette partie.", ok=False)
         if kind == "letter":
             return self._letter(str(move.get("letter", "")), player)
         if kind == "word":
@@ -259,7 +302,7 @@ class Hangman(Game):
                                            f"Oui ! Le {letter.upper()} est dans le mot.",
                                            f"Bravo {who}, il y a bien un {letter.upper()}."]),
                          points={player.login: count} if player.login else {}, mood="joie")
-        return self._error(f"{who} propose le {letter.upper()} : il n'est pas dans le mot.",
+        return self._error(player, f"{who} propose le {letter.upper()} : il n'est pas dans le mot.",
                            self._rng.choice([f"Raté, pas de {letter.upper()} !",
                                              f"Aïe, le {letter.upper()} n'y est pas.",
                                              f"Pas de {letter.upper()}, désolé {who}."]))
@@ -280,22 +323,47 @@ class Hangman(Game):
             self.no_word.add(player.login)
         if guess not in self.wrong_words:
             self.wrong_words.append(guess)
-        return self._error(f"{who} propose le mot « {raw.strip()} » : ce n'est pas le bon. "
+        return self._error(player, f"{who} propose le mot « {raw.strip()} » : ce n'est pas le bon. "
                            f"{who} ne peut plus proposer de mot.",
                            self._rng.choice([f"Non {who}, ce n'est pas ça !",
                                              "Mauvais mot, ça coûte une erreur.",
                                              f"Raté {who}, et plus de mot pour toi."]))
 
-    def _error(self, text: str, say: str) -> Event:
+    def _error(self, player: Player, text: str, say: str) -> Event:
+        k, who = key(player), player.label()
         self.errors += 1
-        if self.errors >= self.max_errors:
-            self._over = True
-            return Event("lost", f"{text} C'est la {self.errors}e erreur : la partie est perdue, "
-                                 f"le pendu est complet. Le mot était « {self.word} ».",
-                         f"Perdu ! Le mot était {self.word}.", mood="déception")
-        left = self.max_errors - self.errors
-        return Event("bad", f"{text} Erreur {self.errors}/{self.max_errors}, encore {left} permises.",
+        self.errors_by[k] = self.errors_by.get(k, 0) + 1
+        self.names[k] = who
+        self.last_error = k
+        mine = self.errors_by[k]
+        if mine >= self.max_errors:
+            text += f" C'est sa {mine}e erreur : {who} est pendu et ne joue plus cette partie."
+            if self._everyone_hanged():
+                return self._lost(text + " Tous les joueurs encore dans le chat sont pendus.")
+            return Event("bad", text + " Les autres joueurs continuent.",
+                         f"{who} est pendu ! Les autres, à vous de jouer.", mood="suspense")
+        left = self.max_errors - mine
+        return Event("bad", f"{text} Erreur {mine}/{self.max_errors} pour {who}, "
+                            f"encore {left} permise(s).",
                      say, mood="suspense" if left <= 2 else "déception")
+
+    def _everyone_hanged(self) -> bool:
+        """No viewer still in the chat may play: the game is lost.
+
+        NAO does not count (it is always there); without a presence source, the
+        players of the game are the ones in the chat."""
+        hanged = {k for k in self.hanged() if k != "nao"}
+        if not hanged:
+            return False
+        players = set(self.names) | set(self.no_word) | self._players
+        present = self.present() if callable(self.present) else players
+        present = {p.lower() for p in present} - {"nao"}
+        return not (present - hanged)
+
+    def _lost(self, text: str) -> Event:
+        self._over = True
+        return Event("lost", f"{text} La partie est perdue. Le mot était « {self.word} ».",
+                     f"Perdu ! Le mot était {self.word}.", mood="déception")
 
     def _won(self, player: Player, points: int, how: str) -> Event:
         self._over = True

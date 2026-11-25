@@ -100,6 +100,9 @@ class Game:
     name = ""
     how_to_play = ""
     start_help = ""
+    # Set by GameMaster before start(): logins of the viewers still in the chat
+    # (wrote there or played lately). None = no such source (the game alone).
+    present = None
 
     def configure(self, settings: dict):
         """Settings of the control room (Settings.values()), before start()."""
@@ -178,6 +181,8 @@ class GameMaster:
         self._last_player = ""
         self._final: dict | None = None   # last view of the game that just ended (overlay)
         self.version = 0                  # bumped on every change: the overlay reveals by version
+        self.presence_s = 600.0           # a viewer who wrote within this delay is in the chat
+        self._seen: dict = {}             # login → clock of its last chat message or move (memory only)
         self.settings = settings
         if settings is not None:
             self.apply(settings.values())
@@ -227,6 +232,24 @@ class GameMaster:
                 self.start_roles = list(values["start_roles"]) or [EVERYONE]
             if "move_cooldown_s" in values:
                 self.move_cooldown_s = float(values["move_cooldown_s"])
+            if "presence_min" in values:
+                self.presence_s = float(values["presence_min"]) * 60
+
+    def seen(self, logins):
+        """Viewers who just wrote in the chat (twitch-input): they are still there."""
+        now = self._clock()
+        with self._lock:
+            for login in logins:
+                if isinstance(login, str) and login.strip():
+                    self._seen[login.strip().lower()] = now
+
+    def present(self) -> set:
+        """Logins seen in the chat or playing within presence_s."""
+        now = self._clock()
+        with self._lock:
+            for login in [k for k, t in self._seen.items() if now - t > self.presence_s]:
+                del self._seen[login]
+            return set(self._seen)
 
     def touch(self):
         """Something outside the game changed (ranking reset): the overlay refreshes."""
@@ -262,7 +285,10 @@ class GameMaster:
                 return self._done(Event(
                     "not_allowed", f"{player.label()} n'a pas le droit de lancer une partie.",
                     "Désolé, tu ne peux pas lancer de partie.", ok=False), player)
+            if player.login and not player.is_nao:
+                self._seen[player.login.lower()] = self._clock()
             game = factory()
+            game.present = self.present
             if self.settings is not None:
                 game.configure(self.settings.values())
             event = game.start(player, options or {})
@@ -286,6 +312,8 @@ class GameMaster:
                                                  f"{game.recap()}", game.recap(),
                                         read=game.clue()), player, count=False)
             now = self._clock()
+            if player.login and not player.is_nao:
+                self._seen[player.login.lower()] = now
             last = self._last_move.get(player.login)
             if (self.move_cooldown_s > 0 and player.login and last is not None
                     and now - last < self.move_cooldown_s):

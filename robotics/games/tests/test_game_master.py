@@ -309,6 +309,10 @@ class TestHttp(unittest.TestCase):
     def test_check(self):
         self.assertEqual(self._call("/check", {"text": "x"}), (200, {"leak": False}))
 
+    def test_seen(self):
+        self.assertEqual(self._call("/seen", {"logins": ["Alice", "bob", 3, ""]}), (200, {"ok": True}))
+        self.assertEqual(self.master.present(), {"alice", "bob"})
+
     def test_reveal(self):
         _, answer = self._call("/start", {"game": "count", "player": {"login": "a"},
                                           "message": "on joue ?"})

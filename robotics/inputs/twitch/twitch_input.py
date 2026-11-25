@@ -38,7 +38,8 @@ Environment variables:
   REGIE_URL             control room that sends the "!rgpd" whispers, default http://regie:8097
   REGIE_TOKEN           its page secret (optional; empty = "!rgpd" is only logged)
   GAME_MASTER_URL       games service (ADR 010), default http://game-master:8098
-  GAME_TOKEN            its API secret (empty = "!stop" is only logged)
+  GAME_TOKEN            its API secret (empty = "!stop" is only logged, presence not sent)
+  PRESENCE_EVERY_S      how often the logins seen in the chat go to game-master, default 30
 
 The Twitch account that whispers is connected in the control room ("Connecter
 Twitch" button, once per start): this service holds no Twitch token.  Not
@@ -55,7 +56,9 @@ the single slot are sent to POST /viewers/missed and kept as missed.  Two chat c
 
 Games (ADR 010) need nothing else here: they go through "!nao" in natural
 language.  The viewer's chat badges are forwarded ("roles") so game-master
-can check who may start a game.
+can check who may start a game.  The logins of everyone who writes in the chat
+(not only "!nao") are posted to game-master's /seen every PRESENCE_EVERY_S: a
+game knows who is still there (hangman: lost when they are all hanged).
 """
 
 import os
@@ -92,6 +95,7 @@ REGIE_URL        = os.environ.get("REGIE_URL", "http://regie:8097").rstrip("/")
 REGIE_TOKEN      = os.environ.get("REGIE_TOKEN", "").strip()
 GAME_MASTER_URL  = os.environ.get("GAME_MASTER_URL", "http://game-master:8098").rstrip("/")
 GAME_TOKEN       = os.environ.get("GAME_TOKEN", "").strip()
+PRESENCE_EVERY_S = float(os.environ.get("PRESENCE_EVERY_S", "30"))
 
 TWITCH_IRC_HOST = "irc.chat.twitch.tv"
 TWITCH_IRC_PORT = 6697
@@ -105,7 +109,8 @@ def log(text: str):
 # Twitch IRC reader (anonymous, read-only)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue):
+def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue,
+             presence: twitch_chat.Presence | None = None):
     backoff = 2
     while True:
         try:
@@ -128,6 +133,8 @@ def irc_loop(chat_filter: twitch_chat.ChatFilter, inbox: twitch_chat.LatestQueue
                 msg = twitch_chat.parse_privmsg(line)
                 if msg is None:
                     continue
+                if presence is not None:
+                    presence.add(msg.user)
                 command = twitch_chat.viewer_command(msg.text)
                 if command and msg.user not in chat_filter.ignored_users:
                     threading.Thread(target=viewer_command, args=(command, msg), daemon=True).start()
@@ -225,6 +232,20 @@ def stop_game(msg: twitch_chat.ChatMessage):
     log(f"!stop from {msg.display_name}: {resp.json().get('event', {}).get('kind')}")
 
 
+def presence_loop(presence: twitch_chat.Presence):
+    """Every PRESENCE_EVERY_S, the logins seen in the chat go to game-master."""
+    while True:
+        time.sleep(PRESENCE_EVERY_S)
+        logins = presence.drain()
+        if not logins:
+            continue
+        try:
+            requests.post(f"{GAME_MASTER_URL}/seen", timeout=10, json={"logins": logins},
+                          headers={"Authorization": f"Bearer {GAME_TOKEN}"}).raise_for_status()
+        except requests.RequestException as e:
+            log(f"présence non envoyée à game-master : {e}")
+
+
 def report_missed(msg: twitch_chat.ChatMessage, question: str):
     """A dropped message stays in the viewer's memory as missed (no answer)."""
     threading.Thread(target=_post_missed, args=(msg, question), daemon=True).start()
@@ -292,7 +313,11 @@ def main():
         blocklist=BLOCKLIST, ignored_users=IGNORED_USERS, mods_only=MODS_ONLY,
     )
     inbox = twitch_chat.LatestQueue(max_age_s=MAX_AGE_S, on_drop=report_missed)
-    threading.Thread(target=irc_loop, args=(chat_filter, inbox), daemon=True).start()
+    presence = None
+    if GAME_TOKEN:
+        presence = twitch_chat.Presence(IGNORED_USERS)
+        threading.Thread(target=presence_loop, args=(presence,), daemon=True).start()
+    threading.Thread(target=irc_loop, args=(chat_filter, inbox, presence), daemon=True).start()
     log(f"tchat #{TWITCH_CHANNEL} → {BODY_GATEWAY_URL}/chat")
     worker_loop(inbox)
 
