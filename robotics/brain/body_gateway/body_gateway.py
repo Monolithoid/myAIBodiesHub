@@ -109,6 +109,8 @@ not played).  POST /game-event {"event", "state"}: an event game-master announce
 by itself (game stopped from the control room…), NAO reacts to it.
   GAME_MASTER_URL            default empty (no games), compose: http://127.0.0.1:8098
   GAME_TOKEN                 game-master's API secret
+  GAME_REVEAL_MAX_S          the overlay shows a move's result once NAO has said it
+                             (POST game-master /reveal); waits this long at most, default 25
 
 Twitch viewers (viewers.py): twitch-input adds {"viewer": {"login", "name",
 "message"}} to /chat.  The viewer's one-sentence profile and last messages,
@@ -192,6 +194,7 @@ if os.environ.get("VIEWER_MEMORY", "1").lower() in ("0", "false", "no", "non", "
 VIEWER_PROFILE_MAX  = int(os.environ.get("VIEWER_PROFILE_MAX", str(viewers.PROFILE_MAX_CHARS)))
 VIEWER_HISTORY      = int(os.environ.get("VIEWER_HISTORY", str(viewers.HISTORY_SIZE)))
 # Games with the viewers (ADR 010): disabled without the URL or the token.
+GAME_REVEAL_MAX_S = float(os.environ.get("GAME_REVEAL_MAX_S", "25"))
 GAMES = game_link.GameLink(os.environ.get("GAME_MASTER_URL", "").strip(),
                            os.environ.get("GAME_TOKEN", "").strip())
 
@@ -735,6 +738,7 @@ class BodyGatewayNode(Node):
             self._publish_energy(parsed.get("energy", "medium"))
             self._publish_cognitive("responding")
             self._dispatch_actions(parsed.get("actions", []), interaction)
+            self._reveal_after_speech(parsed.get("_game_version"))
 
             speech_text = " ".join(
                 a.get("text", "")
@@ -1019,6 +1023,7 @@ class BodyGatewayNode(Node):
             self._publish_energy(parsed.get("energy", "medium"))
             self._publish_cognitive("responding")
             self._dispatch_actions(parsed.get("actions", []), interaction)
+            self._reveal_after_speech(parsed.get("_game_version"))
 
             speech_text = " ".join(
                 a.get("text", "")
@@ -1138,7 +1143,25 @@ class BodyGatewayNode(Node):
                             "text": event.get("say") or event.get("text", "")})
         # Text the game wants said word for word (hangman definition): the LLM may drop it.
         actions = game_link.with_read(actions, event, self._speech_body(body_id))
-        return {**parsed, "actions": actions}
+        return {**parsed, "actions": actions, "_game_version": (state or {}).get("version")}
+
+    def _reveal_after_speech(self, version):
+        """The overlay shows the move's result only once NAO has said it (no spoiler).
+
+        Waits for the answer to start, then to end (SpeakingTracker), at most
+        GAME_REVEAL_MAX_S; game-master shows it anyway after OVERLAY_HOLD_S."""
+        if version is None or not GAMES.enabled:
+            return
+
+        def run():
+            deadline = time.monotonic() + GAME_REVEAL_MAX_S
+            while time.monotonic() < deadline and not self._speaking.started():
+                time.sleep(0.1)
+            while time.monotonic() < deadline and self._speaking.busy():
+                time.sleep(0.1)
+            GAMES.reveal(version)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _game_event(self, body: dict) -> dict:
         """POST /game-event: an event game-master announces by itself (stop, timer)."""
@@ -1159,6 +1182,7 @@ class BodyGatewayNode(Node):
             self._publish_energy(parsed.get("energy", "medium"))
             self._publish_cognitive("responding")
             self._dispatch_actions(parsed.get("actions", []), interaction)
+            self._reveal_after_speech(parsed.get("_game_version"))
             return {"ok": True}
         except Exception as e:
             self.get_logger().error(f"Game event error: {e}")

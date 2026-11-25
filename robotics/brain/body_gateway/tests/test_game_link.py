@@ -150,6 +150,27 @@ class TestFallback(unittest.TestCase):
         self.assertIsNone(game_link.fallback_action("pendu ?", None))
 
 
+class TestReveal(unittest.TestCase):
+
+    def test_reveal_posts_the_version(self):
+        calls = []
+
+        class Resp:
+            def raise_for_status(self): pass
+            def json(self): return {"revealed": True}
+
+        class Session:
+            def post(self, url, json=None, **k):
+                calls.append((url, json))
+                return Resp()
+
+        link = game_link.GameLink("http://gm", "t", session=Session())
+        self.assertTrue(link.reveal(7))
+        self.assertEqual(calls, [("http://gm/reveal", {"version": 7})])
+        self.assertFalse(link.reveal(None))
+        self.assertFalse(game_link.GameLink("", "t").reveal(3))
+
+
 class TestStateError(unittest.TestCase):
 
     def test_error_reason(self):
