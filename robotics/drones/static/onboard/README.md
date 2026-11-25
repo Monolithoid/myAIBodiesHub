@@ -114,7 +114,13 @@ dataset version allows: about 0.4 s at the factory limits (dataset exported with
 `rest_velocity_rad_s: factory`), about 5.6 s with older versions. A request that
 arrives during a gesture waits for it to finish, then plays right away without going
 back to rest (twitch-input sends the next message while NAO plays the answer); a more
-recent request replaces the one that was waiting. A request that arrives during the
+recent request replaces the one that was waiting. It is prepared while the gesture
+plays: speech duration, then generation from the start pose, where every gesture
+ends. As soon as the robot reports the end, the drone sends it without measuring nor
+generating: only the network (end report, then sending) remains between two
+gestures. The NAO still refuses it if the posture is more than 0.05 rad away from
+that start; if the gesture before was stopped or failed, the next one is generated
+again from the measured posture. The `sent` state reports `prepared_ahead`. A request that arrives during the
 return to rest stops it (`/nao/stop`, the posture is held) and starts from the
 measured posture.
 

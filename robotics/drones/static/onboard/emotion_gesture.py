@@ -21,9 +21,15 @@ Chain of a gesture:
 
 After a gesture the robot stays stiff in the start pose; a gesture received
 meanwhile is played right after, without going back to rest (twitch-input sends
-the next message while NAO plays the answer). If it receives no new gesture for
-GESTURE_REST_DELAY seconds, the drone sends the return to rest (validated by the
-guardian) and the robot relaxes at the end. A gesture asked during the return to
+the next message while NAO plays the answer). It is prepared while the current
+gesture plays (speech duration, generation from the start pose, where every
+gesture ends) and sent as soon as the robot reports the end: only the network
+remains between two gestures. The NAO still checks the posture against the
+planned start (0.05 rad); a refusal there drops the gesture; a gesture that did
+not end normally (stopped, error) has the next one generated again from the
+measured posture. If it receives no new gesture for GESTURE_REST_DELAY seconds,
+the drone sends the return to rest (validated by the guardian) and the robot
+relaxes at the end. A gesture asked during the return to
 rest stops it (/nao/stop, the posture is held) and starts from the measured posture.
 
     /nao/emotion_gesture_control ← {"op": "reload"}: rereads emotion_gesture.env
@@ -315,6 +321,7 @@ class GestureService:
         self.profile = None
         self._lock = threading.Lock()
         self._pending = None            # last pending request (older ones are replaced)
+        self._prepared = None           # (request, generated) for _pending, made while a gesture plays
         self._wake = threading.Event()
         self._angles = {}               # id -> angles received
         self._angles_cv = threading.Condition()
@@ -434,6 +441,7 @@ class GestureService:
             old = None
             if not ignored:
                 old, self._pending = self._pending, req
+                self._prepared = None    # made for the replaced request
         if ignored:
             self.state(gid, "ignored", reason="réflexe pendant un geste demandé", reflex=True)
             return
@@ -525,6 +533,13 @@ class GestureService:
                         and not self._pending.get("reflex")):
                     p["stopping"] = True
                     stop = True
+                elif (not p.get("reflex") and not p.get("to_rest")
+                      and self._pending is not None and not self._pending.get("reflex")
+                      and self._prepared is None):
+                    # A gesture ends in the start pose: the next one is prepared
+                    # from there now, and sent as soon as this one is done.
+                    ahead = self._pending
+                    stop = None
                 else:
                     return
             else:
@@ -532,33 +547,93 @@ class GestureService:
         if stop:
             self.bridge.publish("/nao/stop", {})
             return
+        if stop is None:
+            self._prepare_ahead(ahead)
+            return
         with self._lock:
             if self._busy():
                 return
             req, self._pending = self._pending, None
+            prepared, self._prepared = self._prepared, None
+            at_start = self._at_start
             rest_due = (req is None and self._at_start
                         and self.clock() - self._last_end >= self.settings["rest_delay"])
         if req is not None:
-            self.play(req)
+            made = prepared[1] if prepared and prepared[0] is req else None
+            if made is not None and not at_start:
+                # the gesture before did not end in the start pose (stopped, error):
+                # generated again from the measured posture, same speech duration
+                made = self.prepare(req, speech_s=made[3])
+                if made is None:
+                    return
+                self.play(req, made, ahead=False)
+            else:
+                self.play(req, made)
         elif rest_due:
             self.back_to_rest()
 
-    def play(self, req):
+    def _prepare_ahead(self, req):
+        gen, pose = self.gen, None
+        if gen is not None:
+            start = gen.guardian.pose("start")
+            pose = dict((j, float(start[j])) for j in self._joints(gen) if j in start)
+        made = self.prepare(req, pose=pose)
+        with self._lock:
+            if self._pending is req:
+                if made is None:             # refused (reported, sentence released)
+                    self._pending = None
+                else:
+                    self._prepared = (req, made)
+        self._wake.set()                     # the gesture may already be over
+
+    def play(self, req, made=None, ahead=None):
+        """Sends the request's gesture: `made` when prepared ahead, otherwise generated now."""
+        ahead = made is not None if ahead is None else ahead
+        if made is None:
+            made = self.prepare(req)
+            if made is None:
+                return
+        g, pose, sync, speech_s, i, kw, event = made
+        gid = req["id"]
+        timing = {}
+        if sync:
+            seq = getattr(g, "sequence", None) or {}
+            timing = {"sync": sync["id"], "speech_s": speech_s,
+                      "time_scale": seq.get("time_scale", 1.0), "draws": seq.get("draws"),
+                      "speech_offset_ms": self.settings.get("speech_offset_ms", 0.0)}
+        self._send(gid, g, pose, relax_end=False, to_rest=False, sync=sync, timing=timing,
+                   reflex=bool(req.get("reflex")),
+                   info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
+                         "event": req.get("event"), "notes": g.notes,
+                         "adaptation": getattr(g, "adaptation", None),
+                         "latent": (getattr(g, "inputs", None) or {}).get("latent"),
+                         "temperature": (getattr(g, "inputs", None) or {}).get("temperature"),
+                         "retry": _retry_label(i, kw, event), "prepared_ahead": ahead})
+        with self._lock:
+            self._at_start = True
+
+    def prepare(self, req, pose=None, speech_s=None):
+        """Generates the request's gesture from `pose` (None: the posture measured now),
+        for `speech_s` seconds of speech (None: waits for the sentence's duration).
+
+        (g, pose, sync, speech_s, try index, try kwargs, event), or None when refused
+        (reported, and the sentence waiting for it released)."""
         gid = req["id"]
         gen = self.gen
         if gen is None:
             self.state(gid, "refused", reason="aucun générateur en service")
             self.release_speech(req, "aucun générateur")
-            return
+            return None
         sync = self._sync(req)
         try:
             # Sentence duration first: the generator fills it with one movement
             # (duration_s). The posture is measured after this wait.
-            speech_s = self.speech_seconds(sync) if sync else None
+            if speech_s is None:
+                speech_s = self.speech_seconds(sync) if sync else None
             fit = {}
             if speech_s and speech_s > 0 and self.settings.get("match_speech", True):
                 fit = {"duration_s": speech_s}
-            pose = self.measure()
+            pose = self.measure() if pose is None else pose
             joints = self._joints(gen)
             missing = [j for j in joints if j not in pose]
             if missing:
@@ -580,27 +655,12 @@ class GestureService:
         except Exception as exc:
             self.state(gid, "refused", reason=str(exc))
             self.release_speech(req, "geste refusé")
-            return
+            return None
         if not g.ok:
             self.state(gid, "refused", reason=g.report.summary())
             self.release_speech(req, "geste refusé")
-            return
-        timing = {}
-        if sync:
-            seq = getattr(g, "sequence", None) or {}
-            timing = {"sync": sync["id"], "speech_s": speech_s,
-                      "time_scale": seq.get("time_scale", 1.0), "draws": seq.get("draws"),
-                      "speech_offset_ms": self.settings.get("speech_offset_ms", 0.0)}
-        self._send(gid, g, pose, relax_end=False, to_rest=False, sync=sync, timing=timing,
-                   reflex=bool(req.get("reflex")),
-                   info={"emotion": req.get("emotion"), "intensity": req.get("intensity"),
-                         "event": req.get("event"), "notes": g.notes,
-                         "adaptation": getattr(g, "adaptation", None),
-                         "latent": (getattr(g, "inputs", None) or {}).get("latent"),
-                         "temperature": (getattr(g, "inputs", None) or {}).get("temperature"),
-                         "retry": _retry_label(i, kw, event)})
-        with self._lock:
-            self._at_start = True
+            return None
+        return g, pose, sync, speech_s, i, kw, event
 
     def back_to_rest(self):
         """Return to rest after a delay without a gesture: validated by the guardian, then relaxed."""
