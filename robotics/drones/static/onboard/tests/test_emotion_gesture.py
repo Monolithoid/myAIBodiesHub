@@ -305,6 +305,66 @@ class TestService(Base):
         self.assertIn(("b", "replaced"), self.bridge.states())
         self.assertFalse(s.gen.calls[-1][4])          # pas au repos : depuis la posture mesurée
 
+    def _playing_a_then_b_asked(self, refuse_b=False, **b):
+        s = self.service(speech_wait_s=0.0)          # sentence duration: the estimate
+        if refuse_b:
+            s.gen.refuse.add("fear")
+        s.on_request({"id": "a", "emotion": "joy", "intensity": 0.5})
+        s.step()
+        self.bridge.robot("a", "playing")
+        self.bridge.pose = dict(POSES["rest"])       # never read while a plays
+        s.on_request(dict({"id": "b", "emotion": "fear", "intensity": 0.5}, **b))
+        reads = sum(1 for t, _ in self.bridge.out if t == "/nao/read_angles")
+        self.calls = len(s.gen.calls)
+        s.step()                                     # a still playing: b prepared now
+        return s, reads
+
+    def reads(self):
+        return sum(1 for t, _ in self.bridge.out if t == "/nao/read_angles")
+
+    def test_next_gesture_prepared_while_the_current_one_plays(self):
+        s, reads = self._playing_a_then_b_asked(sync={"id": "s-b", "speech_s": 2.0, "speech_s_first": 2.0})
+        self.assertEqual(s.gen.calls[-1][3], POSES["start"])   # from the start pose, where a ends
+        self.assertFalse(s.gen.calls[-1][4])
+        self.assertEqual(s.gen.kwargs[-1]["duration_s"], 2.0)
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
+        s.step()                                     # prepared once
+        self.assertEqual(len(s.gen.calls), self.calls + 1)
+        self.bridge.robot("a", "done")
+        s.step()                                     # sent at once: no measure, no generation
+        traj = self.bridge.trajectories()[-1]
+        self.assertEqual((traj["id"], traj["start"]), ("b", POSES["start"]))
+        self.assertEqual((self.reads(), len(s.gen.calls)), (reads, self.calls + 1))
+        self.assertTrue(self.bridge.last_state()["prepared_ahead"])
+        self.assertIn("s-b", [d.get("sync") for t, d in self.bridge.out if t == eg.SYNC_TOPIC])
+
+    def test_prepared_gesture_replaced_by_a_newer_request(self):
+        s, _ = self._playing_a_then_b_asked()
+        s.on_request({"id": "c", "emotion": "joy", "intensity": 0.9})
+        s.step()                                     # c prepared in turn
+        self.bridge.robot("a", "done")
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a", "c"])
+        self.assertIn(("b", "replaced"), self.bridge.states())
+        self.assertTrue(self.bridge.last_state()["prepared_ahead"])
+
+    def test_prepared_gesture_made_again_when_the_current_one_does_not_end_at_start(self):
+        s, reads = self._playing_a_then_b_asked()
+        self.bridge.pose = {"LShoulderPitch": 1.1, "HeadYaw": 0.2}
+        self.bridge.robot("a", "stopped")
+        s.step()
+        self.assertEqual(self.bridge.trajectories()[-1]["start"], self.bridge.pose)
+        self.assertEqual(self.reads(), reads + 1)
+        self.assertTrue(s.gen.calls[-1][4])           # from the measured posture
+        self.assertFalse(self.bridge.last_state()["prepared_ahead"])
+
+    def test_refused_ahead_is_not_played_later(self):
+        s, _ = self._playing_a_then_b_asked(refuse_b=True)
+        self.assertIn(("b", "refused"), self.bridge.states())
+        self.bridge.robot("a", "done")
+        s.step()
+        self.assertEqual([t["id"] for t in self.bridge.trajectories()], ["a"])
+
     def test_gesture_stops_the_return_to_rest(self):
         s = self.service()
         rest = self._back_to_rest(s)
