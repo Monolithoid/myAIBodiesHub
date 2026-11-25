@@ -19,6 +19,7 @@ text back (GameMaster.answer → Game.on_answer), which settles the event.
   ScoreStore   points per game and per viewer (SQLite)
 """
 
+import json
 import sqlite3
 import threading
 import time
@@ -100,6 +101,9 @@ class Game:
     how_to_play = ""
     start_help = ""
 
+    def configure(self, settings: dict):
+        """Settings of the control room (Settings.values()), before start()."""
+
     def start(self, player: Player, options: dict) -> Event:
         raise NotImplementedError
 
@@ -159,7 +163,7 @@ class GameMaster:
 
     def __init__(self, games: dict, start_roles: list[str] | None = None,
                  move_cooldown_s: float = 0.0, scores: "ScoreStore | None" = None,
-                 on_change=None, clock=time.monotonic):
+                 on_change=None, clock=time.monotonic, settings: "Settings | None" = None):
         self._factories = dict(games)   # id → class (or factory) of Game
         self.start_roles = list(start_roles or [EVERYONE])
         self.move_cooldown_s = move_cooldown_s
@@ -174,6 +178,9 @@ class GameMaster:
         self._last_player = ""
         self._final: dict | None = None   # last view of the game that just ended (overlay)
         self.version = 0                  # bumped on every change: the overlay reveals by version
+        self.settings = settings
+        if settings is not None:
+            self.apply(settings.values())
 
     # ── Read ────────────────────────────────────────────────────────────────
 
@@ -212,6 +219,25 @@ class GameMaster:
         with self._lock:
             return self._game is not None and self._game.leaks(str(text or ""))
 
+    def apply(self, values: dict):
+        """Control-room settings: who may start and the delay apply at once,
+        the games' own settings at the next game (Game.configure)."""
+        with self._lock:
+            if "start_roles" in values:
+                self.start_roles = list(values["start_roles"]) or [EVERYONE]
+            if "move_cooldown_s" in values:
+                self.move_cooldown_s = float(values["move_cooldown_s"])
+
+    def touch(self):
+        """Something outside the game changed (ranking reset): the overlay refreshes."""
+        with self._lock:
+            self.version += 1
+            if self.on_change is not None:
+                try:
+                    self.on_change()
+                except Exception:
+                    pass
+
     # ── Write ───────────────────────────────────────────────────────────────
 
     def start(self, game_id: str, player: Player, message: str = "",
@@ -237,6 +263,8 @@ class GameMaster:
                     "not_allowed", f"{player.label()} n'a pas le droit de lancer une partie.",
                     "Désolé, tu ne peux pas lancer de partie.", ok=False), player)
             game = factory()
+            if self.settings is not None:
+                game.configure(self.settings.values())
             event = game.start(player, options or {})
             if event.ok:
                 self._game = game
@@ -351,9 +379,80 @@ class ScoreStore:
                 " name = excluded.name", (game, login, name, points))
             self._db.commit()
 
+    def reset(self, game: str | None = None):
+        """Ranking back to zero: one game, or every game."""
+        with self._lock:
+            if game:
+                self._db.execute("DELETE FROM scores WHERE game = ?", (game,))
+            else:
+                self._db.execute("DELETE FROM scores")
+            self._db.commit()
+
     def top(self, game: str, n: int = 5) -> list[dict]:
         with self._lock:
             rows = self._db.execute(
                 "SELECT name, points FROM scores WHERE game = ? ORDER BY points DESC, name"
                 " LIMIT ?", (game, n)).fetchall()
         return [{"name": name, "points": points} for name, points in rows]
+
+
+class Settings:
+    """Game settings changed from the control room, kept across restarts (SQLite).
+
+    schema: [{"key", "label", "type": "int"|"float"|"roles", "min", "max", "default", "help"}];
+    the environment variables give the defaults, a value set from the control
+    room overrides them until it is set again."""
+
+    def __init__(self, schema: list[dict], path: str | None = None):
+        self.schema = schema
+        self._by_key = {item["key"]: item for item in schema}
+        self._values: dict = {}
+        self._lock = threading.Lock()
+        self._db = None
+        if path:
+            self._db = sqlite3.connect(path, check_same_thread=False)
+            self._db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+            self._db.commit()
+            for key, value in self._db.execute("SELECT key, value FROM settings").fetchall():
+                if key in self._by_key:
+                    try:
+                        self._values[key] = self._check(key, json.loads(value))
+                    except ValueError:
+                        pass   # an old value out of bounds: back to the default
+
+    def values(self) -> dict:
+        with self._lock:
+            return {key: self._values.get(key, item["default"]) for key, item in self._by_key.items()}
+
+    def update(self, changes: dict) -> dict:
+        """Checks every value first (ValueError, nothing saved), then saves them."""
+        checked = {}
+        for key, value in (changes or {}).items():
+            if key not in self._by_key:
+                raise ValueError(f"réglage inconnu : {key}")
+            checked[key] = self._check(key, value)
+        with self._lock:
+            self._values.update(checked)
+            if self._db is not None:
+                self._db.executemany("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                                     [(k, json.dumps(v)) for k, v in checked.items()])
+                self._db.commit()
+        return self.values()
+
+    def _check(self, key: str, value):
+        item = self._by_key[key]
+        kind = item["type"]
+        if kind == "roles":
+            roles = [str(r) for r in (value if isinstance(value, list) else [value])]
+            if not roles or any(r not in (EVERYONE,) + ROLES[1:] for r in roles):
+                raise ValueError(f"{item['label']} : rôles possibles everyone, moderator, vip, subscriber")
+            return [EVERYONE] if EVERYONE in roles else roles
+        try:
+            number = int(value) if kind == "int" else float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{item['label']} : nombre attendu") from None
+        if kind == "int" and float(value) != number:
+            raise ValueError(f"{item['label']} : nombre entier attendu")
+        if not item["min"] <= number <= item["max"]:
+            raise ValueError(f"{item['label']} : entre {item['min']} et {item['max']}")
+        return number

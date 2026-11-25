@@ -94,6 +94,7 @@ class Hangman(Game):
         self._words = words
         self._rng = rng or random.Random()
         self.max_errors = max_errors
+        self.min_letters = 0                # extra filter set from the control room (configure)
         self.word = ""
         self.level = "medium"
         self.tried: list[str] = []          # letters, in the order they were played
@@ -158,9 +159,16 @@ class Hangman(Game):
 
     # ── Start and definition (hidden LLM call) ──────────────────────────────
 
+    def configure(self, settings: dict):
+        self.max_errors = int(settings.get("hangman_max_errors", self.max_errors))
+        self.min_letters = int(settings.get("hangman_min_letters", self.min_letters))
+        self.nao_min_found = float(settings.get("hangman_nao_min_found", self.nao_min_found))
+
     def start(self, player: Player, options: dict) -> Event:
         words = self._words if self._words is not None else load_words()
         self.level = LEVELS.get(str((options or {}).get("difficulty", "")).lower(), "medium")
+        words = {level: [w for w in pool if len(plain(w)) >= self.min_letters]
+                 for level, pool in words.items()}
         pool = words.get(self.level) or [w for level in words.values() for w in level]
         if not pool:
             return Event("no_words", "La liste de mots du pendu est vide.",

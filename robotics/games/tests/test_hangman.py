@@ -227,6 +227,19 @@ class TestThroughGameMaster(unittest.TestCase):
         self.assertEqual(recap.read, "Indice : Grand animal gris à trompe.")
         self.assertEqual(master.catalog()[0]["start"], hangman.Hangman.start_help)
 
+    def test_settings_apply_at_the_next_game(self):
+        import game_core
+        settings = game_core.Settings([
+            {"key": "hangman_max_errors", "label": "E", "type": "int", "min": 3, "max": 12, "default": 7},
+            {"key": "hangman_min_letters", "label": "L", "type": "int", "min": 1, "max": 12, "default": 1},
+        ])
+        master = GameMaster({"hangman": FixedHangman}, settings=settings)
+        settings.update({"hangman_max_errors": 4, "hangman_min_letters": 6})
+        master.start("hangman", ALICE, "pendu ?", {"difficulty": "difficile"})
+        view = master.state()["activity"]["view"]
+        self.assertEqual(view["max_errors"], 4)
+        self.assertGreaterEqual(view["letters"], 6)   # "cœur" (5) left out of the draw
+
     def test_scores_in_the_state(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

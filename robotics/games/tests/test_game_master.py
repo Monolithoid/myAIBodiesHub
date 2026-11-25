@@ -184,6 +184,40 @@ class TestGameMaster(unittest.TestCase):
             self.assertEqual(scores.top("other"), [])
 
 
+class TestSettings(unittest.TestCase):
+
+    SCHEMA = [{"key": "n", "label": "N", "type": "int", "min": 1, "max": 9, "default": 3},
+              {"key": "f", "label": "F", "type": "float", "min": 0, "max": 1, "default": 0.0},
+              {"key": "start_roles", "label": "R", "type": "roles", "default": ["everyone"]}]
+
+    def test_defaults_update_and_persistence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "g.db")
+            s = game_core.Settings(self.SCHEMA, path)
+            self.assertEqual(s.values(), {"n": 3, "f": 0.0, "start_roles": ["everyone"]})
+            s.update({"n": "5", "start_roles": ["vip", "moderator"]})
+            again = game_core.Settings(self.SCHEMA, path)
+            self.assertEqual(again.values()["n"], 5)
+            self.assertEqual(again.values()["start_roles"], ["vip", "moderator"])
+
+    def test_refused_values_change_nothing(self):
+        s = game_core.Settings(self.SCHEMA)
+        for bad in ({"n": 10}, {"n": 2.5}, {"n": "x"}, {"f": 2}, {"start_roles": ["admin"]},
+                    {"start_roles": []}, {"other": 1}, {"f": 0.5, "n": 99}):
+            with self.assertRaises(ValueError, msg=bad):
+                s.update(bad)
+        self.assertEqual(s.values()["f"], 0.0)
+
+    def test_master_applies_them(self):
+        s = game_core.Settings(self.SCHEMA + [
+            {"key": "move_cooldown_s", "label": "D", "type": "float", "min": 0, "max": 9,
+             "default": 0.0}])
+        master = GameMaster({"count": CountGame}, settings=s)
+        master.apply(s.update({"start_roles": ["vip"], "move_cooldown_s": 5}))
+        self.assertEqual(master.start_roles, ["vip"])
+        self.assertEqual(master.move_cooldown_s, 5.0)
+
+
 class TestStage(unittest.TestCase):
 
     def setUp(self):
@@ -258,6 +292,19 @@ class TestHttp(unittest.TestCase):
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def test_settings_and_scores_routes(self):
+        self.master.settings = game_core.Settings(game_master.SETTINGS_SCHEMA)
+        code, data = self._call("/settings")
+        self.assertEqual(code, 200)
+        self.assertEqual(data["values"]["hangman_max_errors"], 7)
+        self.assertEqual(self._call("/settings", {"hangman_max_errors": 5})[1]["values"]
+                         ["hangman_max_errors"], 5)
+        code, data = self._call("/settings", {"hangman_max_errors": 50})
+        self.assertEqual(code, 400)
+        self.assertIn("entre 3 et 12", data["error"])
+        self.assertEqual(self._call("/scores?game=count")[1], {"game": "count", "top": []})
+        self.assertEqual(self._call("/scores/reset", {}), (200, {"ok": True}))
 
     def test_check(self):
         self.assertEqual(self._call("/check", {"text": "x"}), (200, {"leak": False}))
