@@ -22,6 +22,8 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
                                    hidden LLM call ("" = failed)
   An answer may also hold "ask": {"id", "purpose", "system", "user"}, a hidden LLM call
   body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
+  POST /check {"text"}                                   → {"leak"}: NAO's text gives the
+                                   running game's solution away (it is then not said)
   POST /reveal {"version"}                               → {"revealed"}: NAO has said
                                    the result, the overlay may show the state of that version
   GET  /overlay?token=…            OBS page; /overlay/stream?token=… its SSE feed (each
@@ -229,6 +231,9 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
                 return
             body = self._read_json()
             if body is None:
+                return
+            if url.path == "/check":
+                self._json(200, {"leak": master.check(str(body.get("text", "")))})
                 return
             if url.path == "/reveal":
                 try:

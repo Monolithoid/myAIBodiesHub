@@ -168,6 +168,16 @@ class TestMoves(unittest.TestCase):
 
 class TestThroughGameMaster(unittest.TestCase):
 
+    def test_check_blocks_the_word_while_running(self):
+        master = GameMaster({"hangman": FixedHangman})
+        self.assertFalse(master.check("éléphant"))                  # no game
+        master.start("hangman", ALICE, "pendu ?", {"difficulty": "facile"})
+        self.assertTrue(master.check("Ce gros ELEPHANT va tomber !"))
+        self.assertTrue(master.check("des éléphanteaux"))
+        self.assertFalse(master.check("Bien vu, le E est là."))
+        master.move({"type": "word", "word": "elephant"}, BOB)
+        self.assertFalse(master.check("Le mot était éléphant !"))  # game over: said freely
+
     def test_ask_answer_flow(self):
         master = GameMaster({"hangman": FixedHangman})
         event = master.start("hangman", ALICE, "on joue au pendu ?", {"difficulty": "facile"})

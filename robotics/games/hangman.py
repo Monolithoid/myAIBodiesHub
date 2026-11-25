@@ -75,7 +75,8 @@ class Hangman(Game):
     id = "hangman"
     name = "Pendu"
     how_to_play = ('une lettre : {"type": "letter", "letter": "e"} ; '
-                   'le mot entier : {"type": "word", "word": "<mot proposé>"}')
+                   'le mot entier, à tout moment de la partie (un message fait d\'un seul mot '
+                   'est une proposition de mot entier) : {"type": "word", "word": "<mot proposé>"}')
     start_help = '"options": {"difficulty": "facile|moyen|difficile"} (moyen si rien n\'est demandé)'
 
     def __init__(self, words: dict | None = None, rng: random.Random | None = None,
@@ -138,6 +139,10 @@ class Hangman(Game):
 
     def is_over(self) -> bool:
         return self._over
+
+    def leaks(self, text: str) -> bool:
+        # The LLM may guess the word from the definition: NAO must not say it.
+        return bool(self.word) and not self._over and leaks(text, self.word)
 
     # ── Start and definition (hidden LLM call) ──────────────────────────────
 

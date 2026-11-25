@@ -1018,6 +1018,8 @@ class BodyGatewayNode(Node):
             profile = parsed.get("profil")
             parsed = self._play_game(interaction, body_id, parsed, viewer, source, user_input,
                                      game_state)
+            if (game_state or {}).get("activity") or parsed.get("_game_version") is not None:
+                parsed = self._no_spoiler(interaction, parsed)
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -1143,7 +1145,22 @@ class BodyGatewayNode(Node):
                             "text": event.get("say") or event.get("text", "")})
         # Text the game wants said word for word (hangman definition): the LLM may drop it.
         actions = game_link.with_read(actions, event, self._speech_body(body_id))
-        return {**parsed, "actions": actions, "_game_version": (state or {}).get("version")}
+        return {**parsed, "actions": actions, "_game_version": (state or {}).get("version"),
+                "_game_say": f"{event.get('say') or ''} {event.get('read') or ''}".strip()}
+
+    def _no_spoiler(self, interaction: str, parsed: dict) -> dict:
+        """A sentence that gives the running game's solution away is not said.
+
+        The LLM never gets the solution but may guess it (from the hangman
+        definition): game-master, which knows it, checks each sentence."""
+        actions = []
+        for action in parsed.get("actions", []):
+            if action.get("type") == "speech" and GAMES.check(action.get("text", "")):
+                self._emit("game", interaction, event="spoiler_blocked", ok=False,
+                           text="phrase de NAO remplacée : elle donnait la solution")
+                action = {**action, "text": parsed.get("_game_say") or game_link.NO_SPOILER}
+            actions.append(action)
+        return {**parsed, "actions": actions}
 
     def _reveal_after_speech(self, version):
         """The overlay shows the move's result only once NAO has said it (no spoiler).

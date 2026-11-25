@@ -259,6 +259,9 @@ class TestHttp(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
 
+    def test_check(self):
+        self.assertEqual(self._call("/check", {"text": "x"}), (200, {"leak": False}))
+
     def test_reveal(self):
         _, answer = self._call("/start", {"game": "count", "player": {"login": "a"},
                                           "message": "on joue ?"})

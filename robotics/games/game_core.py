@@ -121,6 +121,10 @@ class Game:
     def is_over(self) -> bool:
         return False
 
+    def leaks(self, text: str) -> bool:
+        """True when NAO's text gives the solution away (checked before NAO speaks)."""
+        return False
+
     def pending_ask(self) -> dict | None:
         """Hidden LLM call the game waits for ({"id", "purpose", "system", "user"})."""
         return None
@@ -190,6 +194,11 @@ class GameMaster:
     def pending_ask(self) -> dict | None:
         with self._lock:
             return self._game.pending_ask() if self._game is not None else None
+
+    def check(self, text: str) -> bool:
+        """True when NAO's text gives the running game's solution away."""
+        with self._lock:
+            return self._game is not None and self._game.leaks(str(text or ""))
 
     # ── Write ───────────────────────────────────────────────────────────────
 

@@ -27,8 +27,12 @@ Twitch "!nao je propose le E"
   in the chat; NAO announces it.
 - When the LLM is late, NAO says a canned sentence given by game-master.
 - When the LLM forgets the game action, body-gateway infers it in unambiguous cases
-  only: a single letter ("e", "la lettre e") while a hangman runs, or a question naming
-  a game of the catalog ("on peut jouer au pendu ?") while nothing runs.
+  only: a single letter ("e", "la lettre e") or a single word as long as the hidden one
+  ("grenier", "c'est grenier") while a hangman runs, or a question naming a game of the
+  catalog ("on peut jouer au pendu ?") while nothing runs.
+- **NAO never says the solution**: the LLM does not get it but may guess it (from the
+  hangman definition). While a game runs, body-gateway asks game-master (`/check`)
+  about each sentence; one that gives the solution away is replaced by the canned one.
 
 ## Hangman
 
@@ -76,6 +80,7 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
+| `POST /check` | `{"text"}` | `{"leak"}`: NAO's sentence gives the running game's solution away |
 | `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
 | `GET /overlay?token=…` | — | OBS page (Server-Sent Events from `/overlay/stream`) |
 

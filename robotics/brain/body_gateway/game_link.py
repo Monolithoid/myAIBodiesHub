@@ -55,6 +55,8 @@ def prompt_section(state: dict | None) -> str:
             'est bon : ne dis jamais qu\'une lettre ou un mot est bon ou faux, l\'arbitre le dira.',
             'Quand on te demande où en est la partie ou de redonner le contexte : '
             '{"type": "game_move", "move": {"type": "recap"}}.',
+            "Tu ne connais pas la solution : ne la devine jamais et ne la dis jamais, même si tu "
+            "crois l'avoir trouvée (d'après la définition par exemple).",
             "Si le message parle du jeu mais que tu ne sais pas le traduire en coup, dis que tu "
             "n'as pas compris la demande, sans action de jeu. Un message sans rapport avec le jeu "
             "reçoit une réponse normale.",
@@ -77,7 +79,8 @@ def prompt_section(state: dict | None) -> str:
 REACTION_RULES = """
 Événement de jeu : la ligne "[jeu]" est un fait décidé par l'arbitre du jeu (le code). \
 Réagis-y en une ou deux phrases courtes, avec ton émotion et un geste : annonce-le fidèlement, \
-n'invente aucun résultat, aucune lettre, aucun indice ni aucune solution, et n'ajoute aucune \
+n'invente aucun résultat, aucune lettre, aucun indice ni aucune solution (ne devine jamais le \
+mot, même d'après la définition), et n'ajoute aucune \
 action "start_game" ni "game_move". Si le fait dit qu'une demande est refusée ou pas comprise, \
 explique-le simplement.\
 """
@@ -115,6 +118,8 @@ def with_read(actions: list, event: dict, speech_body: str) -> list:
     return actions + [{"body": speech_body, "type": "speech", "text": read}]
 
 
+NO_SPOILER = "Chut, je ne peux pas t'aider sur ce coup-là, ce serait tricher !"
+
 MAX_ASKS = 3   # hidden calls chained for one move, at most
 
 
@@ -132,6 +137,8 @@ def _plain(text: str) -> str:
 
 
 _LETTER = re.compile(r"^\s*(?:(?:la\s+)?lettre\s+)?([a-z])\s*[?!.]*\s*$")
+_WORD = re.compile(r"^\s*(?:(?:le\s+mot\s+(?:est|c'est)|c'est|je\s+propose|je\s+dis)\s+)?"
+                   r"([a-z]+)\s*[?!.]*\s*$")
 
 
 def fallback_action(message: str, state: dict | None) -> dict | None:
@@ -144,9 +151,16 @@ def fallback_action(message: str, state: dict | None) -> dict | None:
     text = _plain(message)
     activity = state.get("activity")
     if activity:
+        if activity.get("game") != "hangman":
+            return None
         match = _LETTER.match(text)
-        if activity.get("game") == "hangman" and match:
+        if match:
             return {"type": "game_move", "move": {"type": "letter", "letter": match.group(1)}}
+        # One word as long as the hidden one ("grenier", "c'est grenier"): a word guess.
+        match = _WORD.match(text)
+        letters = (activity.get("view") or {}).get("letters")
+        if match and letters and len(match.group(1)) == letters:
+            return {"type": "game_move", "move": {"type": "word", "word": match.group(1)}}
         return None
     if "?" not in text:
         return None
@@ -227,6 +241,18 @@ class GameLink:
         if not self.enabled:
             return None
         return self._post("/answer", {"id": str(ask.get("id", "")), "text": text, "player": player})
+
+    def check(self, text: str) -> bool:
+        """True when game-master says NAO's text gives the solution away."""
+        if not self.enabled or not str(text or "").strip():
+            return False
+        try:
+            resp = self._http.post(f"{self.url}/check", json={"text": str(text)},
+                                   headers=self._headers(), timeout=self.timeout)
+            resp.raise_for_status()
+            return bool(resp.json().get("leak"))
+        except (requests.RequestException, ValueError, AttributeError):
+            return False
 
     def reveal(self, version) -> bool:
         """NAO has said the result: the overlay may show the state of this version."""

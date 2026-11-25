@@ -140,6 +140,30 @@ class TestFallback(unittest.TestCase):
         for text in ("et", "salut", "c'est quoi ?", ""):
             self.assertIsNone(game_link.fallback_action(text, running), text)
 
+    def test_word_as_long_as_the_hidden_one(self):
+        running = {"activity": {"game": "hangman", "view": {"letters": 7}}, "games": []}
+        for text in ("grenier", "Grenier !", "c'est grenier", "le mot est grenier"):
+            self.assertEqual(game_link.fallback_action(text, running),
+                             {"type": "game_move", "move": {"type": "word", "word": "grenier"}},
+                             text)
+        for text in ("salut", "bravooooo", "c'est trop dur"):
+            self.assertIsNone(game_link.fallback_action(text, running), text)
+
+    def test_check(self):
+        class Resp:
+            def __init__(self, leak): self.leak = leak
+            def raise_for_status(self): pass
+            def json(self): return {"leak": self.leak}
+
+        class Session:
+            def post(self, url, json=None, **k):
+                return Resp("grenier" in json["text"])
+
+        link = game_link.GameLink("http://gm", "t", session=Session())
+        self.assertTrue(link.check("ce grenier va tomber"))
+        self.assertFalse(link.check("le E est là"))
+        self.assertFalse(link.check(""))
+
     def test_start_from_a_question_naming_a_game(self):
         idle = {"activity": None, "games": [{"id": "hangman", "name": "Pendu"}]}
         self.assertEqual(game_link.fallback_action("hello on peut jouer au pendu ?", idle),
