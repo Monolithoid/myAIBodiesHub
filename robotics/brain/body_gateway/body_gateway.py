@@ -958,8 +958,15 @@ class BodyGatewayNode(Node):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.get_logger().info(
             f"HTTP démarré → :{CHAT_PORT}/ping  :{CHAT_PORT}/chat  :{CHAT_PORT}/say"
-            f"  :{CHAT_PORT}/voice-pop  :{CHAT_PORT}/speaking"
+            f"  :{CHAT_PORT}/voice-pop  :{CHAT_PORT}/speaking  :{CHAT_PORT}/game-event"
         )
+        if not GAMES.enabled:
+            self.get_logger().info("Jeux désactivés (GAME_MASTER_URL ou GAME_TOKEN vide)")
+        elif (state := GAMES.state()) is None:
+            self.get_logger().warn(f"Jeux : game-master {GAMES.url} {GAMES.error}")
+        else:
+            names = ", ".join(g.get("id", "") for g in state.get("games") or [])
+            self.get_logger().info(f"Jeux : game-master {GAMES.url} OK ({names or 'aucun jeu'})")
 
     # ─────────────────────────────────────────────────────────────────────────
     # LLM streaming call (avoids timeouts on long generations)
@@ -996,6 +1003,10 @@ class BodyGatewayNode(Node):
                 context = viewers.context_lines(str(viewer.get("name") or login),
                                                 self._viewers.get(login))
             game_state = GAMES.state()
+            if GAMES.enabled and game_state is None:
+                # Without the state, the prompt has no games: the LLM would only pretend to play.
+                self.get_logger().warn(f"game-master {GAMES.error} — jeux absents du prompt")
+                self._emit("error", interaction, message=f"game-master {GAMES.error}")
             parsed = self._decide(
                 interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7,
                 viewer_context=context, extra_system=game_link.prompt_section(game_state),

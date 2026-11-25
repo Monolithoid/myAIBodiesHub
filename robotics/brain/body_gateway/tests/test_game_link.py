@@ -130,6 +130,32 @@ class TestRead(unittest.TestCase):
         self.assertIn("Ne le répète pas", text)
 
 
+class TestStateError(unittest.TestCase):
+
+    def test_error_reason(self):
+        class Resp:
+            def __init__(self, code): self.status_code = code
+            def raise_for_status(self): pass
+            def json(self): return {"activity": None}
+
+        class Session:
+            def __init__(self, code): self.code = code
+            def get(self, *a, **k):
+                if self.code is None:
+                    raise game_link.requests.ConnectionError("down")
+                return Resp(self.code)
+
+        link = game_link.GameLink("http://gm", "t", session=Session(401))
+        self.assertIsNone(link.state())
+        self.assertIn("GAME_TOKEN", link.error)
+        link = game_link.GameLink("http://gm", "t", session=Session(None))
+        self.assertIsNone(link.state())
+        self.assertIn("injoignable", link.error)
+        link = game_link.GameLink("http://gm", "t", session=Session(200))
+        self.assertEqual(link.state(), {"activity": None})
+        self.assertEqual(link.error, "")
+
+
 class TestGameLink(unittest.TestCase):
 
     def test_disabled_without_url_or_token(self):

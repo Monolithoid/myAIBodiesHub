@@ -147,6 +147,7 @@ class GameLink:
         self.token = token
         self.timeout = timeout
         self._http = session or requests
+        self.error = ""   # why the last call failed ("" = it worked)
 
     @property
     def enabled(self) -> bool:
@@ -160,9 +161,15 @@ class GameLink:
             return None
         try:
             resp = self._http.get(f"{self.url}/state", headers=self._headers(), timeout=self.timeout)
+            if getattr(resp, "status_code", 200) == 401:
+                self.error = "token refusé (GAME_TOKEN différent de celui de game-master)"
+                return None
             resp.raise_for_status()
-            return resp.json()
-        except (requests.RequestException, ValueError):
+            data = resp.json()
+            self.error = ""
+            return data
+        except (requests.RequestException, ValueError) as e:
+            self.error = f"injoignable ({type(e).__name__})"
             return None
 
     def play(self, action: dict, player: dict, message: str) -> dict | None:
