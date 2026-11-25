@@ -27,8 +27,16 @@ Twitch "!nao je propose le E"
   in the chat; NAO announces it.
 - When the LLM is late, NAO says a canned sentence given by game-master.
 - When the LLM forgets the game action, body-gateway infers it in unambiguous cases
-  only: a single letter ("e", "la lettre e") while a hangman runs, or a question naming
-  a game of the catalog ("on peut jouer au pendu ?") while nothing runs.
+  only: a single letter ("e", "la lettre e") or a single word as long as the hidden one
+  ("grenier", "c'est grenier") while a hangman runs, or a question naming a game of the
+  catalog ("on peut jouer au pendu ?") while nothing runs.
+- **NAO plays too**, with its own points in the same ranking (login `nao`): it plays a
+  move when a viewer asks it ("à toi NAO", action `"by": "nao"`). Its LLM never gets
+  the solution, nor the hangman definition (the code reads it word for word, the
+  overlay shows it), but it may find the word from the letters found: while a game
+  runs, body-gateway asks game-master (`/check`) about each sentence, and one that
+  holds the solution is played as NAO's guess (move `said`). NAO then wins and
+  reacts as a show-off.
 
 ## Hangman
 
@@ -38,7 +46,8 @@ Twitch "!nao je propose le E"
   (Lexique 3.83, CC BY-SA 4.0).
 - Right after the draw, a **hidden LLM call** writes a short definition. The code
   checks it gives nothing away (the word, its stem, its letters spelled out); otherwise
-  the game goes on without a definition. NAO reads the definition when the game starts.
+  the game goes on without a definition. NAO reads it when the game starts and with
+  the recap: the code adds it to the speech, NAO's LLM never sees it.
 - Moves: a letter ("!nao je propose le E"), or the whole word at any time. Letters are
   compared without accents. A wrong word costs an error, and that viewer may no longer
   propose a word in this game (letters still allowed).
@@ -76,6 +85,7 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
+| `POST /check` | `{"text"}` | `{"leak"}`: NAO's sentence holds the running game's solution (then played as its guess) |
 | `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
 | `GET /overlay?token=…` | — | OBS page (Server-Sent Events from `/overlay/stream`) |
 

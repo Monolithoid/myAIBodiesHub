@@ -126,8 +126,12 @@ class TestRead(unittest.TestCase):
 
     def test_reaction_input_announces_the_read(self):
         text = game_link.reaction_input({"text": "Lancée.", "read": "Indice : y."}, None)
-        self.assertIn("« Indice : y. »", text)
-        self.assertIn("Ne le répète pas", text)
+        self.assertNotIn("Indice : y.", text)   # the LLM would guess the word from it
+        self.assertIn("un indice sera lu", text)
+
+    def test_nao_is_told_it_played(self):
+        text = game_link.reaction_input({"text": "NAO propose le E."}, None, "NAO")
+        self.assertIn("c'est toi", text)
 
 
 class TestFallback(unittest.TestCase):
@@ -139,6 +143,30 @@ class TestFallback(unittest.TestCase):
                              {"type": "game_move", "move": {"type": "letter", "letter": "e"}}, text)
         for text in ("et", "salut", "c'est quoi ?", ""):
             self.assertIsNone(game_link.fallback_action(text, running), text)
+
+    def test_word_as_long_as_the_hidden_one(self):
+        running = {"activity": {"game": "hangman", "view": {"letters": 7}}, "games": []}
+        for text in ("grenier", "Grenier !", "c'est grenier", "le mot est grenier"):
+            self.assertEqual(game_link.fallback_action(text, running),
+                             {"type": "game_move", "move": {"type": "word", "word": "grenier"}},
+                             text)
+        for text in ("salut", "bravooooo", "c'est trop dur"):
+            self.assertIsNone(game_link.fallback_action(text, running), text)
+
+    def test_check(self):
+        class Resp:
+            def __init__(self, leak): self.leak = leak
+            def raise_for_status(self): pass
+            def json(self): return {"leak": self.leak}
+
+        class Session:
+            def post(self, url, json=None, **k):
+                return Resp("grenier" in json["text"])
+
+        link = game_link.GameLink("http://gm", "t", session=Session())
+        self.assertTrue(link.check("ce grenier va tomber"))
+        self.assertFalse(link.check("le E est là"))
+        self.assertFalse(link.check(""))
 
     def test_start_from_a_question_naming_a_game(self):
         idle = {"activity": None, "games": [{"id": "hangman", "name": "Pendu"}]}

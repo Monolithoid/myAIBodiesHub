@@ -259,6 +259,9 @@ class TestHttp(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
 
+    def test_check(self):
+        self.assertEqual(self._call("/check", {"text": "x"}), (200, {"leak": False}))
+
     def test_reveal(self):
         _, answer = self._call("/start", {"game": "count", "player": {"login": "a"},
                                           "message": "on joue ?"})
@@ -305,7 +308,10 @@ class TestHttp(unittest.TestCase):
         code, data = self._call("/answer", {"id": ask["id"], "text": "Petite bête à huit pattes.",
                                             "player": {"source": "webui"}})
         self.assertNotIn("ask", data)
-        self.assertIn("huit pattes", data["state"]["activity"]["summary"])
+        # The definition goes to the overlay and is read by the code, never to the LLM.
+        self.assertNotIn("huit pattes", data["state"]["activity"]["summary"])
+        self.assertIn("huit pattes", data["state"]["activity"]["view"]["definition"])
+        self.assertIn("huit pattes", data["event"]["read"])
 
     def test_overlay_page_with_query_token(self):
         with urllib.request.urlopen(self.base + "/overlay?token=secret", timeout=5) as resp:
