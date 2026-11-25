@@ -14,7 +14,7 @@
     "audio_capture": false,
     "motion_limits": {
       "max_speed": 0.3,
-      "joint_margin": 0.05,
+      "joint_margin": 0.03,
       "joint_ranges": {"HeadPitch": [-0.4, 0.3]},
       "walk_max": 0.5
     }
