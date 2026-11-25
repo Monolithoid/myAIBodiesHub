@@ -255,6 +255,26 @@ class LatestQueue:
             return 0 if self._item is None else 1
 
 
+class Presence:
+    """Logins seen in the chat since the last drain (games: who is still there)."""
+
+    def __init__(self, ignored_users=()):
+        self.ignored = {u.lower() for u in ignored_users}
+        self._logins: set[str] = set()
+        self._lock = threading.Lock()
+
+    def add(self, login: str):
+        login = (login or "").lower()
+        if login and login not in self.ignored:
+            with self._lock:
+                self._logins.add(login)
+
+    def drain(self) -> list[str]:
+        with self._lock:
+            logins, self._logins = sorted(self._logins), set()
+        return logins
+
+
 def brain_prompt(msg: ChatMessage, question: str) -> str:
     """Text sent to body-gateway /chat; the format is described in its system prompt."""
     return f"[tchat Twitch] {msg.display_name} : {question}"

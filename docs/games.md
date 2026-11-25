@@ -54,11 +54,17 @@ Twitch "!nao je propose le E"
 - Moves: a letter ("!nao je propose le E"), or the whole word at any time. Letters are
   compared without accents. A wrong word costs an error, and that viewer may no longer
   propose a word in this game (letters still allowed).
-- End: word found, or `HANGMAN_MAX_ERRORS` errors (7). Points: 1 per letter revealed,
-  3 + the letters still hidden for the word.
+- **Lives per player**: each player (NAO included) has `HANGMAN_MAX_ERRORS` errors (7);
+  then they are hanged and may no longer play this game, the others go on.
+- End: word found, or every viewer **still in the chat** is hanged. A viewer is in the
+  chat when they wrote there (any message, not only `!nao`) or played within
+  `PRESENCE_MIN` minutes: twitch-input posts the logins it sees to game-master
+  (`/seen`, kept in memory only). As long as one viewer present is not hanged, the game
+  goes on; a hanged viewer's leaving can end it (checked every second).
+  Points: 1 per letter revealed, 3 + the letters still hidden for the word.
 - Overlay: the word (`R _ _ _ _ T _ _ _ X`), the definition, the letters tried (wrong
-  ones struck out), the gallows drawn step by step with the errors; it stays on screen
-  a little while after the end with the solution.
+  ones struck out), the wrong words proposed, the gallows of the last player who erred
+  (their errors), the players hanged; it stays on screen a little while after the end with the solution.
 
 ### Hidden LLM calls
 
@@ -73,7 +79,7 @@ The mystery's archivist will use the same path.
 |---|---|
 | `game-master` (`robotics/games/`) | rules, state, who may start, per-viewer delay, scores (SQLite), OBS overlay |
 | `body-gateway` (`game_link.py`) | games in the prompt, forwards `start_game` / `game_move`, NAO's reaction; `POST /game-event` for events game-master announces itself |
-| `twitch-input` | forwards the chat badges (`roles`); `!stop` for moderators |
+| `twitch-input` | forwards the chat badges (`roles`); `!stop` for moderators; logins seen in the chat (`/seen`) |
 | `regie` | "Annuler le jeu" button; game events in the feed (`game` kind) |
 
 ## game-master API
@@ -88,6 +94,7 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
+| `POST /seen` | `{"logins"}` | `{"ok"}`: viewers who just wrote in the chat (twitch-input, every `PRESENCE_EVERY_S`) |
 | `POST /check` | `{"text"}` | `{"leak"}`: NAO's sentence holds the running game's solution (then played as its guess) |
 | `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
 | `GET /settings` | — | `{"values", "schema"}`: settings of the control room |
@@ -117,8 +124,8 @@ game-master (`GET/POST /settings`, `GET /scores`, `POST /scores/reset`), so
 `GAME_TOKEN` never reaches the browser.
 
 Settings changed there are kept in game-master's SQLite base (`/data`) and override
-the variables below, which only give the defaults. Who may start and the delay
-between two moves apply at once; the hangman settings at the next game.
+the variables below, which only give the defaults. Who may start, the delay between
+two moves and the presence apply at once; the hangman settings at the next game.
 
 ## Configuration
 
@@ -127,7 +134,9 @@ between two moves apply at once; the hangman settings at the next game.
 | `GAME_TOKEN` | game-master, body-gateway, twitch-input, regie | — | API and overlay secret (game-master refuses to start without it; empty elsewhere = games off) |
 | `GAME_START_ROLES` | game-master | `everyone` | who may start a game: `everyone`, or a comma list among `moderator`, `vip`, `subscriber` (the streamer always may) |
 | `MOVE_COOLDOWN_S` | game-master | `0` | per-viewer delay between two moves |
-| `HANGMAN_MAX_ERRORS` | game-master | `7` | errors before the hangman game is lost |
+| `HANGMAN_MAX_ERRORS` | game-master | `7` | errors of one player before they are hanged |
+| `PRESENCE_MIN` | game-master | `10` | a viewer who wrote in the chat (or played) within these minutes is still there |
+| `PRESENCE_EVERY_S` | twitch-input | `30` | how often the logins seen in the chat go to game-master |
 | `HANGMAN_MIN_LETTERS` | game-master | `6` | shortest hangman word (the list holds 6 to 12 letters) |
 | `GAMES_DB_PATH` | game-master | `/data/games.db` | scores (volume `/opt/ia/nao/games`) |
 | `OVERLAY_HOLD_S` | game-master | `30` | longest a new state waits for `/reveal` before the overlay shows it (`0` = at once) |

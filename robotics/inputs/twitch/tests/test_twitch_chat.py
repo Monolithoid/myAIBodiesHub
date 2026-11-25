@@ -156,6 +156,16 @@ class TestDropped(unittest.TestCase):
         self.assertEqual(dropped, ["un", "deux"])
 
 
+class TestPresence(unittest.TestCase):
+
+    def test_drain(self):
+        p = twitch_chat.Presence(["nightbot"])
+        for login in ("Bob", "alice", "bob", "nightbot", ""):
+            p.add(login)
+        self.assertEqual(p.drain(), ["alice", "bob"])
+        self.assertEqual(p.drain(), [])
+
+
 class TestAnswerReady(unittest.TestCase):
 
     def test_next_message_at_start(self):

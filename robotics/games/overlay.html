@@ -31,6 +31,8 @@
   .hangman .tried { margin-top: 8px; font: 600 20px ui-monospace, monospace; letter-spacing: 0.1em; }
   .hangman .tried span { margin-right: 0.45em; }
   .hangman .tried .bad { color: #ff7b7b; text-decoration: line-through; }
+  .hangman .words { font-size: 17px; letter-spacing: 0.04em; }
+  .hangman .words span { margin-right: 0.9em; }
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
   #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
   #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
@@ -71,7 +73,7 @@ function defaultView(view, el) {
 }
 
 // Hangman: the word (R _ _ _ T), the definition, the letters tried (wrong ones
-// struck out in red) and the gallows drawn step by step with the errors.
+// struck out in red), the wrong words proposed, the players hanged and the gallows drawn step by step with the errors.
 const GALLOWS = [
   "M10 130 H80", "M30 130 V12", "M30 12 H85", "M85 12 V30",            // base, post, beam, rope
   "M85 30 m-11 11 a11 11 0 1 0 22 0 a11 11 0 1 0 -22 0",              // head
@@ -98,8 +100,17 @@ views.hangman = (view, el) => {
   const wrong = new Set(view.wrong || []);
   for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c));
   side.append(tried);
-  side.append(text("div", "errors", `Erreurs : ${view.errors || 0} / ${view.max_errors || ""}` +
+  if ((view.wrong_words || []).length) {
+    const words = text("div", "tried words", "");
+    for (const w of view.wrong_words) words.append(text("span", "bad", w));
+    side.append(words);
+  }
+  // Lives are per player: the gallows is the last player who erred.
+  const who = view.errors_of ? ` de ${view.errors_of}` : "";
+  side.append(text("div", "errors", `Erreurs${who} : ${view.errors || 0} / ${view.max_errors || ""}` +
                                     (view.level ? ` · niveau ${view.level}` : "")));
+  const hanged = (view.players || []).filter(p => p.hanged).map(p => p.name);
+  if (hanged.length) side.append(text("div", "errors", "Pendus : " + hanged.join(", ")));
   box.append(svg, side);
   el.append(box);
   fitText(side.querySelector(".big"), 36, 14);

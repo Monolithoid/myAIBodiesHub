@@ -87,8 +87,8 @@
 
   <section class="wide">
     <h2>Réglages</h2>
-    <p class="muted" style="margin:0 0 6px">Qui peut lancer une partie et le délai entre deux coups
-      s'appliquent tout de suite ; les réglages du pendu à la prochaine partie.
+    <p class="muted" style="margin:0 0 6px">Qui peut lancer une partie, le délai entre deux coups et
+      la présence s'appliquent tout de suite ; les réglages du pendu à la prochaine partie.
       Ils sont gardés au redémarrage de game-master.</p>
     <form id="settings"></form>
     <div class="row" style="margin-top:6px">
@@ -153,7 +153,14 @@ function renderGame(state) {
       const wrong = new Set(v.wrong || []);
       (v.tried || []).forEach(c => tried.append(el("span", { className: wrong.has(c) ? "bad" : "" }, c), " "));
       box.append(tried);
-      box.append(el("div", { className: "muted" }, `Erreurs : ${v.errors} / ${v.max_errors}`));
+      if ((v.wrong_words || []).length) {
+        const words = el("div", {}, "Mots faux : ");
+        v.wrong_words.forEach(w => words.append(el("span", { className: "bad" }, w), " "));
+        box.append(words);
+      }
+      const players = v.players || [];
+      box.append(el("div", { className: "muted" }, `Erreurs permises par joueur : ${v.max_errors}`
+        + (players.length ? " · " + players.map(p => `${p.name} ${p.errors}` + (p.hanged ? " (pendu)" : "")).join(", ") : "")));
     } else {
       box.append(el("div", {}, a.summary || ""));
     }
