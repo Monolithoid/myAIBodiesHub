@@ -996,6 +996,10 @@ class BodyGatewayNode(Node):
                 context = viewers.context_lines(str(viewer.get("name") or login),
                                                 self._viewers.get(login))
             game_state = GAMES.state()
+            if GAMES.enabled and game_state is None:
+                # Without the state, the prompt has no games: the LLM would only pretend to play.
+                self.get_logger().warn(f"game-master {GAMES.error} — jeux absents du prompt")
+                self._emit("error", interaction, message=f"game-master {GAMES.error}")
             parsed = self._decide(
                 interaction, body_id, user_input, _AWAKE_SYSTEM, 0.7,
                 viewer_context=context, extra_system=game_link.prompt_section(game_state),
