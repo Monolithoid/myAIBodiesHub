@@ -72,6 +72,7 @@
   <span class="spacer"></span>
   <a id="obsLink" href="obs" target="_blank" style="color:var(--muted)">OBS : overlay voix →</a>
   <a id="robotLink" href="robot" style="color:var(--muted)">Robot : calibrage et composants →</a>
+  <a id="gamesLink" href="jeux" style="color:var(--muted)">Jeux : réglages et classement →</a>
   <button id="pause" type="button">Pause</button>
 </header>
 <main>
@@ -420,6 +421,8 @@ document.getElementById("pause").onclick = e => {
 
 document.getElementById("robotLink").href =
   "robot?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
+document.getElementById("gamesLink").href =
+  "jeux?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
 document.getElementById("obsLink").href =
   "obs?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
 drawMap();

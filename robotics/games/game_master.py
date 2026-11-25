@@ -24,6 +24,10 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
   body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
   POST /check {"text"}                                   → {"leak"}: NAO's text gives the
                                    running game's solution away (it is then not said)
+  GET  /settings                   {"values", "schema"}: settings of the control room
+  POST /settings {key: value, …}   → {"values"}, 400 {"error"} when a value is refused
+  GET  /scores?game=&n=            {"game", "top"}: ranking
+  POST /scores/reset {"game"}      ranking back to zero (every game without "game")
   POST /reveal {"version"}                               → {"revealed"}: NAO has said
                                    the result, the overlay may show the state of that version
   GET  /overlay?token=…            OBS page; /overlay/stream?token=… its SSE feed (each
@@ -74,6 +78,27 @@ GAMES_DB_PATH    = os.environ.get("GAMES_DB_PATH", "/data/games.db").strip()
 OVERLAY_HOLD_S   = float(os.environ.get("OVERLAY_HOLD_S", "30"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Settings the control room may change (/jeux page); the variables above are
+# the defaults.  Who may start and the delay apply at once, the rest at the next game.
+SETTINGS_SCHEMA = [
+    {"key": "hangman_max_errors", "label": "Pendu : erreurs permises", "type": "int",
+     "min": 3, "max": 12, "default": hangman.MAX_ERRORS},
+    {"key": "hangman_min_letters", "label": "Pendu : longueur minimale des mots", "type": "int",
+     "min": 6, "max": 12, "default": max(6, hangman.MIN_LETTERS),
+     "help": "la liste va de 6 à 12 lettres"},
+    {"key": "hangman_nao_min_found", "label": "Pendu : part du mot trouvée avant que NAO puisse gagner",
+     "type": "float", "min": 0, "max": 1, "default": hangman.NAO_MIN_FOUND,
+     "help": "0 = à tout moment, 0.5 = la moitié, 1 = jamais"},
+    {"key": "start_roles", "label": "Qui peut lancer une partie", "type": "roles",
+     "default": GAME_START_ROLES or [game_core.EVERYONE],
+     "help": "le streamer peut toujours"},
+    {"key": "move_cooldown_s", "label": "Délai entre deux coups d'un spectateur (s)", "type": "float",
+     "min": 0, "max": 120, "default": MOVE_COOLDOWN_S},
+    {"key": "overlay_hold_s", "label": "Attente maximale de l'overlay (s)", "type": "float",
+     "min": 0, "max": 120, "default": OVERLAY_HOLD_S,
+     "help": "le résultat s'affiche quand NAO a fini de parler, ou après ce délai"},
+]
 
 # Games offered to the viewers: id → Game class.
 GAMES: dict = {hangman.Hangman.id: hangman.Hangman}
@@ -126,6 +151,9 @@ class Stage:
         self._held: list[tuple[int, dict, float]] = []   # (version, state, since), oldest first
         self._lock = threading.Lock()
         self.shown = initial
+
+    def set_hold(self, hold_s: float):
+        self._hold_s = float(hold_s)
 
     def changed(self, state: dict):
         if self._hold_s <= 0:
@@ -216,6 +244,14 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
                 return
             if url.path == "/state":
                 self._json(200, master.state())
+            elif url.path == "/settings":
+                self._json(200, {"values": master.settings.values() if master.settings else {},
+                                 "schema": master.settings.schema if master.settings else []})
+            elif url.path == "/scores":
+                game = query.get("game", [next(iter(GAMES), "")])[0]
+                n = min(50, max(1, int(query.get("n", ["10"])[0] or 10)))
+                top = master.scores.top(game, n) if master.scores is not None else []
+                self._json(200, {"game": game, "top": top})
             elif url.path == "/overlay":
                 with open(os.path.join(HERE, "overlay.html"), "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
@@ -234,6 +270,28 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
                 return
             if url.path == "/check":
                 self._json(200, {"leak": master.check(str(body.get("text", "")))})
+                return
+            if url.path == "/settings":
+                if master.settings is None:
+                    self._json(503, {"error": "réglages indisponibles"})
+                    return
+                try:
+                    values = master.settings.update(body)
+                except ValueError as e:
+                    self._json(400, {"error": str(e)})
+                    return
+                master.apply(values)
+                stage.set_hold(values.get("overlay_hold_s", OVERLAY_HOLD_S))
+                log(f"settings changed: {body}")
+                self._json(200, {"values": values})
+                return
+            if url.path == "/scores/reset":
+                if master.scores is not None:
+                    master.scores.reset(str(body.get("game") or "") or None)
+                    master.touch()
+                    stage.reveal(master.version)   # nothing for NAO to say: shown at once
+                log(f"scores reset: {body.get('game') or 'all games'}")
+                self._json(200, {"ok": True})
                 return
             if url.path == "/reveal":
                 try:
@@ -338,8 +396,10 @@ def main():
     if GAMES_DB_PATH:
         os.makedirs(os.path.dirname(GAMES_DB_PATH) or ".", exist_ok=True)
         scores = game_core.ScoreStore(GAMES_DB_PATH)
-    master = game_core.GameMaster(GAMES, GAME_START_ROLES, MOVE_COOLDOWN_S, scores)
-    stage = Stage(Feed(), master.state())
+    settings = game_core.Settings(SETTINGS_SCHEMA, GAMES_DB_PATH or None)
+    master = game_core.GameMaster(GAMES, GAME_START_ROLES, MOVE_COOLDOWN_S, scores,
+                                  settings=settings)
+    stage = Stage(Feed(), master.state(), hold_s=settings.values()["overlay_hold_s"])
     master.on_change = lambda: stage.changed(master.state())
     announcer = Announcer(BODY_GATEWAY_URL)
     threading.Thread(target=tick_loop, args=(master, announcer, stage), daemon=True).start()

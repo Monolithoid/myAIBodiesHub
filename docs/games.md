@@ -90,6 +90,10 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
 | `POST /check` | `{"text"}` | `{"leak"}`: NAO's sentence holds the running game's solution (then played as its guess) |
 | `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
+| `GET /settings` | — | `{"values", "schema"}`: settings of the control room |
+| `POST /settings` | `{key: value, …}` | `{"values"}`; 400 `{"error"}` when a value is refused (nothing saved) |
+| `GET /scores?game=&n=` | — | `{"game", "top"}`: ranking |
+| `POST /scores/reset` | `{"game"}` | ranking back to zero (every game without `game`) |
 | `GET /overlay?token=…` | — | OBS page (Server-Sent Events from `/overlay/stream`) |
 
 **No spoiler on the overlay**: every state carries a `version`. game-master holds
@@ -103,6 +107,18 @@ room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points", "m
 `text` is the fact given to the LLM, `say` the canned sentence, `read` a text NAO
 says word for word after its reaction (the hangman definition): body-gateway adds
 it to the speech, since the LLM may drop it.
+
+## Control room page
+
+`/jeux?token=$REGIE_TOKEN` on the control room (link "Jeux : réglages et classement"
+on its main page): the running game with a cancel button, the ranking (top 10, reset
+with a confirmation) and the settings. The control room relays these calls to
+game-master (`GET/POST /settings`, `GET /scores`, `POST /scores/reset`), so
+`GAME_TOKEN` never reaches the browser.
+
+Settings changed there are kept in game-master's SQLite base (`/data`) and override
+the variables below, which only give the defaults. Who may start and the delay
+between two moves apply at once; the hangman settings at the next game.
 
 ## Configuration
 
