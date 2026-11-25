@@ -100,8 +100,10 @@ class Hangman(Game):
         return plain(self.word)
 
     def mask(self) -> str:
-        """'R _ _ _ _ T _ _ _ X': found letters in capitals, the others hidden."""
-        return " ".join(c.upper() if c in self.tried else "_" for c in self.target)
+        """'R _ _ _ _ T _ _ _ X': found letters in capitals, the others hidden.
+
+        Once the game is over (won or lost), the whole word shows on the overlay."""
+        return " ".join(c.upper() if self._over or c in self.tried else "_" for c in self.target)
 
     def hidden_count(self) -> int:
         return sum(1 for c in self.target if c not in self.tried)
@@ -173,12 +175,13 @@ class Hangman(Game):
         text = (f"{self._started_by} lance une partie de pendu, niveau {LEVEL_NAMES[self.level]} : "
                 f"un mot de {n} lettres, {self.max_errors} erreurs permises.")
         say = f"C'est parti pour un pendu ! Un mot de {n} lettres."
+        read = ""
         if self.definition:
-            text += f" Définition à lire aux spectateurs : {self.definition}"
-            say += f" Indice : {self.definition}"
+            read = f"Indice : {self.definition}"
+            text += f" Définition du mot : {self.definition}"
         elif not waiting:
             text += " Pas de définition pour ce mot."
-        return Event("started", text, say, mood="enthousiasme")
+        return Event("started", text, say, mood="enthousiasme", read=read)
 
     # ── Moves ───────────────────────────────────────────────────────────────
 
@@ -249,7 +252,6 @@ class Hangman(Game):
                      say, mood="suspense" if left <= 2 else "déception")
 
     def _won(self, player: Player, points: int, how: str) -> Event:
-        self.tried.extend(c for c in dict.fromkeys(self.target) if c not in self.tried)
         self._over = True
         return Event("won", f"{how} : « {self.word} » ! La partie est gagnée "
                             f"avec {self.errors} erreur(s). {player.label()} marque {points} points.",

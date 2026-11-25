@@ -83,11 +83,29 @@ def reaction_input(event: dict, state: dict | None, player_name: str = "") -> st
         lines.append(f"[jeu] Ton suggéré : {event['mood']}")
     if player_name:
         lines.append(f"[jeu] Joueur : {player_name}")
+    if event.get("read"):
+        lines.append(f"[jeu] Juste après ta réaction, ce texte sera lu tel quel : "
+                     f"« {event['read']} ». Ne le répète pas et n'en donne pas d'autre.")
     activity = (state or {}).get("activity")
     if activity:
         lines.append(f"[jeu] État public de la partie de {activity.get('name', '')} : "
                      f"{activity.get('summary', '')}")
     return "\n".join(lines)
+
+
+def with_read(actions: list, event: dict, speech_body: str) -> list:
+    """Adds the event's "read" text (said word for word) to the end of NAO's speech."""
+    read = str((event or {}).get("read") or "").strip()
+    if not read:
+        return actions
+    speeches = [a for a in actions if a.get("type") == "speech" and str(a.get("text", "")).strip()]
+    if speeches and read in str(speeches[-1]["text"]):
+        return actions
+    if speeches:
+        last = speeches[-1]
+        return [{**a, "text": f"{str(a['text']).rstrip()} {read}"} if a is last else a
+                for a in actions]
+    return actions + [{"body": speech_body, "type": "speech", "text": read}]
 
 
 MAX_ASKS = 3   # hidden calls chained for one move, at most

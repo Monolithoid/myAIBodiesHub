@@ -107,6 +107,29 @@ class TestActions(unittest.TestCase):
         self.assertEqual(game_link.player_of(viewer, "webui")["login"], "")
 
 
+class TestRead(unittest.TestCase):
+
+    def test_read_appended_to_the_last_speech(self):
+        event = {"text": "Partie lancée.", "read": "Indice : organe qui pompe le sang."}
+        actions = [{"body": "nao_01", "type": "speech", "text": "C'est parti !"},
+                   {"body": "nao_01", "type": "gesture", "name": "wave"}]
+        out = game_link.with_read(actions, event, "nao_01")
+        self.assertEqual(out[0]["text"], "C'est parti ! Indice : organe qui pompe le sang.")
+        self.assertEqual(out[1], actions[1])
+        self.assertEqual(game_link.with_read(out, event, "nao_01"), out)   # not twice
+
+    def test_read_without_speech_or_without_read(self):
+        out = game_link.with_read([], {"read": "Indice : x."}, "obs_01")
+        self.assertEqual(out, [{"body": "obs_01", "type": "speech", "text": "Indice : x."}])
+        actions = [{"type": "speech", "text": "Raté !"}]
+        self.assertIs(game_link.with_read(actions, {"text": "bad"}, "nao_01"), actions)
+
+    def test_reaction_input_announces_the_read(self):
+        text = game_link.reaction_input({"text": "Lancée.", "read": "Indice : y."}, None)
+        self.assertIn("« Indice : y. »", text)
+        self.assertIn("Ne le répète pas", text)
+
+
 class TestGameLink(unittest.TestCase):
 
     def test_disabled_without_url_or_token(self):

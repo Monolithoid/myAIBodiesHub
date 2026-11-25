@@ -66,6 +66,8 @@ class Event:
     ok       False when the request was refused (no game, busy, not allowed…)
     points   {login: points} won with this move
     mood     tone suggested to NAO's reaction (joie, déception, suspense…), optional
+    read     text NAO must say word for word after its reaction (the hangman
+             definition): body-gateway adds it to the speech, the LLM may drop it
     """
     kind: str
     text: str
@@ -73,10 +75,12 @@ class Event:
     ok: bool = True
     points: dict = field(default_factory=dict)
     mood: str = ""
+    read: str = ""
 
     def to_dict(self) -> dict:
         return {"kind": self.kind, "text": self.text, "say": self.say or self.text,
-                "ok": self.ok, "points": dict(self.points), "mood": self.mood}
+                "ok": self.ok, "points": dict(self.points), "mood": self.mood,
+                "read": self.read}
 
 
 class Game:

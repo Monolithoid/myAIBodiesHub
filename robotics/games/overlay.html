@@ -25,8 +25,11 @@
   .hangman svg { flex: none; width: 120px; height: 140px; }
   .hangman svg .part { stroke: #f4f4f6; stroke-width: 5; stroke-linecap: round; fill: none; }
   .hangman .side { flex: 1; min-width: 0; }
+  /* The word always holds on one line: fitText() shrinks it when it is long. */
+  .hangman .big { white-space: nowrap; word-break: normal; letter-spacing: 0.06em; }
   .hangman .def { font-size: 18px; font-style: italic; color: #cfe6ff; margin-top: 6px; }
   .hangman .tried { margin-top: 8px; font: 600 20px ui-monospace, monospace; letter-spacing: 0.1em; }
+  .hangman .tried span { margin-right: 0.45em; }
   .hangman .tried .bad { color: #ff7b7b; text-decoration: line-through; }
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
   #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
@@ -84,13 +87,25 @@ views.hangman = (view, el) => {
   if (view.definition) side.append(text("div", "def", view.definition));
   const tried = text("div", "tried", "");
   const wrong = new Set(view.wrong || []);
-  for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c + " "));
+  for (const c of view.tried || []) tried.append(text("span", wrong.has(c) ? "bad" : "", c));
   side.append(tried);
   side.append(text("div", "errors", `Erreurs : ${view.errors || 0} / ${view.max_errors || ""}` +
                                     (view.level ? ` · niveau ${view.level}` : "")));
   box.append(svg, side);
   el.append(box);
+  fitText(side.querySelector(".big"), 36, 14);
 };
+
+// Shrinks an element's font until its text fits its width (one line).
+function fitText(el, maxPx, minPx) {
+  if (!el) return;
+  let size = maxPx;
+  el.style.fontSize = size + "px";
+  while (size > minPx && el.scrollWidth > el.clientWidth) {
+    size -= 1;
+    el.style.fontSize = size + "px";
+  }
+}
 
 const END_KINDS = new Set(["won", "lost", "cancelled", "over"]);
 let hideTimer = null;

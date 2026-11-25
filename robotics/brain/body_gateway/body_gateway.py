@@ -1120,6 +1120,8 @@ class BodyGatewayNode(Node):
         if not any(a.get("type") == "speech" and str(a.get("text", "")).strip() for a in actions):
             actions.append({"body": self._speech_body(body_id), "type": "speech",
                             "text": event.get("say") or event.get("text", "")})
+        # Text the game wants said word for word (hangman definition): the LLM may drop it.
+        actions = game_link.with_read(actions, event, self._speech_body(body_id))
         return {**parsed, "actions": actions}
 
     def _game_event(self, body: dict) -> dict:
