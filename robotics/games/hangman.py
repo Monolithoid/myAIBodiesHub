@@ -4,7 +4,9 @@ hangman — the hangman game (ADR 010).  The code decides, the LLM speaks.
 A French common noun is drawn from words/hangman_fr.json (Lexique 3.83, CC BY-SA 4.0).
 Right after the draw, a hidden LLM call writes a short definition; the code
 checks it does not give the word away, otherwise the game goes on without it.
-NAO only sees the masked word, the letters tried, the errors and the definition.
+The code reads the definition word for word and the overlay shows it, but NAO's
+LLM never gets it (it would guess the word): only the masked word, the letters
+tried and the errors.
 
 Rules:
   - letters compared without accents (é = e), first come first served;
@@ -12,7 +14,9 @@ Rules:
     and that viewer may not propose a word again in this game;
   - won when every letter is found or the word is proposed; lost after
     HANGMAN_MAX_ERRORS errors (7 by default);
-  - points: 1 per letter revealed, 3 + letters still hidden for the word.
+  - points: 1 per letter revealed, 3 + letters still hidden for the word;
+  - NAO plays too, with its own points: letters when a viewer asks it, and the
+    word when it says it in a sentence (move "said", checked by the code).
 """
 
 import json
@@ -129,8 +133,7 @@ class Hangman(Game):
         wrong = self.wrong_letters()
         if wrong:
             parts.append("lettres absentes : " + ", ".join(c.upper() for c in wrong))
-        if self.definition:
-            parts.append(f"définition : {self.definition}")
+        # No definition here: this goes to the LLM, which would guess the word from it.
         return " ; ".join(parts)
 
     def recap(self) -> str:
@@ -140,8 +143,11 @@ class Hangman(Game):
     def is_over(self) -> bool:
         return self._over
 
+    def clue(self) -> str:
+        return f"Indice : {self.definition}" if self.definition else ""
+
     def leaks(self, text: str) -> bool:
-        # The LLM may guess the word from the definition: NAO must not say it.
+        # NAO said the word (it can guess it from the letters found, like a viewer).
         return bool(self.word) and not self._over and leaks(text, self.word)
 
     # ── Start and definition (hidden LLM call) ──────────────────────────────
@@ -182,8 +188,9 @@ class Hangman(Game):
         say = f"C'est parti pour un pendu ! Un mot de {n} lettres."
         read = ""
         if self.definition:
-            read = f"Indice : {self.definition}"
-            text += f" Définition du mot : {self.definition}"
+            # Read word for word by the code: the LLM never sees the definition.
+            read = self.clue()
+            text += " Un indice (une définition) va être lu aux spectateurs."
         elif not waiting:
             text += " Pas de définition pour ce mot."
         return Event("started", text, say, mood="enthousiasme", read=read)
@@ -196,6 +203,11 @@ class Hangman(Game):
             return self._letter(str(move.get("letter", "")), player)
         if kind == "word":
             return self._word(str(move.get("word", "")), player)
+        if kind == "said" and player.is_nao:
+            # NAO said the word in a sentence (body-gateway asked /check): its own guess.
+            if leaks(str(move.get("text", "")), self.word):
+                return self._won(player, WORD_BONUS + self.hidden_count(), f"{player.label()} dit le mot")
+            return Event("invalid", "NAO n'a pas dit le mot.", ok=False)
         return Event("invalid", "Ce coup n'existe pas au pendu : on propose une lettre ou le mot entier.",
                      "Je n'ai pas compris ta proposition.", ok=False)
 
@@ -258,7 +270,12 @@ class Hangman(Game):
 
     def _won(self, player: Player, points: int, how: str) -> Event:
         self._over = True
-        return Event("won", f"{how} : « {self.word} » ! La partie est gagnée "
-                            f"avec {self.errors} erreur(s). {player.label()} marque {points} points.",
-                     f"Gagné ! Le mot était {self.word}, bravo {player.label()} !",
+        text = (f"{how} : « {self.word} » ! La partie est gagnée avec {self.errors} erreur(s). "
+                f"{player.label()} marque {points} points.")
+        if player.is_nao:
+            return Event("won", text + " C'est toi, NAO, qui as trouvé le mot avant les spectateurs : "
+                                       "réagis en frimeur, fier et taquin.",
+                         f"Hé hé, c'était {self.word} ! Trop facile pour moi !",
+                         points={player.login: points}, mood="frimeur")
+        return Event("won", text, f"Gagné ! Le mot était {self.word}, bravo {player.label()} !",
                      points={player.login: points} if player.login else {}, mood="joie")

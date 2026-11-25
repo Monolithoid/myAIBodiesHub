@@ -72,10 +72,10 @@ class TestStart(unittest.TestCase):
         event = g.on_answer(ask["id"], "« Petit animal à huit pattes qui tisse une toile. »")
         self.assertIsNone(g.pending_ask())
         self.assertEqual(g.definition, "Petit animal à huit pattes qui tisse une toile.")
-        self.assertIn("huit pattes", event.text)
+        self.assertNotIn("huit pattes", event.text)
         self.assertEqual(event.read, "Indice : Petit animal à huit pattes qui tisse une toile.")
         self.assertEqual(event.to_dict()["read"], event.read)
-        self.assertIn("huit pattes", g.summary())
+        self.assertNotIn("huit pattes", g.summary())
         self.assertEqual(g.public_view()["definition"], g.definition)
 
     def test_leaking_definition_is_dropped(self):
@@ -166,6 +166,26 @@ class TestMoves(unittest.TestCase):
         self.assertNotIn("araign", str(g.public_view()).lower())
 
 
+class TestNaoPlays(unittest.TestCase):
+
+    NAO = Player("nao", "NAO", source="nao")
+
+    def test_nao_says_the_word_and_wins(self):
+        g = game()   # araignée
+        letter(g, "a")
+        event = g.on_move({"type": "said", "text": "Je parie sur une ARAIGNEE !"}, self.NAO)
+        self.assertEqual((event.kind, event.mood), ("won", "frimeur"))
+        self.assertEqual(event.points, {"nao": hangman.WORD_BONUS + 6})
+        self.assertIn("frimeur", event.text)
+        self.assertTrue(g.is_over())
+
+    def test_said_needs_the_word_and_nao(self):
+        g = game()
+        self.assertEqual(g.on_move({"type": "said", "text": "un chat"}, self.NAO).kind, "invalid")
+        self.assertEqual(g.on_move({"type": "said", "text": "araignée"}, ALICE).kind, "invalid")
+        self.assertFalse(g.is_over())
+
+
 class TestThroughGameMaster(unittest.TestCase):
 
     def test_check_blocks_the_word_while_running(self):
@@ -188,9 +208,13 @@ class TestThroughGameMaster(unittest.TestCase):
         self.assertEqual(master.answer("wrong-id", "x", ALICE).kind, "no_ask")
         event = master.answer(ask["id"], "Grand animal gris à trompe.", ALICE)
         self.assertEqual(event.kind, "started")
-        self.assertIn("trompe", event.text)
+        self.assertNotIn("trompe", event.text)        # the LLM never sees the definition
+        self.assertIn("trompe", event.read)           # the code reads it
         self.assertIsNone(master.pending_ask())
-        self.assertIn("trompe", master.state()["activity"]["summary"])
+        self.assertNotIn("trompe", master.state()["activity"]["summary"])
+        recap = master.move({"type": "recap"}, BOB)
+        self.assertNotIn("trompe", recap.text)
+        self.assertEqual(recap.read, "Indice : Grand animal gris à trompe.")
         self.assertEqual(master.catalog()[0]["start"], hangman.Hangman.start_help)
 
     def test_final_view_kept_after_the_end(self):

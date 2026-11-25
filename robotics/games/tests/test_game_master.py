@@ -308,7 +308,10 @@ class TestHttp(unittest.TestCase):
         code, data = self._call("/answer", {"id": ask["id"], "text": "Petite bête à huit pattes.",
                                             "player": {"source": "webui"}})
         self.assertNotIn("ask", data)
-        self.assertIn("huit pattes", data["state"]["activity"]["summary"])
+        # The definition goes to the overlay and is read by the code, never to the LLM.
+        self.assertNotIn("huit pattes", data["state"]["activity"]["summary"])
+        self.assertIn("huit pattes", data["state"]["activity"]["view"]["definition"])
+        self.assertIn("huit pattes", data["event"]["read"])
 
     def test_overlay_page_with_query_token(self):
         with urllib.request.urlopen(self.base + "/overlay?token=secret", timeout=5) as resp:

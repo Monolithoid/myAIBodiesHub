@@ -34,7 +34,7 @@ class Player:
     login: str = ""
     name: str = ""
     roles: frozenset = frozenset()
-    source: str = "twitch"      # twitch | webui | voice | regie
+    source: str = "twitch"      # twitch | webui | voice | regie | nao (NAO plays too)
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "Player":
@@ -51,6 +51,10 @@ class Player:
     def is_streamer(self) -> bool:
         """Open WebUI, the room voice and the control room belong to the streamer."""
         return self.source != "twitch" or "broadcaster" in self.roles
+
+    @property
+    def is_nao(self) -> bool:
+        return self.source == "nao"
 
     def label(self) -> str:
         return self.name or self.login or "le streamer"
@@ -120,6 +124,11 @@ class Game:
 
     def is_over(self) -> bool:
         return False
+
+    def clue(self) -> str:
+        """Text NAO reads word for word with the recap, never shown to the LLM
+        (the hangman definition: the LLM would guess the word from it)."""
+        return ""
 
     def leaks(self, text: str) -> bool:
         """True when NAO's text gives the solution away (checked before NAO speaks)."""
@@ -243,8 +252,8 @@ class GameMaster:
             move = move if isinstance(move, dict) else {}
             if move.get("type") == "recap":
                 return self._done(Event("recap", f"Récapitulatif de la partie de {game.name} : "
-                                                 f"{game.recap()}", game.recap()), player,
-                                  count=False)
+                                                 f"{game.recap()}", game.recap(),
+                                        read=game.clue()), player, count=False)
             now = self._clock()
             last = self._last_move.get(player.login)
             if (self.move_cooldown_s > 0 and player.login and last is not None

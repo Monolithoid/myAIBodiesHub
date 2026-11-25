@@ -1019,7 +1019,7 @@ class BodyGatewayNode(Node):
             parsed = self._play_game(interaction, body_id, parsed, viewer, source, user_input,
                                      game_state)
             if (game_state or {}).get("activity") or parsed.get("_game_version") is not None:
-                parsed = self._no_spoiler(interaction, parsed)
+                parsed = self._nao_says_the_word(interaction, body_id, parsed)
 
             self._publish_emotion(parsed.get("emotion", "neutral"))
             self._publish_energy(parsed.get("energy", "medium"))
@@ -1090,7 +1090,9 @@ class BodyGatewayNode(Node):
                 return parsed
             self.get_logger().info(f"Action de jeu déduite par le code : {action}")
         parsed = {**parsed, "actions": game_link.without_game_actions(parsed.get("actions", []))}
-        player = game_link.player_of(viewer, source)
+        # NAO's own move, when a viewer asks it to play.
+        player = (game_link.NAO_PLAYER if action.get("by") == "nao"
+                  else game_link.player_of(viewer, source))
         result = GAMES.play(action, player, message)
         # Hidden LLM calls game-master asks for (hangman definition): outside NAO's prompt.
         for _ in range(game_link.MAX_ASKS):
@@ -1101,7 +1103,7 @@ class BodyGatewayNode(Node):
             self.get_logger().warn(f"game-master injoignable — action {action.get('type')} ignorée")
             self._emit("error", interaction, message="game-master injoignable")
             return parsed
-        return self._game_reaction(interaction, body_id, result, (viewer or {}).get("name", ""))
+        return self._game_reaction(interaction, body_id, result, player.get("name", ""))
 
     def _hidden_call(self, interaction: str, ask: dict) -> str:
         """One LLM call game-master needs and NAO must not see; "" when it fails.
@@ -1145,22 +1147,24 @@ class BodyGatewayNode(Node):
                             "text": event.get("say") or event.get("text", "")})
         # Text the game wants said word for word (hangman definition): the LLM may drop it.
         actions = game_link.with_read(actions, event, self._speech_body(body_id))
-        return {**parsed, "actions": actions, "_game_version": (state or {}).get("version"),
-                "_game_say": f"{event.get('say') or ''} {event.get('read') or ''}".strip()}
+        return {**parsed, "actions": actions, "_game_version": (state or {}).get("version")}
 
-    def _no_spoiler(self, interaction: str, parsed: dict) -> dict:
-        """A sentence that gives the running game's solution away is not said.
+    def _nao_says_the_word(self, interaction: str, body_id: str, parsed: dict) -> dict:
+        """NAO plays too: a sentence holding the running game's solution is its guess.
 
-        The LLM never gets the solution but may guess it (from the hangman
-        definition): game-master, which knows it, checks each sentence."""
-        actions = []
+        The LLM never gets the solution but may find it (from the letters found):
+        game-master, which knows it, checks each sentence (/check).  Then the guess
+        is played as NAO's move, and NAO reacts to its own win (show-off)."""
         for action in parsed.get("actions", []):
-            if action.get("type") == "speech" and GAMES.check(action.get("text", "")):
-                self._emit("game", interaction, event="spoiler_blocked", ok=False,
-                           text="phrase de NAO remplacée : elle donnait la solution")
-                action = {**action, "text": parsed.get("_game_say") or game_link.NO_SPOILER}
-            actions.append(action)
-        return {**parsed, "actions": actions}
+            text = action.get("text", "")
+            if action.get("type") != "speech" or not GAMES.check(text):
+                continue
+            result = GAMES.play({"type": "game_move", "move": {"type": "said", "text": text}},
+                                game_link.NAO_PLAYER, text)
+            if result is None or not (result.get("event") or {}).get("ok"):
+                return parsed
+            return self._game_reaction(interaction, body_id, result, game_link.NAO_PLAYER["name"])
+        return parsed
 
     def _reveal_after_speech(self, version):
         """The overlay shows the move's result only once NAO has said it (no spoiler).

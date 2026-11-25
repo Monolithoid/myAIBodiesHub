@@ -55,8 +55,9 @@ def prompt_section(state: dict | None) -> str:
             'est bon : ne dis jamais qu\'une lettre ou un mot est bon ou faux, l\'arbitre le dira.',
             'Quand on te demande où en est la partie ou de redonner le contexte : '
             '{"type": "game_move", "move": {"type": "recap"}}.',
-            "Tu ne connais pas la solution : ne la devine jamais et ne la dis jamais, même si tu "
-            "crois l'avoir trouvée (d'après la définition par exemple).",
+            "Tu joues aussi, avec tes propres points : quand un spectateur te demande de jouer "
+            "(« à toi NAO », « propose une lettre »), ajoute ton coup avec "
+            '{"type": "game_move", "by": "nao", "move": {...}}. Tu ne connais pas la solution.',
             "Si le message parle du jeu mais que tu ne sais pas le traduire en coup, dis que tu "
             "n'as pas compris la demande, sans action de jeu. Un message sans rapport avec le jeu "
             "reçoit une réponse normale.",
@@ -93,9 +94,12 @@ def reaction_input(event: dict, state: dict | None, player_name: str = "") -> st
         lines.append(f"[jeu] Ton suggéré : {event['mood']}")
     if player_name:
         lines.append(f"[jeu] Joueur : {player_name}")
+    if player_name == NAO_PLAYER["name"]:
+        lines.append("[jeu] Ce joueur, c'est toi.")
     if event.get("read"):
-        lines.append(f"[jeu] Juste après ta réaction, ce texte sera lu tel quel : "
-                     f"« {event['read']} ». Ne le répète pas et n'en donne pas d'autre.")
+        # Its content stays out of the prompt: the LLM would guess the word from it.
+        lines.append("[jeu] Juste après ta réaction, un indice sera lu aux spectateurs : "
+                     "n'en parle pas et n'en donne pas d'autre.")
     activity = (state or {}).get("activity")
     if activity:
         lines.append(f"[jeu] État public de la partie de {activity.get('name', '')} : "
@@ -118,7 +122,8 @@ def with_read(actions: list, event: dict, speech_body: str) -> list:
     return actions + [{"body": speech_body, "type": "speech", "text": read}]
 
 
-NO_SPOILER = "Chut, je ne peux pas t'aider sur ce coup-là, ce serait tricher !"
+# NAO plays too, with its own points, in the same ranking as the viewers.
+NAO_PLAYER = {"login": "nao", "name": "NAO", "roles": [], "source": "nao"}
 
 MAX_ASKS = 3   # hidden calls chained for one move, at most
 

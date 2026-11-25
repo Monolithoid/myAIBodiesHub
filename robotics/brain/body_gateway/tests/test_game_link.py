@@ -126,8 +126,12 @@ class TestRead(unittest.TestCase):
 
     def test_reaction_input_announces_the_read(self):
         text = game_link.reaction_input({"text": "Lancée.", "read": "Indice : y."}, None)
-        self.assertIn("« Indice : y. »", text)
-        self.assertIn("Ne le répète pas", text)
+        self.assertNotIn("Indice : y.", text)   # the LLM would guess the word from it
+        self.assertIn("un indice sera lu", text)
+
+    def test_nao_is_told_it_played(self):
+        text = game_link.reaction_input({"text": "NAO propose le E."}, None, "NAO")
+        self.assertIn("c'est toi", text)
 
 
 class TestFallback(unittest.TestCase):
