@@ -161,6 +161,9 @@ configure_bitterbot() {
     echo -e "  Variable : ${CYAN}REGIE_TOKEN${NC} (control room secret: https://regie.DOMAIN/?token=…)"
     echo -e "  Valeur   : ${GREEN}$(openssl rand -hex 32)${NC}"
     echo ""
+    echo -e "  Variable : ${CYAN}GAME_TOKEN${NC} (games with the viewers: https://games.DOMAIN/overlay?token=…)"
+    echo -e "  Valeur   : ${GREEN}$(openssl rand -hex 32)${NC}"
+    echo ""
     echo -e "  Variable : ${CYAN}TWITCH_CHANNEL${NC} (Twitch channel whose chat NAO reads)"
 }
 

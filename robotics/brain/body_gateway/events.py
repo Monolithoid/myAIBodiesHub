@@ -6,11 +6,11 @@ one JSON object per message), for the régie and any ROS tool (Lichtblick, rqt,
 Every message shares these fields:
   v      schema version (1)
   t      Unix time in seconds
-  kind   input | ignored | wake | decision | action | error | bodies
+  kind   input | ignored | wake | decision | action | game | error | bodies
   id     interaction id: the input, the LLM decision and the actions it
          produced share it ("" for events outside an interaction)
 
-  input     source (webui|twitch|voice|sensor|dream), body, text, author
+  input     source (webui|twitch|voice|sensor|dream|game), body, text, author
   ignored   source, body, text, reason (wake_word|busy)
   wake      source, body, text: lone wake word heard, the next sentence goes
             to the LLM; detector "local", model and score (0..1) when the static
@@ -19,6 +19,8 @@ Every message shares these fields:
             profile (new Twitch viewer profile, only when the LLM wrote one)
   action    type, requested (body named by the LLM), targets (bodies it went to),
             connected {target: bool}, detail (short text)
+  game      event (kind settled by game-master: started, won, refused…), ok, text,
+            by (player), game (id of the running game, "" when over); ADR 010
   error     message
   bodies    connected {body: bool}, state (IDLE|AWAKE|DREAMING)
 

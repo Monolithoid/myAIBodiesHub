@@ -154,6 +154,7 @@ ia-agent/
 │   ├── inputs/
 │   │   └── twitch/          → Twitch chat input "!nao" → body-gateway (ADR 005)
 │   ├── regie/               → Control room page: live /events stream (ADR 007)
+│   ├── games/               → game-master: games with the viewers (ADR 010)
 │   ├── shared/              → Shared classes (RobotBridgeBase)
 │   └── drones/
 │       ├── nao/
@@ -173,12 +174,13 @@ ia-agent/
 │   ├── nao.md
 │   ├── test-chain.md
 │   ├── coolify-vps.md
+│   ├── games.md
 │   └── decisions/           → ADR (Architecture Decision Records)
 ├── tests/                   → test-chain.sh, NAO diagnostics, fake static drone
 ├── .github/workflows/
 │   ├── build-bitterbot.yml  → Build + push $DOCKERHUB_USERNAME/bitterbot
-│   └── build-robotics.yml   → Build + push of the 7 robotics images (naoqi-bridge, nao-core,
-│                              body-gateway, ros2-bridge, twitch-input, obs-agent, regie)
+│   └── build-robotics.yml   → Build + push of the 8 robotics images (naoqi-bridge, nao-core,
+│                              body-gateway, ros2-bridge, twitch-input, obs-agent, regie, game-master)
 ├── setup-vps.sh             → VPS preparation (folders, firewall, tokens)
 └── docker-compose.yml
 ```

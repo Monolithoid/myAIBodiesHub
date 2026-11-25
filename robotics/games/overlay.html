@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NAO — jeux</title>
+<style>
+  /* OBS browser source: transparent page, one panel in the corner. */
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font: 22px/1.35 system-ui, "Segoe UI", sans-serif; color: #f4f4f6; }
+  #panel {
+    position: absolute; right: 24px; bottom: 24px; width: 520px; max-width: calc(100vw - 48px);
+    background: rgba(18, 18, 28, 0.86); border: 2px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px; padding: 16px 20px; box-sizing: border-box;
+    transition: opacity 0.4s; opacity: 0;
+  }
+  #panel.shown { opacity: 1; }
+  #title { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fd3ff; }
+  #view { margin: 10px 0; }
+  #view .big { font: 700 36px/1.2 ui-monospace, "Cascadia Mono", monospace; letter-spacing: 0.12em;
+               word-break: break-all; }
+  #view .line { color: #d6d6de; }
+  #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
+  #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div id="title"></div>
+  <div id="view"></div>
+  <div id="event"></div>
+  <div id="footer"></div>
+</div>
+<script>
+"use strict";
+// One renderer per game (id → function(view, element)); the default one shows
+// view.big (one large line) and view.lines (smaller lines).
+const views = {};
+
+function text(tag, cls, value) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  el.textContent = value;
+  return el;
+}
+
+function defaultView(view, el) {
+  if (view.big) el.append(text("div", "big", view.big));
+  for (const line of view.lines || []) el.append(text("div", "line", line));
+}
+
+const END_KINDS = new Set(["won", "lost", "cancelled", "over"]);
+let hideTimer = null;
+
+function render(state) {
+  const panel = document.getElementById("panel");
+  const activity = state.activity;
+  const last = state.last_event;
+  clearTimeout(hideTimer);
+  if (!activity && !(last && END_KINDS.has(last.kind))) {
+    panel.classList.remove("shown");
+    return;
+  }
+  const viewEl = document.getElementById("view");
+  viewEl.replaceChildren();
+  if (activity) {
+    document.getElementById("title").textContent = activity.name + " — en cours";
+    (views[activity.game] || defaultView)(activity.view || {}, viewEl);
+    document.getElementById("footer").textContent =
+      activity.last_player ? "Dernier coup : " + activity.last_player : "Lancée par " + activity.started_by;
+  } else {
+    // Game just over: the last event stays on screen a little while.
+    document.getElementById("title").textContent = "Partie terminée";
+    document.getElementById("footer").textContent = "";
+    hideTimer = setTimeout(() => panel.classList.remove("shown"), 20000);
+  }
+  document.getElementById("event").textContent = last ? (last.say || last.text) : "";
+  panel.classList.add("shown");
+}
+
+const token = new URLSearchParams(location.search).get("token") || "";
+const source = new EventSource("/overlay/stream?token=" + encodeURIComponent(token));
+let lastJson = "";
+source.onmessage = (msg) => {
+  if (msg.data === lastJson) return;   // keep-alive with the same state: keep the timers
+  lastJson = msg.data;
+  render(JSON.parse(msg.data));
+};
+</script>
+</body>
+</html>

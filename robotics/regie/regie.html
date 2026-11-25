@@ -11,7 +11,7 @@
   :root {
     --bg: #0f1216; --panel: #171b21; --line: #2a313b; --text: #e6e9ee; --muted: #8b95a3;
     --ok: #3ecf8e; --warn: #f0b429; --err: #ef5b5b;
-    --webui: #5b9cf0; --twitch: #a970ff; --voice: #3ecf8e; --sensor: #f0b429; --dream: #7b8794;
+    --webui: #5b9cf0; --twitch: #a970ff; --voice: #3ecf8e; --sensor: #f0b429; --dream: #7b8794; --game: #ff8fc7;
     --brain: #f07b5b;
   }
   * { box-sizing: border-box; }
@@ -68,6 +68,7 @@
   <span class="pill">Émotion <b id="emotion">—</b></span>
   <span class="pill" id="twitchPill"><span id="twitchDot" class="dot"></span><span id="twitchText">Twitch !rgpd…</span></span>
   <button id="twitchBtn" type="button" hidden>Connecter Twitch</button>
+  <button id="stopGame" type="button" title="Arrête la partie en cours (jeux avec les viewers) ; NAO l'annonce">Annuler le jeu</button>
   <span class="spacer"></span>
   <a id="obsLink" href="obs" target="_blank" style="color:var(--muted)">OBS : overlay voix →</a>
   <a id="robotLink" href="robot" style="color:var(--muted)">Robot : calibrage et composants →</a>
@@ -89,6 +90,7 @@ const SOURCES = [
   ["voice",  "Voix « ok nao »"],
   ["sensor", "Capteurs"],
   ["dream",  "Rêve"],
+  ["game",   "Jeux"],
 ];
 const SOURCE_NAME = Object.fromEntries(SOURCES);
 const COLOR = name => getComputedStyle(document.documentElement).getPropertyValue("--" + name).trim();
@@ -273,6 +275,13 @@ function renderAction(ev) {
   card._actions.append(li);
 }
 
+function renderGame(ev) {
+  // Settled by game-master (ADR 010): the fact NAO reacts to.
+  const div = h("div", ev.ok ? "" : "muted", "");
+  div.append(h("span", "type", "jeu " + (ev.event || "?")), document.createTextNode(" " + (ev.text || "")));
+  cardFor(ev).append(div);
+}
+
 function renderError(ev) {
   cardFor(ev).append(h("div", "err", "Erreur : " + ev.message));
 }
@@ -325,6 +334,9 @@ function handle(ev, live) {
       }
       renderAction(ev);
       return;
+    case "game":
+      renderGame(ev);
+      return;
     case "error":
       renderError(ev);
       return;
@@ -366,6 +378,14 @@ function renderTwitch(ev) {
   twitchBtn.title = ev.connected ? ""
     : `Se connecter avec le compte qui envoie les chuchotements. URL de redirection à déclarer dans l'app Twitch : ${location.origin}/twitch/callback`;
 }
+
+document.getElementById("stopGame").onclick = async () => {
+  if (!confirm("Annuler la partie en cours ?")) return;
+  const resp = await fetch("game/stop?token=" + encodeURIComponent(TOKEN), { method: "POST" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) alert("Échec : " + (data.error || resp.status));
+  else if (data.event && !data.event.ok) alert(data.event.text);
+};
 
 twitchBtn.onclick = async () => {
   if (!twitchConnected) {

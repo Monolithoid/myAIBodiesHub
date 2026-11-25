@@ -31,8 +31,11 @@ of their own around this loop.
    command. The LLM translates the message into a `start_game` or `game_move` action;
    `game-master` validates it. No matching move → NAO says it did not understand.
    A game is only started from a message that is a question (contains "?").
-3. **First come, first served**, no vote: the first valid move wins; moves are locked
-   while NAO is speaking its reaction (`GET /speaking`).
+3. **First come, first served**, no vote: moves are settled in the order they reach
+   the brain (the `!nao` single slot), and the overlay is updated at once. Moves are
+   not locked while NAO speaks: since twitch-input sends the next message as soon as
+   NAO starts an answer (`NEXT_MESSAGE_AT=start`), such a lock would refuse almost
+   every move.
 4. **One activity at a time.** A running game (including a murder mystery spread over
    several streams) blocks the start of any other game, and of any other long
    activity such as a told story, until it is solved or cancelled (control room
@@ -65,9 +68,9 @@ Split:
 
 | Where | What |
 |---|---|
-| `game-master` (new) | rules, state, recap, `MoveGate` (first valid move, lock while NAO speaks), `Announcer` (event → `body-gateway`), roles, scores, overlay (SSE, `$GAME_TOKEN`) |
-| `body-gateway` | `POST /game-event` (inference with the game prompt, `source: game` on `/events`), `start_game` / `game_move` actions forwarded to `game-master` |
-| `twitch-input` | forwards the viewer's role (chat badges) |
+| `game-master` (new) | rules, state, recap, per-viewer delay, `Announcer` (events nobody asked for → `body-gateway`), roles, scores, overlay (SSE, `$GAME_TOKEN`) |
+| `body-gateway` | games in the prompt, `start_game` / `game_move` actions forwarded to `game-master`, then a second LLM call for NAO's reaction to the settled event; `POST /game-event` for the announced events (`source: game` on `/events`) |
+| `twitch-input` | forwards the viewer's role (chat badges); `!stop` for moderators |
 | control room | "cancel the game" button |
 
 Initial values (environment variables of `game-master`):
@@ -84,8 +87,11 @@ investigation is running, and viewers come back to it when they want.
 
 ## Consequences
 
-- One LLM call per move (two per mystery question, with the archivist), and the
-  `!nao` single-slot queue may drop moves during bursts: accepted.
+- Two LLM calls per move: one turns the message into a move, one writes NAO's
+  reaction once `game-master` has settled it (the first answer is not played, so NAO
+  never announces a result it did not get from the code). A mystery question adds
+  the archivist's call. The `!nao` single-slot queue may drop moves during bursts:
+  accepted.
 - A misread message may start a game nobody wanted: it can be cancelled.
 - "Follower" is not part of the chat badges (it would need the Twitch API); it is
   not offered in `GAME_START_ROLES`.

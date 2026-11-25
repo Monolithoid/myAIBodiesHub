@@ -76,6 +76,7 @@ Traefik which container port to send the traffic to). The names below are exampl
 | `rosbridge-proxy` | `https://rosbridge.$DOMAIN:80` | rosbridge (static drone, NAO relay); TLS only |
 | `obs-agent` | `https://obs.$DOMAIN:8096` | OBS overlay, stream voice ([ADR 005](decisions/005-avatar-twitch.md)) |
 | `regie` | `https://regie.$DOMAIN:8097` | Live view of the streams ([ADR 007](decisions/007-regie-topic-events.md)) |
+| `game-master` | `https://games.$DOMAIN:8098` | Games overlay in OBS ([ADR 010](decisions/010-game-master.md)) |
 
 Each chosen domain must have an A record pointing to the VPS IP. The `rosbridge-proxy`
 domain is the one to put in `ROSBRIDGE_URL` (`wss://…`) and `NAO_RELAY_UPSTREAM`
@@ -111,6 +112,7 @@ All sensitive variables are injected by Coolify. No secret is committed to the r
 | `TWITCH_CHANNEL` | Channel whose chat is read (e.g. `monolithoid`). Without it, `twitch-input` refuses to start and restarts in a loop |
 | `OBS_TOKEN` | `openssl rand -hex 32` — secret of the OBS overlay URL. Without it (or without `ROSBRIDGE_TOKEN`), `obs-agent` refuses to start |
 | `REGIE_TOKEN` | `openssl rand -hex 32` — secret of the control room URL. Without it (or without `ROSBRIDGE_TOKEN`), `regie` refuses to start |
+| `GAME_TOKEN` | `openssl rand -hex 32` — secret of game-master's API and games overlay, shared with body-gateway, twitch-input and regie. Without it, `game-master` refuses to start and the games are off ([games.md](games.md)) |
 
 Optional variables (defaults in `docker-compose.yml`, whose header describes each one):
 
@@ -121,6 +123,7 @@ Optional variables (defaults in `docker-compose.yml`, whose header describes eac
 | Voice | `WAKE_WORD`, `WAKE_WINDOW_S`, `LISTEN_DURATION`, `ASR_MODEL`, `TTS_VOICE` |
 | Control room | `OBS_URL`: `obs-agent` domain (e.g. `obs.$DOMAIN`, `https://` added if missing), for the control room's "OBS : overlay voix" link; `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET`: Twitch app for the `!rgpd` whispers, the sending account logs in with the "Connecter Twitch" button at each start (redirect URL `https://<regie domain>/twitch/callback`, override with `TWITCH_REDIRECT_URI`) |
 | Twitch | `TWITCH_COMMAND_PREFIX`, `TWITCH_BLOCKLIST`, `TWITCH_MODS_ONLY`, `VIEWER_MEMORY` (viewer profiles in `/opt/ia/nao/viewers/viewers.db`), `REGIE_TOKEN` on twitch-input (`!rgpd` whispers go through the control room) |
+| Games | `GAME_START_ROLES` (`everyone`, or a list among `moderator`, `vip`, `subscriber`), `MOVE_COOLDOWN_S` (scores in `/opt/ia/nao/games/games.db`) |
 | Dreams | `DREAMING_HOUR_START`, `DREAMING_HOUR_END`, `DREAMING_BATTERY_THRESHOLD`, `DREAM_TICK_INTERVAL`, `TZ` |
 | Open WebUI voice notifications | `WEBUI_URL`, `WEBUI_API_KEY`, `WEBUI_PIPE_MODEL`, `WEBUI_VOICE_CHAT_ID` |
 
@@ -195,6 +198,9 @@ every OBS restart or source reload.
 **Control room** ([ADR 007](decisions/007-regie-topic-events.md)): open
 `https://<regie domain>/?token=$REGIE_TOKEN` to see live each input, the LLM decision and
 the actions sent to each body.
+
+**Games overlay** ([games.md](games.md)): add a browser source
+`https://<game-master domain>/overlay?token=$GAME_TOKEN` (transparent background).
 
 ---
 

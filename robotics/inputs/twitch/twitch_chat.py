@@ -6,7 +6,7 @@ twitch_chat.py — Règles du tchat Twitch sans réseau ni dépendance (testable
   - filtres anti-abus : longueur, liens, mots interdits, bots (pas de délai par
     spectateur : la case « dernier message » suffit contre les rafales)
   - viewer memory commands: "!rgpd" (whispers what is stored about the
-    viewer) and "!reset" (erases it)
+    viewer) and "!reset" (erases it); "!stop" (moderators) cancels the running game
   - case unique « dernier message » : dès que le robot est libre, il répond au
     message le plus récent ; ceux arrivés entre-temps sont abandonnés plutôt
     que de faire attendre le stream
@@ -50,6 +50,21 @@ class ChatMessage:
     @property
     def is_mod(self) -> bool:
         return self.tags.get("mod") == "1" or self.is_broadcaster
+
+    @property
+    def roles(self) -> list[str]:
+        """Chat badges game-master checks before starting a game (ADR 010)."""
+        badges = {b.partition("/")[0] for b in self.tags.get("badges", "").split(",") if b}
+        roles = []
+        if self.is_broadcaster:
+            roles.append("broadcaster")
+        if self.is_mod:
+            roles.append("moderator")
+        if "vip" in badges:
+            roles.append("vip")
+        if self.tags.get("subscriber") == "1" or badges & {"subscriber", "founder"}:
+            roles.append("subscriber")
+        return roles
 
 
 def _unescape_tag(value: str) -> str:
@@ -102,11 +117,11 @@ def extract_command(text: str, prefix: str = "!nao") -> str | None:
     return rest or None
 
 
-VIEWER_COMMANDS = ("!rgpd", "!reset")
+VIEWER_COMMANDS = ("!rgpd", "!reset", "!stop")
 
 
 def viewer_command(text: str) -> str | None:
-    """'!rgpd' / '!RESET ' → 'rgpd' / 'reset'; anything else → None.
+    """'!rgpd' / '!RESET ' / '!stop' → 'rgpd' / 'reset' / 'stop'; anything else → None.
 
     Only the bare command counts: '!reset tout' or '!rgpdx' are ignored.
     """
