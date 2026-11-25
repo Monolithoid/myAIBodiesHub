@@ -41,6 +41,21 @@ CAPABILITY_LABELS: dict[str, str] = {
 CAPABILITY_LABEL_NAO_GESTURES = "gestes appris, LEDs (gesture, leds)"
 RAW_MOTION_ACTIONS = ("motion", "look")
 
+
+def first_gesture_only(actions: list) -> list:
+    """One answer, one emotion, one learned gesture: keeps the first "gesture" action.
+
+    A second gesture of the same answer would replace the first one on the drone,
+    and release the sentence before its gesture starts."""
+    out, seen = [], False
+    for a in actions:
+        if isinstance(a, dict) and a.get("type") == "gesture":
+            if seen:
+                continue
+            seen = True
+        out.append(a)
+    return out
+
 # Bodies that only give NAO a voice: "speech" goes to every connected one.
 VOICE_TYPES = ("static", "obs")
 

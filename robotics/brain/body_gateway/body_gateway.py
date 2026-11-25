@@ -1178,6 +1178,10 @@ class BodyGatewayNode(Node):
         """
         # GET /speaking "started": the sentences said from here on are this answer's.
         self._speaking.answer()
+        kept = body_rules.first_gesture_only(actions)
+        if len(kept) != len(actions):
+            self.get_logger().info(f"{len(actions) - len(kept)} geste(s) en trop ignoré(s) : un seul par réponse")
+            actions = kept
         # Speech ↔ gesture sync: the first sentence and the learned gesture share an id.
         sync = None
         if SPEECH_GESTURE_SYNC:
