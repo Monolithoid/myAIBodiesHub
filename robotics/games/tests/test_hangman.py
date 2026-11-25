@@ -73,6 +73,8 @@ class TestStart(unittest.TestCase):
         self.assertIsNone(g.pending_ask())
         self.assertEqual(g.definition, "Petit animal à huit pattes qui tisse une toile.")
         self.assertIn("huit pattes", event.text)
+        self.assertEqual(event.read, "Indice : Petit animal à huit pattes qui tisse une toile.")
+        self.assertEqual(event.to_dict()["read"], event.read)
         self.assertIn("huit pattes", g.summary())
         self.assertEqual(g.public_view()["definition"], g.definition)
 
@@ -83,6 +85,7 @@ class TestStart(unittest.TestCase):
             event = g.on_answer(g.pending_ask()["id"], text)
             self.assertEqual(g.definition, "", text)
             self.assertIn("Pas de définition", event.text)
+            self.assertEqual(event.read, "")
 
     def test_leaks(self):
         self.assertTrue(hangman.leaks("le cœur bat", "cœur"))

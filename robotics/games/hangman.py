@@ -173,12 +173,13 @@ class Hangman(Game):
         text = (f"{self._started_by} lance une partie de pendu, niveau {LEVEL_NAMES[self.level]} : "
                 f"un mot de {n} lettres, {self.max_errors} erreurs permises.")
         say = f"C'est parti pour un pendu ! Un mot de {n} lettres."
+        read = ""
         if self.definition:
-            text += f" Définition à lire aux spectateurs : {self.definition}"
-            say += f" Indice : {self.definition}"
+            read = f"Indice : {self.definition}"
+            text += f" Définition du mot : {self.definition}"
         elif not waiting:
             text += " Pas de définition pour ce mot."
-        return Event("started", text, say, mood="enthousiasme")
+        return Event("started", text, say, mood="enthousiasme", read=read)
 
     # ── Moves ───────────────────────────────────────────────────────────────
 

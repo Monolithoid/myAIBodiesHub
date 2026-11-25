@@ -77,8 +77,10 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 
 `player` is `{"login", "name", "roles", "source"}`; `roles` among `broadcaster`,
 `moderator`, `vip`, `subscriber`. A source other than `twitch` (Open WebUI, control
-room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points"}`:
-`text` is the fact given to the LLM, `say` the canned sentence.
+room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points", "mood", "read"}`:
+`text` is the fact given to the LLM, `say` the canned sentence, `read` a text NAO
+says word for word after its reaction (the hangman definition): body-gateway adds
+it to the speech, since the LLM may drop it.
 
 ## Configuration
 
