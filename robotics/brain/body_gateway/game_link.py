@@ -20,6 +20,9 @@ control room, timer) through POST /game-event: only step 4.
 The LLM never gets the solution: game-master only sends the public state.
 """
 
+import re
+import unicodedata
+
 import requests
 
 GAME_ACTIONS = ("start_game", "game_move")
@@ -46,8 +49,10 @@ def prompt_section(state: dict | None) -> str:
             "aucune autre partie ne peut être lancée.",
             f"État public : {activity.get('summary', '')}",
             f"Coups possibles : {activity.get('how', '')}",
-            'Quand un message du tchat propose un coup, ajoute l\'action '
-            '{"type": "game_move", "move": {...}} avec le coup traduit.',
+            'Quand un message du tchat propose un coup (par exemple « e », « je tente le R », '
+            '« le mot c\'est maison »), ajoute OBLIGATOIREMENT l\'action '
+            '{"type": "game_move", "move": {...}} avec le coup traduit. Tu ne sais pas si un coup '
+            'est bon : ne dis jamais qu\'une lettre ou un mot est bon ou faux, l\'arbitre le dira.',
             'Quand on te demande où en est la partie ou de redonner le contexte : '
             '{"type": "game_move", "move": {"type": "recap"}}.',
             "Si le message parle du jeu mais que tu ne sais pas le traduire en coup, dis que tu "
@@ -62,8 +67,10 @@ def prompt_section(state: dict | None) -> str:
         if g.get("start"):
             line += f", options possibles : {g['start']}"
         lines.append(line)
-    lines.append('Seulement quand un message demande clairement de lancer une partie, ajoute '
-                 'l\'action {"type": "start_game", "game": "<id du jeu>", "options": {...}}.')
+    lines.append('Quand un message demande de jouer à l\'un de ces jeux (par exemple « on peut '
+                 'jouer au pendu ? »), ajoute OBLIGATOIREMENT l\'action '
+                 '{"type": "start_game", "game": "<id du jeu>", "options": {...}}. Sans cette '
+                 'action aucune partie ne commence : ne dis jamais qu\'une partie commence sans elle.')
     return "\n".join(lines)
 
 
@@ -117,6 +124,37 @@ def hidden_messages(ask: dict) -> list | None:
         return None
     return [{"role": "system", "content": str(ask.get("system", ""))},
             {"role": "user", "content": str(ask["user"])}]
+
+
+def _plain(text: str) -> str:
+    text = str(text or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+_LETTER = re.compile(r"^\s*(?:(?:la\s+)?lettre\s+)?([a-z])\s*[?!.]*\s*$")
+
+
+def fallback_action(message: str, state: dict | None) -> dict | None:
+    """Game action the code infers when the LLM wrote none (small models forget it).
+
+    Only unambiguous cases: a single letter while a hangman runs, or a question
+    naming a game of the catalog while nothing runs."""
+    if not isinstance(state, dict):
+        return None
+    text = _plain(message)
+    activity = state.get("activity")
+    if activity:
+        match = _LETTER.match(text)
+        if activity.get("game") == "hangman" and match:
+            return {"type": "game_move", "move": {"type": "letter", "letter": match.group(1)}}
+        return None
+    if "?" not in text:
+        return None
+    words = set(re.findall(r"[a-z]+", text))
+    for game in state.get("games") or []:
+        if _plain(game.get("name", "")) in words or _plain(game.get("id", "")) in words:
+            return {"type": "start_game", "game": game.get("id", ""), "options": {}}
+    return None
 
 
 def game_action(actions: list) -> dict | None:

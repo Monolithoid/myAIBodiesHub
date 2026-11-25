@@ -130,6 +130,26 @@ class TestRead(unittest.TestCase):
         self.assertIn("Ne le répète pas", text)
 
 
+class TestFallback(unittest.TestCase):
+
+    def test_letter_while_hangman_runs(self):
+        running = {"activity": {"game": "hangman"}, "games": []}
+        for text in ("e", " E ", "é", "la lettre e", "lettre E ?"):
+            self.assertEqual(game_link.fallback_action(text, running),
+                             {"type": "game_move", "move": {"type": "letter", "letter": "e"}}, text)
+        for text in ("et", "salut", "c'est quoi ?", ""):
+            self.assertIsNone(game_link.fallback_action(text, running), text)
+
+    def test_start_from_a_question_naming_a_game(self):
+        idle = {"activity": None, "games": [{"id": "hangman", "name": "Pendu"}]}
+        self.assertEqual(game_link.fallback_action("hello on peut jouer au pendu ?", idle),
+                         {"type": "start_game", "game": "hangman", "options": {}})
+        self.assertIsNone(game_link.fallback_action("j'aime le pendu", idle))   # no question
+        self.assertIsNone(game_link.fallback_action("on joue ?", idle))
+        self.assertIsNone(game_link.fallback_action("e", idle))
+        self.assertIsNone(game_link.fallback_action("pendu ?", None))
+
+
 class TestStateError(unittest.TestCase):
 
     def test_error_reason(self):

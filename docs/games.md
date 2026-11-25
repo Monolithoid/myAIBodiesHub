@@ -26,6 +26,9 @@ Twitch "!nao je propose le E"
 - **Stop**: "Annuler le jeu" button in the control room, or `!stop` from a moderator
   in the chat; NAO announces it.
 - When the LLM is late, NAO says a canned sentence given by game-master.
+- When the LLM forgets the game action, body-gateway infers it in unambiguous cases
+  only: a single letter ("e", "la lettre e") while a hangman runs, or a question naming
+  a game of the catalog ("on peut jouer au pendu ?") while nothing runs.
 
 ## Hangman
 
