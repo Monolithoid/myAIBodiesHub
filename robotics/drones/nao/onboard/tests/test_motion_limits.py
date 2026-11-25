@@ -112,12 +112,12 @@ class TestClamp(unittest.TestCase):
 
     def test_angle_margin(self):
         j, a = b._clamp_joints(["HeadPitch"], [3.0], self.lim)
-        self.assertAlmostEqual(a[0], 0.5149 - 0.05)
+        self.assertAlmostEqual(a[0], 0.5149 - 0.03)
 
     def test_override_only_narrows(self):
         lim = b._motion_limits({"joint_ranges": {"HeadPitch": [-5.0, 0.2]}})
         lo, hi = b._joint_range("HeadPitch", lim)
-        self.assertAlmostEqual(lo, -0.6720 + 0.05)
+        self.assertAlmostEqual(lo, -0.6720 + 0.03)
         self.assertAlmostEqual(hi, 0.2)
 
     def test_hand_without_margin(self):

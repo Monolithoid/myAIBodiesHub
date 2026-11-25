@@ -258,8 +258,8 @@ Defaults, overridable in the `"bridge"` → `"motion_limits"` section of
 | Key | Default | Meaning |
 |---|---|---|
 | `max_speed` / `min_speed` | 0.3 / 0.02 | joint speed fraction range |
-| `joint_margin` | 0.05 rad | distance kept from each mechanical stop |
-| `joint_ranges` | `{}` | per-joint `[min, max]` in rad, can only narrow the range |
+| `joint_margin` | 0.03 rad | distance kept from each mechanical stop; same as the learned gestures' guardian (`limit_margin_rad` in nao-emotion-motion): the bridge, last safety net, must never be stricter than the layers above |
+| `joint_ranges` | `{}` | per-joint `[min, max]` in rad, can only narrow the range; leave empty unless needed: a range narrower than the learned gestures' zone makes the bridge refuse gestures the guardian validated |
 | `stiffness_max` | 1.0 | max stiffness value |
 | `posture_speed` | 0.3 | `goToPosture` speed |
 | `walk_max` | 0.5 | max normalized `moveToward` velocity |

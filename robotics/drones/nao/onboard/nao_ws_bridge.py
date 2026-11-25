@@ -181,7 +181,10 @@ for _g, _naoqi in _NAOQI_GROUP.items():
 _MOTION_LIMITS_DEFAULT = {
     "max_speed":        0.3,    # fractionMaxSpeed ceiling for joint moves
     "min_speed":        0.02,   # floor: 0 or negative speeds are rejected by NAOqi
-    "joint_margin":     0.05,   # rad kept away from each mechanical stop
+    # rad kept away from each mechanical stop. Same as the learned gestures'
+    # guardian (nao-emotion-motion limit_margin_rad): this last safety net must
+    # never be stricter than the layers above, or it refuses what they validated.
+    "joint_margin":     0.03,
     "joint_ranges":     {},     # per-joint [min, max] overrides (rad), e.g. {"HeadPitch": [-0.4, 0.3]}
     "stiffness_max":    1.0,    # ceiling for /nao/stiffness values
     "posture_speed":    0.3,    # goToPosture speed
