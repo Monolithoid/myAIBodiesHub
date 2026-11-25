@@ -1069,11 +1069,34 @@ class BodyGatewayNode(Node):
         player = game_link.player_of(viewer, source)
         message = str((viewer or {}).get("message") or user_input)
         result = GAMES.play(action, player, message)
+        # Hidden LLM calls game-master asks for (hangman definition): outside NAO's prompt.
+        for _ in range(game_link.MAX_ASKS):
+            if result is None or not result.get("ask"):
+                break
+            result = GAMES.answer(result["ask"], self._hidden_call(interaction, result["ask"]), player)
         if result is None:
             self.get_logger().warn(f"game-master injoignable — action {action.get('type')} ignorée")
             self._emit("error", interaction, message="game-master injoignable")
             return parsed
         return self._game_reaction(interaction, body_id, result, (viewer or {}).get("name", ""))
+
+    def _hidden_call(self, interaction: str, ask: dict) -> str:
+        """One LLM call game-master needs and NAO must not see; "" when it fails.
+
+        Only its purpose goes to /events: its prompt may hold the solution."""
+        messages = game_link.hidden_messages(ask)
+        if messages is None:
+            return ""
+        started = time.monotonic()
+        try:
+            raw = self._brain_chat(messages, temperature=0.7)
+        except brain_client.BRAIN_ERRORS as e:
+            self.get_logger().error(f"LLM error (hidden game call): {e}")
+            return ""
+        self._emit("game", interaction, event="hidden_call", ok=True,
+                   text=f"appel caché : {ask.get('purpose', '')}",
+                   duration_s=round(time.monotonic() - started, 2))
+        return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
     def _game_reaction(self, interaction: str, body_id: str, result: dict,
                        player_name: str = "") -> dict:

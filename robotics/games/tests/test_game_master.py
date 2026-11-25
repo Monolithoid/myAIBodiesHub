@@ -232,6 +232,24 @@ class TestHttp(unittest.TestCase):
         self.assertIsNone(data["state"]["activity"])
         self.assertEqual(self.announced, ["cancelled"])
 
+    def test_hidden_call_round_trip(self):
+        import hangman
+
+        class Word(hangman.Hangman):
+            def __init__(self):
+                super().__init__(words={"medium": ["araignée"]})
+
+        self.master._factories["hangman"] = Word
+        code, data = self._call("/start", {"game": "hangman", "player": {"source": "webui"}})
+        self.assertEqual(data["event"]["kind"], "started")
+        ask = data["ask"]
+        self.assertIn("araignée", ask["user"])
+        self.assertNotIn("araign", json.dumps(data["state"]))
+        code, data = self._call("/answer", {"id": ask["id"], "text": "Petite bête à huit pattes.",
+                                            "player": {"source": "webui"}})
+        self.assertNotIn("ask", data)
+        self.assertIn("huit pattes", data["state"]["activity"]["summary"])
+
     def test_overlay_page_with_query_token(self):
         with urllib.request.urlopen(self.base + "/overlay?token=secret", timeout=5) as resp:
             self.assertIn(b"/overlay/stream", resp.read())

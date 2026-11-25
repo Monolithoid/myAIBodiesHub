@@ -20,7 +20,9 @@ Every message shares these fields:
   action    type, requested (body named by the LLM), targets (bodies it went to),
             connected {target: bool}, detail (short text)
   game      event (kind settled by game-master: started, won, refused…), ok, text,
-            by (player), game (id of the running game, "" when over); ADR 010
+            by (player), game (id of the running game, "" when over); ADR 010.
+            event "hidden_call": a hidden LLM call game-master asked for (text = its
+            purpose only, duration_s)
   error     message
   bodies    connected {body: bool}, state (IDLE|AWAKE|DREAMING)
 
