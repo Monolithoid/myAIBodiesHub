@@ -632,10 +632,15 @@ services:
       # Hangman: errors allowed per player, shortest word drawn (the list holds 6 to 12 letters)
       - HANGMAN_MAX_ERRORS=${HANGMAN_MAX_ERRORS:-7}
       - HANGMAN_MIN_LETTERS=${HANGMAN_MIN_LETTERS:-6}
+      # Mystery: points, share of testimonies on an innocent card, delay between two cases
+      - MYSTERY_WIN_POINTS=${MYSTERY_WIN_POINTS:-5}
+      - MYSTERY_CLUE_POINTS=${MYSTERY_CLUE_POINTS:-1}
+      - MYSTERY_TESTIMONY_RATE=${MYSTERY_TESTIMONY_RATE:-0.25}
+      - MYSTERY_GEN_COOLDOWN_S=${MYSTERY_GEN_COOLDOWN_S:-0}
     ports:
       - "127.0.0.1:8098:8098"
     volumes:
-      # Scores (SQLite)
+      # Scores, settings and saved mystery (SQLite)
       - /opt/ia/nao/games:/data
     networks:
       - ai-network     # reaches body-gateway through chat-relay (POST /game-event)

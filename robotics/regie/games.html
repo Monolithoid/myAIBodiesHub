@@ -47,6 +47,11 @@
   .field .help { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
   input[type=number] { width: 90px; background: #1e242c; color: var(--text); border: 1px solid var(--line);
                        border-radius: 6px; padding: 5px 8px; font: inherit; }
+  select { background: #1e242c; color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 5px 8px; font: inherit; }
+  h3 { font-size: 13px; margin: 14px 0 0; color: var(--muted); font-weight: 600; }
+  h3 + .field { border-top: 0; }
+  .crossed { color: var(--muted); text-decoration: line-through; }
   .roles label { margin-left: 10px; white-space: nowrap; }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
   th, td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; }
@@ -74,7 +79,10 @@
   </section>
 
   <section>
-    <h2>Classement</h2>
+    <div class="row" style="justify-content:space-between">
+      <h2>Classement</h2>
+      <select id="gameSelect" aria-label="Jeu"></select>
+    </div>
     <table>
       <thead><tr><th>#</th><th>Joueur</th><th class="pts">Points</th></tr></thead>
       <tbody id="scores"><tr><td colspan="3" class="muted">…</td></tr></tbody>
@@ -88,7 +96,7 @@
   <section class="wide">
     <h2>Réglages</h2>
     <p class="muted" style="margin:0 0 6px">Qui peut lancer une partie, le délai entre deux coups et
-      la présence s'appliquent tout de suite ; les réglages du pendu à la prochaine partie.
+      la présence s'appliquent tout de suite ; les réglages d'un jeu à sa prochaine partie.
       Ils sont gardés au redémarrage de game-master.</p>
     <form id="settings"></form>
     <div class="row" style="margin-top:6px">
@@ -130,7 +138,39 @@ function setLink(up, text) {
 
 // ── Running game (refreshed every 2 s) ───────────────────────────────────────
 
-let currentGame = "hangman";
+let currentGame = "", currentName = "", catalog = [], runningSeen = null;
+
+// The ranking and the reset follow the selected game; a starting game selects itself.
+function renderCatalog(state) {
+  const select = document.getElementById("gameSelect");
+  const games = state.games || [];
+  if (JSON.stringify(games) !== JSON.stringify(catalog)) {
+    catalog = games;
+    select.replaceChildren(...games.map(g => el("option", { value: g.id }, g.name)));
+    if (currentGame) select.value = currentGame;
+    renderSettings(formOrSaved());
+  }
+  const running = state.activity ? state.activity.game : null;
+  if (running && running !== runningSeen) select.value = running;
+  runningSeen = running;
+  currentGame = select.value;
+  currentName = (catalog.find(g => g.id === currentGame) || {}).name || currentGame;
+}
+
+function renderMystery(v, box) {
+  if (v.preparing) { box.append(el("div", {}, "Dossier en préparation…")); return; }
+  box.append(el("div", {}, v.intro), el("div", {}, "Victime : " + v.victim));
+  for (const column of v.columns || []) {
+    const line = el("div", {}, column.label + " : ");
+    column.cards.forEach((c, i) => line.append(i ? ", " : "",
+      el("span", { className: c.crossed ? "crossed" : "" }, c.name)));
+    box.append(line);
+  }
+  (v.clues || []).forEach(c => box.append(el("div", { className: "muted" }, "Indice : " + c)));
+  if ((v.excluded || []).length) {
+    box.append(el("div", { className: "muted" }, "Ne peuvent plus accuser : " + v.excluded.join(", ")));
+  }
+}
 
 function renderGame(state) {
   const box = document.getElementById("game");
@@ -142,11 +182,12 @@ function renderGame(state) {
     box.textContent = "Aucune partie en cours.";
   } else {
     box.className = "";
-    currentGame = a.game;
     const v = a.view || {};
     box.append(el("div", {}, `${a.name} — lancée par ${a.started_by || "?"}`
                               + (v.level ? ` · niveau ${v.level}` : "")));
-    if (v.mask !== undefined) {
+    if (a.game === "mystery") {
+      renderMystery(v, box);
+    } else if (v.mask !== undefined) {
       box.append(el("div", { className: "mask" }, v.mask));
       if (v.definition) box.append(el("div", { className: "muted" }, "Indice : " + v.definition));
       const tried = el("div");
@@ -174,6 +215,7 @@ async function refresh() {
   try {
     const state = await call("GET", "game/state");
     setLink(true, "game-master OK");
+    renderCatalog(state);
     renderGame(state);
     await refreshScores();
   } catch (e) {
@@ -182,7 +224,8 @@ async function refresh() {
 }
 
 document.getElementById("stop").onclick = async () => {
-  if (!confirm("Annuler la partie en cours ? NAO l'annoncera.")) return;
+  if (!confirm("Annuler la partie en cours ? NAO l'annoncera. "
+               + "Une enquête annulée est perdue.")) return;
   try { await call("POST", "game/stop"); refresh(); } catch (e) { alert(e.message); }
 };
 
@@ -205,8 +248,14 @@ async function refreshScores() {
   });
 }
 
+document.getElementById("gameSelect").onchange = (e) => {
+  currentGame = e.target.value;
+  currentName = e.target.selectedOptions[0].textContent;
+  refreshScores().catch(err => setLink(false, err.message));
+};
+
 document.getElementById("reset").onclick = async () => {
-  if (!confirm("Remettre tous les scores du pendu à zéro ? C'est définitif.")) return;
+  if (!confirm(`Remettre tous les scores du jeu « ${currentName} » à zéro ? C'est définitif.`)) return;
   const msg = document.getElementById("scoresMsg");
   try {
     await call("POST", "game/scores/reset", { game: currentGame });
@@ -222,7 +271,15 @@ let schema = [], saved = {};
 function renderSettings(values) {
   const form = document.getElementById("settings");
   form.replaceChildren();
-  for (const item of schema) {
+  // Common settings first, then one group per game (keys "<game id>_…").
+  const groupOf = item => catalog.find(g => item.key.startsWith(g.id + "_"));
+  const groups = [[null, "Tous les jeux"], ...catalog.map(g => [g.id, g.name])];
+  const ordered = groups.flatMap(([id, name]) => {
+    const items = schema.filter(item => (groupOf(item)?.id || null) === id);
+    return items.length ? [name, ...items] : [];
+  });
+  for (const item of ordered) {
+    if (typeof item === "string") { form.append(el("h3", {}, item)); continue; }
     const field = el("div", { className: "field" });
     field.append(el("label", { htmlFor: "s_" + item.key }, item.label));
     if (item.type === "roles") {
@@ -263,6 +320,11 @@ function formValues() {
       : Number(node.value);
   }
   return out;
+}
+
+// The form's current values when it exists (kept while it is rebuilt), else the saved ones.
+function formOrSaved() {
+  return schema.length && document.getElementById("s_" + schema[0].key) ? formValues() : saved;
 }
 
 function dirty() {

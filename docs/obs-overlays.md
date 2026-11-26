@@ -66,7 +66,8 @@ bloqué" banner, `.on` while shown).
 
 Stable hooks: `#panel` (`.shown` while visible), `#title`, `#view`, `#event`,
 `#footer`, `#scores`, and one class per game view inside `#view` (`.hangman`, with
-`.big`, `.def`, `.tried`, `.words`, `.errors`). A new game view gets its own class and
+`.big`, `.def`, `.tried`, `.words`, `.errors`; `.investigation`, with `.intro`,
+`.victim`, `.grid`, `.card`, `.clues`, `.who`). A new game view gets its own class and
 uses these variables for its colours.
 
 ### Examples
@@ -128,7 +129,10 @@ game-master ── GET /state (every ACTIVITY_POLL_S) ── body-gateway ──
   |---|---|
   | `OBS_WS_URL` | `ws://<ip of the OBS PC>:4455`; empty = feature off |
   | `OBS_WS_PASSWORD` | password of OBS's WebSocket server (Tools > WebSocket Server Settings) |
-  | `OBS_SCENES` | `activity=scene` pairs, e.g. `default=Plateau,hangman=Pendu`; `default` is the scene with no activity, and for an activity without its own scene |
+  | `OBS_SCENES` | `activity=scene` pairs, e.g. `default=Plateau,hangman=Pendu,mystery=Enquete`; `default` is the scene with no activity, and for an activity without its own scene |
+
+A saved mystery stays the running activity between two streams, so `/activity` keeps
+saying `mystery` until the case is solved or cancelled.
 
 Only **changes** switch the scene: the first value the drone receives after it starts
 is just remembered (a restart during a stream does not force a scene), and between two

@@ -1121,8 +1121,8 @@ class BodyGatewayNode(Node):
             return ""
         started = time.monotonic()
         try:
-            raw = self._brain_chat(messages, temperature=0.7)
-        except brain_client.BRAIN_ERRORS as e:
+            raw = self._brain_chat(messages, temperature=float(ask.get("temperature", 0.7)))
+        except Exception as e:   # whatever failed, game-master must get an answer
             self.get_logger().error(f"LLM error (hidden game call): {e}")
             return ""
         self._emit("game", interaction, event="hidden_call", ok=True,
@@ -1141,7 +1141,8 @@ class BodyGatewayNode(Node):
             parsed = self._decide(
                 interaction, body_id, game_link.reaction_input(event, state, player_name),
                 _AWAKE_SYSTEM, 0.7,
-                extra_system=game_link.prompt_section(state) + "\n" + game_link.REACTION_RULES,
+                extra_system=(game_link.prompt_section(state) + "\n"
+                              + game_link.reaction_rules(state)),
             )
         except brain_client.BRAIN_ERRORS as e:
             # The API is late: game-master's canned sentence, so the game goes on.
@@ -1152,6 +1153,10 @@ class BodyGatewayNode(Node):
         if not any(a.get("type") == "speech" and str(a.get("text", "")).strip() for a in actions):
             actions.append({"body": self._speech_body(body_id), "type": "speech",
                             "text": event.get("say") or event.get("text", "")})
+        elif event.get("keep"):
+            # NAO's own words (not the canned sentence): the game keeps them with the case.
+            GAMES.note(" ".join(str(a.get("text", "")) for a in actions
+                                if a.get("type") == "speech"))
         # Text the game wants said word for word (hangman definition): the LLM may drop it.
         actions = game_link.with_read(actions, event, self._speech_body(body_id))
         return {**parsed, "actions": actions, "_game_version": (state or {}).get("version")}
