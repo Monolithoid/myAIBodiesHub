@@ -29,7 +29,8 @@ Twitch "!nao je propose le E"
 - When the LLM forgets the game action, body-gateway infers it in unambiguous cases
   only: a single letter ("e", "la lettre e") or a single word as long as the hidden one
   ("grenier", "c'est grenier") while a hangman runs, or a question naming a game of the
-  catalog ("on peut jouer au pendu ?") while nothing runs.
+  catalog ("on peut jouer au pendu ?") while nothing runs; during a mystery, a full
+  accusation, a recap or resume request, or a question naming a card.
 - **NAO plays too**, with its own points in the same ranking (login `nao`): it plays a
   move when a viewer asks it ("à toi NAO", action `"by": "nao"`). Its LLM never gets
   the solution, nor the hangman definition (the code reads it word for word, the
@@ -66,12 +67,52 @@ Twitch "!nao je propose le E"
   ones struck out), the wrong words proposed, the gallows of the last player who erred
   (their errors), the players hanged; it stays on screen a little while after the end with the solution.
 
-### Hidden LLM calls
+## Murder mystery
+
+- Start: "!nao on fait une enquête dans un château écossais ?" (the setting asked for
+  is required). The case has 6 suspects (a motive each), 6 blunt weapons and 6 places.
+- **Preparation**, two hidden LLM calls: (1) introduction, victim, cards and motives,
+  checked by the code, which then **draws the solution**; (2) the story of the murder
+  and 15 clues, one per card outside the solution, also checked (each clue names its
+  card and no card of the solution). One single attempt: if a check fails, or the
+  setting is refused, NAO says it does not suit and no game starts (the delay
+  `MYSTERY_GEN_COOLDOWN_S` only counts from a case that started). A preparation with
+  no answer is dropped after 5 minutes.
+- NAO reads the introduction; the overlay shows the cards.
+- **Questions** ("!nao où était le jardinier ?"): the hidden **archivist** call reads
+  the cards and motives (not the story) and answers with a card id or "aucune", nothing
+  else is used. The code
+  picks the clue: the card's own clue when it is innocent and still open; the clue of
+  another open card, as a witness's account, when it is in the solution or already
+  crossed out, and now and then for an innocent one. The card cleared is crossed out
+  and NAO's speech ends with the clue, word for word. With no clue, NAO may add a
+  harmless detail (kept with the case so it stays consistent, unless it names a card)
+  or say it does not know.
+- **Accusation** at any time: "!nao j'accuse X avec Y dans Z". The three are required.
+  A wrong one and that viewer may not accuse again in this case (questions still
+  allowed). A right one wins: NAO reads the story of what happened.
+- **End** also when every card but the solution is crossed out, or when every viewer
+  present in the chat has accused wrongly (checked at a wrong accusation only).
+  Leaving the chat never ends a case.
+- **NAO does not play**, never gets the file or the solution, and answers "I don't
+  know" to any question about who is involved.
+- **Over several streams**: the case is saved after each change and survives restarts.
+  It stays the running activity (no other game) until solved or cancelled; "on reprend
+  l'enquête ?" or a recap request retells where it stands.
+- Points: 5 for the right accusation, 1 per clue obtained (control room settings).
+- Preparing a case needs a capable model: the 15 clues must pass the checks at once.
+- Cost: two LLM calls to prepare a case; for each question, the usual two (move, NAO's
+  reaction) plus the archivist's.
+- Overlay: introduction, victim, "Enquête en cours", the 3 x 6 grid with cleared cards
+  crossed out, the latest clues, the last investigator and who may no longer accuse;
+  at the end the solution is highlighted for a minute.
+
+## Hidden LLM calls
 
 When a game needs the LLM for something NAO must not see, game-master's answer holds
 an `ask` (`{"id", "purpose", "system", "user"}`). body-gateway runs that call outside
 NAO's prompt and posts the text to `POST /answer`; only its purpose goes to `/events`.
-The mystery's archivist will use the same path.
+The mystery's preparation and archivist use the same path.
 
 ## Services
 
@@ -94,6 +135,7 @@ Token: `Authorization: Bearer $GAME_TOKEN` (or `?token=`).
 | `POST /move` | `{"move", "player"}` | `{"event", "state"}` |
 | `POST /stop` | `{"player"}` | `{"event", "state"}`; NAO announces it |
 | `POST /answer` | `{"id", "text", "player"}` | `{"event", "state"}`: text of a hidden LLM call (`""` = failed) |
+| `POST /note` | `{"text"}` | `{"kept"}`: NAO's reaction to an event with `keep`, saved by the running game |
 | `POST /seen` | `{"logins"}` | `{"ok"}`: viewers who just wrote in the chat (twitch-input, every `PRESENCE_EVERY_S`) |
 | `POST /check` | `{"text"}` | `{"leak"}`: NAO's sentence holds the running game's solution (then played as its guess) |
 | `POST /reveal` | `{"version"}` | `{"revealed"}`: NAO has said the result, the overlay may show the state of that version |
@@ -110,10 +152,11 @@ reveals is shown after `OVERLAY_HOLD_S`.
 
 `player` is `{"login", "name", "roles", "source"}`; `roles` among `broadcaster`,
 `moderator`, `vip`, `subscriber`. A source other than `twitch` (Open WebUI, control
-room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points", "mood", "read"}`:
+room) is the streamer. An `event` is `{"kind", "text", "say", "ok", "points", "mood", "read", "read_as", "keep"}`:
 `text` is the fact given to the LLM, `say` the canned sentence, `read` a text NAO
-says word for word after its reaction (the hangman definition): body-gateway adds
-it to the speech, since the LLM may drop it.
+says word for word after its reaction (the hangman definition, a mystery's clue):
+body-gateway adds it to the speech, since the LLM may drop it. `read_as` names it for
+the LLM; `keep` asks body-gateway to post NAO's reaction to `/note`.
 
 ## Control room page
 
@@ -125,7 +168,9 @@ game-master (`GET/POST /settings`, `GET /scores`, `POST /scores/reset`), so
 
 Settings changed there are kept in game-master's SQLite base (`/data`) and override
 the variables below, which only give the defaults. Who may start, the delay between
-two moves and the presence apply at once; the hangman settings at the next game.
+two moves and the presence apply at once; a game's settings at its next game. The
+ranking and its reset follow the game selected on the page. Cancelling a mystery
+deletes its saved case.
 
 ## Configuration
 
@@ -138,7 +183,11 @@ two moves and the presence apply at once; the hangman settings at the next game.
 | `PRESENCE_MIN` | game-master | `10` | a viewer who wrote in the chat (or played) within these minutes is still there |
 | `PRESENCE_EVERY_S` | twitch-input | `30` | how often the logins seen in the chat go to game-master |
 | `HANGMAN_MIN_LETTERS` | game-master | `6` | shortest hangman word (the list holds 6 to 12 letters) |
-| `GAMES_DB_PATH` | game-master | `/data/games.db` | scores (volume `/opt/ia/nao/games`) |
+| `MYSTERY_WIN_POINTS` | game-master | `5` | points of a right accusation |
+| `MYSTERY_CLUE_POINTS` | game-master | `1` | points of a clue obtained |
+| `MYSTERY_TESTIMONY_RATE` | game-master | `0.25` | share of questions on an innocent card answered by a witness about another card |
+| `MYSTERY_GEN_COOLDOWN_S` | game-master | `0` | delay between two mysteries, counted from a case that started |
+| `GAMES_DB_PATH` | game-master | `/data/games.db` | scores, settings and saved mystery (volume `/opt/ia/nao/games`) |
 | `OVERLAY_HOLD_S` | game-master | `30` | longest a new state waits for `/reveal` before the overlay shows it (`0` = at once) |
 | `GAME_REVEAL_MAX_S` | body-gateway | `25` | longest body-gateway waits for NAO to finish speaking before revealing |
 | `HANGMAN_NAO_MIN_FOUND` | game-master | `0` | share of the word found before NAO's own guess counts (`0` = at any time); before, its sentence holding the word is replaced by a teasing one |
@@ -158,7 +207,9 @@ A game is a `game_core.Game` subclass registered in `game_master.GAMES`:
 - `start(player, options)` and `on_move(move, player)` return an `Event`;
 - `summary()` (public state for the LLM), `public_view()` (overlay), `is_over()`;
 - optional: `recap()`, `on_tick(now)` (an event announced by NAO), `pending_ask()` /
-  `on_answer()` (hidden LLM call).
+  `on_answer()` (hidden LLM call);
+- a long game sets `persistent = True` and implements `save()` / `restore(state)`
+  (plus `is_ready()` / `is_aborted()` when it needs preparing).
 
 The overlay has a default view (`view.big`, `view.lines`); a game may add its own
 renderer in `overlay.html` (`views[<id>]`), with its own class and the panel's CSS

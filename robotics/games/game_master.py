@@ -24,6 +24,8 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
   body-gateway runs outside NAO's prompt before NAO reacts, then posts to /answer.
   POST /check {"text"}                                   → {"leak"}: NAO's text gives the
                                    running game's solution away (it is then not said)
+  POST /note {"text"}                                    → {"kept"}: NAO's reaction to an
+                                   event with "keep", kept by the running game
   POST /seen {"logins": [...]}     viewers who just wrote in the chat (twitch-input): a
                                    game knows who is still there (memory only)
   GET  /settings                   {"values", "schema"}: settings of the control room
@@ -49,12 +51,19 @@ Environment variables:
   GAME_START_ROLES    who may start a game: "everyone" (default), or a comma list
                       among moderator, vip, subscriber (the streamer always may)
   MOVE_COOLDOWN_S     per-viewer delay between two moves, default 0 (none)
-  GAMES_DB_PATH       SQLite file of the scores, default /data/games.db; empty = no scores
+  GAMES_DB_PATH       SQLite file of the scores, settings and saved game, default
+                      /data/games.db; empty = none of them (a mystery is lost on restart)
   HANGMAN_MAX_ERRORS  errors of one player before they are hanged, default 7 (the game is
                       lost when every viewer still in the chat is hanged)
   PRESENCE_MIN        a viewer who wrote in the chat (or played) within these minutes
                       is still there, default 10
   HANGMAN_MIN_LETTERS shortest hangman word, default 6 (the list holds 6 to 12 letters)
+  MYSTERY_WIN_POINTS      points of a right accusation, default 5
+  MYSTERY_CLUE_POINTS     points of a clue obtained, default 1
+  MYSTERY_TESTIMONY_RATE  share of questions on an innocent answered by a testimony
+                          about another card, default 0.25
+  MYSTERY_GEN_COOLDOWN_S  delay between two mysteries, from a generation that
+                          succeeded, default 0
 """
 
 import hmac
@@ -72,6 +81,7 @@ import requests
 
 import game_core
 import hangman
+import mystery
 
 GAME_TOKEN       = os.environ.get("GAME_TOKEN", "").strip()
 GAME_PORT        = int(os.environ.get("GAME_PORT", "8098"))
@@ -98,6 +108,14 @@ SETTINGS_SCHEMA = [
     {"key": "hangman_nao_min_found", "label": "Pendu : part du mot trouvée avant que NAO puisse gagner",
      "type": "float", "min": 0, "max": 1, "default": hangman.NAO_MIN_FOUND,
      "help": "0 = à tout moment, 0.5 = la moitié, 1 = jamais"},
+    {"key": "mystery_win_points", "label": "Enquête : points d'une bonne accusation", "type": "int",
+     "min": 0, "max": 50, "default": mystery.WIN_POINTS},
+    {"key": "mystery_clue_points", "label": "Enquête : points d'un indice obtenu", "type": "int",
+     "min": 0, "max": 50, "default": mystery.CLUE_POINTS},
+    {"key": "mystery_testimony_rate", "label": "Enquête : part de témoignages sur un innocent",
+     "type": "float", "min": 0, "max": 1, "default": mystery.TESTIMONY_RATE,
+     "help": "question sur un innocent : probabilité de répondre par un témoignage sur une "
+             "autre carte (0 = jamais, le coupable se trahit plus)"},
     {"key": "start_roles", "label": "Qui peut lancer une partie", "type": "roles",
      "default": GAME_START_ROLES or [game_core.EVERYONE],
      "help": "le streamer peut toujours"},
@@ -112,7 +130,7 @@ SETTINGS_SCHEMA = [
 ]
 
 # Games offered to the viewers: id → Game class.
-GAMES: dict = {hangman.Hangman.id: hangman.Hangman}
+GAMES: dict = {hangman.Hangman.id: hangman.Hangman, mystery.Mystery.id: mystery.Mystery}
 
 
 def log(text: str):
@@ -287,6 +305,9 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
             if url.path == "/check":
                 self._json(200, {"leak": master.check(str(body.get("text", "")))})
                 return
+            if url.path == "/note":
+                self._json(200, {"kept": master.note(str(body.get("text", "")))})
+                return
             if url.path == "/settings":
                 if master.settings is None:
                     self._json(503, {"error": "réglages indisponibles"})
@@ -318,6 +339,7 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
                 self._json(200, {"revealed": stage.reveal(version)})
                 return
             player = game_core.Player.from_dict(body.get("player"))
+            waiting = (master.pending_ask() or {}).get("id")
             if url.path == "/start":
                 event = master.start(str(body.get("game", "")), player,
                                      str(body.get("message", "")), body.get("options") or {})
@@ -335,7 +357,9 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
             log(f"{url.path[1:]} by {player.label()}: {event.kind} — {event.text[:80]}")
             answer = {"event": event.to_dict(), "state": master.state()}
             ask = master.pending_ask()
-            if ask is not None and url.path != "/stop":
+            # Only the call that created a hidden call gets it: an old one still
+            # pending must not run for another viewer's move.
+            if ask is not None and ask.get("id") != waiting:
                 answer["ask"] = ask
             self._json(200, answer)
 
@@ -413,8 +437,9 @@ def main():
         os.makedirs(os.path.dirname(GAMES_DB_PATH) or ".", exist_ok=True)
         scores = game_core.ScoreStore(GAMES_DB_PATH)
     settings = game_core.Settings(SETTINGS_SCHEMA, GAMES_DB_PATH or None)
+    saves = game_core.SaveStore(GAMES_DB_PATH) if GAMES_DB_PATH else None
     master = game_core.GameMaster(GAMES, GAME_START_ROLES, MOVE_COOLDOWN_S, scores,
-                                  settings=settings)
+                                  settings=settings, saves=saves)
     stage = Stage(Feed(), master.state(), hold_s=settings.values()["overlay_hold_s"])
     master.on_change = lambda: stage.changed(master.state())
     announcer = Announcer(BODY_GATEWAY_URL)

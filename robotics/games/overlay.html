@@ -13,7 +13,7 @@
              --panel-width: 520px; --panel-scale: 1; --panel-bg: rgba(18, 18, 28, 0.86);
              --panel-border-width: 2px; --panel-radius: 14px; --panel-padding: 16px 20px; }
      — see docs/obs-overlays.md. Stable hooks: #panel, #title, #view, #event, #footer,
-     #scores, and one class per game view (.hangman). */
+     #scores, and one class per game view (.hangman, .investigation). */
   :root {
     --panel-top: 0;
     --panel-right: 0;
@@ -65,6 +65,22 @@
   .hangman .words { font-size: 17px; letter-spacing: 0.04em; }
   .hangman .words span { margin-right: 0.9em; }
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
+  /* Mystery: the investigator's notebook (case, 3 x 6 cards, clues revealed). */
+  .investigation { font-size: 16px; line-height: 1.3; }
+  .investigation .intro { color: #d6d6de; }
+  .investigation .victim { margin-top: 4px; font-weight: 700; }
+  .investigation .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                         gap: 0 16px; margin-top: 8px; }
+  .investigation .head { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+                         color: var(--panel-accent); }
+  .investigation .card { overflow-wrap: anywhere; }
+  .investigation .card.crossed { color: #8d8d9c; text-decoration: line-through;
+                                 text-decoration-color: #ff7b7b; }
+  .investigation .card.solution { color: var(--panel-highlight); font-weight: 700; }
+  .investigation .clues { margin-top: 8px; font-size: 14px; font-style: italic; color: #cfe6ff; }
+  .investigation .who { margin-top: 6px; font-size: 14px; color: #a8a8b8; }
+  /* A long case: the event line is kept short. */
+  #panel.mystery #event { font-size: 16px; }
   #event { font-size: 19px; color: var(--panel-highlight); min-height: 1.3em; }
   #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
   /* Ranking of the game (points of every game played, NAO included). */
@@ -148,6 +164,43 @@ views.hangman = (view, el) => {
   fitText(side.querySelector(".big"), 36, 14);
 };
 
+// Mystery: only public facts come here (the solution once the case is closed).
+// The newest clues are shown; the older ones stay visible as crossed-out cards.
+const CLUES_SHOWN = 4;
+views.mystery = (view, el) => {
+  const box = text("div", "investigation", "");
+  if (view.preparing) {
+    box.append(text("div", "intro", "Le dossier de l'affaire se prépare…"));
+    el.append(box);
+    return;
+  }
+  box.append(text("div", "intro", view.intro || ""), text("div", "victim", "Victime : " + view.victim));
+  const grid = text("div", "grid", "");
+  for (const column of view.columns || []) {
+    const col = text("div", "column", "");
+    col.append(text("div", "head", column.label));
+    for (const card of column.cards || []) {
+      const cls = "card" + (card.crossed ? " crossed" : "") + (card.solution ? " solution" : "");
+      col.append(text("div", cls, card.name));
+    }
+    grid.append(col);
+  }
+  box.append(grid);
+  const clues = view.clues || [];
+  if (clues.length) {
+    const list = text("div", "clues", "");
+    list.append(text("div", "head", `Indices (${clues.length})`));
+    for (const clue of clues.slice(-CLUES_SHOWN)) list.append(text("div", "", "• " + clue));
+    box.append(list);
+  }
+  const who = [];
+  if (view.winner) who.push("Affaire résolue par " + view.winner);
+  else if (view.investigator) who.push("Dernier enquêteur : " + view.investigator);
+  if ((view.excluded || []).length) who.push("Ne peuvent plus accuser : " + view.excluded.join(", "));
+  if (who.length) box.append(text("div", "who", who.join(" · ")));
+  el.append(box);
+};
+
 // Shrinks an element's font until its text fits its width (one line).
 function fitText(el, maxPx, minPx) {
   if (!el) return;
@@ -184,6 +237,19 @@ function renderScores(scores, over) {
 const END_KINDS = new Set(["won", "lost", "cancelled", "over"]);
 let hideTimer = null;
 
+// A long case must not run off the page: the panel's scale is lowered until its
+// last element fits (the CSS scale is the starting point).
+function fitPanel(panel) {
+  panel.style.removeProperty("--panel-scale");
+  if (!panel.classList.contains("mystery")) return;
+  let scale = parseFloat(getComputedStyle(panel).getPropertyValue("--panel-scale")) || 1;
+  const bottom = () => Math.max(...[...panel.children].map(e => e.getBoundingClientRect().bottom));
+  for (let i = 0; i < 30 && bottom() > window.innerHeight - 8; i++) {
+    scale *= 0.96;
+    panel.style.setProperty("--panel-scale", scale);   // zoom and max-width
+  }
+}
+
 function render(state) {
   const panel = document.getElementById("panel");
   const activity = state.activity;
@@ -193,24 +259,32 @@ function render(state) {
     panel.classList.remove("shown");
     return;
   }
+  const shownGame = activity ? activity.game : (state.final || {}).game;
+  panel.classList.toggle("mystery", shownGame === "mystery");
   const viewEl = document.getElementById("view");
   viewEl.replaceChildren();
   if (activity) {
-    document.getElementById("title").textContent = activity.name + " — en cours";
+    document.getElementById("title").textContent =
+      activity.game === "mystery" ? "Enquête en cours" : activity.name + " — en cours";
     (views[activity.game] || defaultView)(activity.view || {}, viewEl);
-    document.getElementById("footer").textContent =
-      activity.last_player ? "Dernier coup : " + activity.last_player : "Lancée par " + activity.started_by;
+    // The mystery view names its last investigator itself.
+    document.getElementById("footer").textContent = activity.game === "mystery"
+      ? "Lancée par " + activity.started_by
+      : activity.last_player ? "Dernier coup : " + activity.last_player : "Lancée par " + activity.started_by;
   } else {
     // Game just over: its last view and the last event stay on screen a little while.
     const final = state.final;
     if (final) (views[final.game] || defaultView)(final.view || {}, viewEl);
     document.getElementById("title").textContent = (final ? final.name + " — " : "") + "partie terminée";
     document.getElementById("footer").textContent = "";
-    hideTimer = setTimeout(() => panel.classList.remove("shown"), 20000);
+    // A solved case takes longer to read than a word.
+    hideTimer = setTimeout(() => panel.classList.remove("shown"),
+                           shownGame === "mystery" ? 60000 : 20000);
   }
   document.getElementById("event").textContent = last ? (last.say || last.text) : "";
   renderScores(state.scores, !activity);
   panel.classList.add("shown");
+  fitPanel(panel);
 }
 
 const token = new URLSearchParams(location.search).get("token") || "";

@@ -1,7 +1,7 @@
 # ADR 010 — Games with the viewers: the code decides, the LLM speaks
 
 **Date:** 2026-11-25  
-**Status:** Accepted (not implemented yet)  
+**Status:** Accepted; amended 2026-11-26 (murder mystery, see the end)  
 **Extends:** [ADR 005](005-avatar-twitch.md)
 
 ## Context
@@ -100,3 +100,30 @@ investigation is running, and viewers come back to it when they want.
 - New games (rock-paper-scissors, tic-tac-toe, battleship) plug into the same
   `Game` interface (`start`, `on_move`, `public_view`, `is_over`) without changing
   `body-gateway`.
+
+## Amendment — 2026-11-26: the murder mystery
+
+Implementing the mystery completes the decisions above:
+
+- **Hidden calls go through `ask`.** game-master never calls body-gateway for an
+  LLM answer: it returns an `ask` that body-gateway runs outside NAO's prompt and
+  posts to `/answer` (as for the hangman definition). Generation chains two of them
+  (cast, then story and clues); each question adds one (the archivist). No
+  `/game-scenario` route exists.
+- **Persistent games.** A game may declare itself persistent: game-master saves its
+  state in SQLite after each change and restores it at start-up. The saved game is
+  the running activity (it blocks the others) until solved or cancelled; asking to
+  start it again retells where it stands. A case still being prepared is not saved,
+  and is dropped when a hidden call never comes back.
+- **NAO does not play the mystery.**
+- **End of a case**: a right accusation; every card but the solution crossed out; or
+  every viewer present in the chat has accused wrongly. The last one is checked at a
+  wrong accusation only, never when viewers leave: the case waits between streams.
+- **Archivist.** It reads the cards and motives, not the story: it only has to find
+  which card a question is about. Its answer is used only when it holds one card id.
+- **Clue choice.**
+  A card of the solution, or already crossed out, yields the clue of another open
+  card told as a witness's account; so does an innocent card now and then
+  (`MYSTERY_TESTIMONY_RATE`), so that a witness gives nothing away.
+- **Words kept.** When there is no clue, NAO may embroider on a harmless detail; its
+  answer is posted back (`/note`) and saved with the case.

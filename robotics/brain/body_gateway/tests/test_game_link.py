@@ -178,6 +178,81 @@ class TestFallback(unittest.TestCase):
         self.assertIsNone(game_link.fallback_action("pendu ?", None))
 
 
+def _columns():
+    names = {"s": ["Le colonel Brisard", "Madame Aubépine"], "w": ["la pelle", "le tisonnier"],
+             "p": ["la serre", "l'écurie"]}
+    return [{"label": p, "cards": [{"id": f"{p}{i}", "name": n} for i, n in enumerate(ns, 1)]}
+            for p, ns in names.items()]
+
+
+MYSTERY = {"activity": {"game": "mystery", "name": "Enquête", "summary": "victime : Lord Armand",
+                        "how": "une question…", "view": {"columns": _columns()}},
+           "games": [{"id": "mystery", "name": "Enquête", "how": "…", "start": "…"}]}
+
+
+class TestMystery(unittest.TestCase):
+
+    def test_prompt_never_lets_nao_lead(self):
+        text = game_link.prompt_section(MYSTERY)
+        self.assertIn("victime : Lord Armand", text)
+        self.assertIn('"question"', text)
+        self.assertIn('"accuse"', text)
+        self.assertIn("tu ne sais pas", text)
+        self.assertNotIn("Tu joues aussi", text)
+        self.assertNotIn('"letter"', text)
+
+    def test_hangman_prompt_and_rules_unchanged(self):
+        self.assertIn("Tu joues aussi", game_link.prompt_section(RUNNING))
+        self.assertEqual(game_link.reaction_rules(RUNNING), game_link.REACTION_RULES)
+        self.assertEqual(game_link.reaction_rules(None), game_link.REACTION_RULES)
+
+    def test_rules_of_a_running_or_ended_mystery(self):
+        for state in (MYSTERY, {"activity": None, "final": {"game": "mystery"}}):
+            self.assertEqual(game_link.reaction_rules(state), game_link.MYSTERY_REACTION_RULES)
+
+    def test_read_text_stays_out_of_the_reaction(self):
+        text = game_link.reaction_input(
+            {"text": "Un indice.", "read": "La pelle était au sec.", "read_as": "l'indice"}, None)
+        self.assertIn("l'indice sera lu mot pour mot", text)
+        self.assertNotIn("au sec", text)
+
+    def fallback(self, message):
+        return game_link.fallback_action(message, MYSTERY)
+
+    def test_full_accusation(self):
+        action = self.fallback("J'accuse Madame Aubépine avec la pelle dans l'écurie !")
+        self.assertEqual(action["move"], {"type": "accuse", "suspect": "s2", "weapon": "w1",
+                                          "place": "p2"})
+
+    def test_partial_or_double_accusation_is_not_guessed(self):
+        self.assertIsNone(self.fallback("j'accuse madame Aubépine ?"))
+        self.assertIsNone(self.fallback("j'accuse madame Aubépine, la pelle, le tisonnier, la serre"))
+
+    def test_recap_and_resume(self):
+        for message in ("on reprend l'enquête ?", "tu fais un récap ?", "où en est-on ?",
+                        "résume l'affaire"):
+            self.assertEqual(self.fallback(message)["move"], {"type": "recap"}, message)
+
+    def test_question_naming_a_card(self):
+        move = self.fallback("Où était le colonel hier soir ?")["move"]
+        self.assertEqual(move, {"type": "question", "text": "Où était le colonel hier soir ?"})
+        self.assertIsNone(self.fallback("tu vas bien NAO ?"))
+        self.assertIsNone(self.fallback("la pelle, quelle drôle d'idée"))
+
+    def test_start_takes_the_message_as_context(self):
+        action = game_link.fallback_action("on fait une enquête dans un château ?",
+                                           {"activity": None, "games": MYSTERY["games"]})
+        self.assertEqual(action, {"type": "start_game", "game": "mystery",
+                                  "options": {"context": "on fait une enquête dans un château ?"}})
+
+    def test_note(self):
+        session = FakeSession(FakeResponse({"kept": True}))
+        link = game_link.GameLink("http://g", "t", session=session)
+        self.assertTrue(link.note("Il pleuvait."))
+        self.assertEqual(session.calls[0][1], "http://g/note")
+        self.assertFalse(link.note("  "))
+
+
 class TestReveal(unittest.TestCase):
 
     def test_reveal_posts_the_version(self):

@@ -16,7 +16,12 @@ definition of the hangman word, the mystery's archivist).  It then exposes
 Game.pending_ask(), {"id", "purpose", "system", "user"}; game-master returns it
 with the event, body-gateway runs that call outside NAO's prompt and posts the
 text back (GameMaster.answer → Game.on_answer), which settles the event.
+Long games (the mystery, ADR 010) are persistent: GameMaster saves their state
+after each change (SaveStore) and restores it at start-up, so they last over
+several streams; they stay the running activity until solved or cancelled.
+
   ScoreStore   points per game and per viewer (SQLite)
+  SaveStore    the saved state of the running persistent game (SQLite)
 """
 
 import json
@@ -73,6 +78,8 @@ class Event:
     mood     tone suggested to NAO's reaction (joie, déception, suspense…), optional
     read     text NAO must say word for word after its reaction (the hangman
              definition): body-gateway adds it to the speech, the LLM may drop it
+    read_as  what "read" is, in French, for the LLM ("un indice" by default)
+    keep     NAO's reaction is posted back to the game (Game.note), which keeps it
     """
     kind: str
     text: str
@@ -81,11 +88,13 @@ class Event:
     points: dict = field(default_factory=dict)
     mood: str = ""
     read: str = ""
+    read_as: str = ""
+    keep: bool = False
 
     def to_dict(self) -> dict:
         return {"kind": self.kind, "text": self.text, "say": self.say or self.text,
                 "ok": self.ok, "points": dict(self.points), "mood": self.mood,
-                "read": self.read}
+                "read": self.read, "read_as": self.read_as, "keep": self.keep}
 
 
 class Game:
@@ -103,6 +112,8 @@ class Game:
     # Set by GameMaster before start(): logins of the viewers still in the chat
     # (wrote there or played lately). None = no such source (the game alone).
     present = None
+    persistent = False      # saved after each change, restored after a restart
+    start_cooldown_s = 0.0  # delay before the next start, counted from a game that got ready
 
     def configure(self, settings: dict):
         """Settings of the control room (Settings.values()), before start()."""
@@ -130,6 +141,26 @@ class Game:
         return self.summary()
 
     def is_over(self) -> bool:
+        return False
+
+    def is_ready(self) -> bool:
+        """False while the game is still being prepared (hidden calls)."""
+        return True
+
+    def is_aborted(self) -> bool:
+        """Over without having been played (preparation failed): no final view."""
+        return False
+
+    def save(self) -> dict | None:
+        """JSON state of a persistent game; None while there is nothing to keep."""
+        return None
+
+    def restore(self, state: dict):
+        """Rebuilds a saved game (instead of start); ValueError if it cannot."""
+        raise ValueError("this game cannot be restored")
+
+    def note(self, text: str) -> bool:
+        """NAO's reaction to an event with "keep"; True when the game kept it."""
         return False
 
     def clue(self) -> str:
@@ -166,7 +197,8 @@ class GameMaster:
 
     def __init__(self, games: dict, start_roles: list[str] | None = None,
                  move_cooldown_s: float = 0.0, scores: "ScoreStore | None" = None,
-                 on_change=None, clock=time.monotonic, settings: "Settings | None" = None):
+                 on_change=None, clock=time.monotonic, settings: "Settings | None" = None,
+                 saves: "SaveStore | None" = None):
         self._factories = dict(games)   # id → class (or factory) of Game
         self.start_roles = list(start_roles or [EVERYONE])
         self.move_cooldown_s = move_cooldown_s
@@ -186,6 +218,9 @@ class GameMaster:
         self.settings = settings
         if settings is not None:
             self.apply(settings.values())
+        self._ready_at: dict = {}         # game id → clock of its last game that got ready
+        self.saves = saves
+        self._restore()
 
     # ── Read ────────────────────────────────────────────────────────────────
 
@@ -223,6 +258,14 @@ class GameMaster:
         """True when NAO's text gives the running game's solution away."""
         with self._lock:
             return self._game is not None and self._game.leaks(str(text or ""))
+
+    def note(self, text: str) -> bool:
+        """NAO's words the running game asked to keep (Event.keep)."""
+        with self._lock:
+            if self._game is None or not self._game.note(str(text or "")):
+                return False
+            self._persist()
+            return True
 
     def apply(self, values: dict):
         """Control-room settings: who may start and the delay apply at once,
@@ -267,6 +310,12 @@ class GameMaster:
               options: dict | None = None) -> Event:
         with self._lock:
             if self._game is not None:
+                if self._game.persistent and self._game.id == str(game_id) and self._game.is_ready():
+                    # "Shall we resume the investigation?": the saved game, retold.
+                    return self._done(Event(
+                        "resume", f"La partie de {self._game.name} reprend. Résume où elle en "
+                                  f"est : {self._game.recap()}", self._game.recap()),
+                        player, count=False)
                 return self._done(Event(
                     "busy", f"Une partie de {self._game.name} est déjà en cours : "
                             "une seule activité à la fois.",
@@ -291,12 +340,21 @@ class GameMaster:
             game.present = self.present
             if self.settings is not None:
                 game.configure(self.settings.values())
+            last = self._ready_at.get(game.id)
+            if last is not None and self._clock() - last < game.start_cooldown_s:
+                wait = int(game.start_cooldown_s - (self._clock() - last)) + 1
+                return self._done(Event(
+                    "start_cooldown", f"Une nouvelle partie de {game.name} sera possible "
+                                      f"dans {wait} s.",
+                    f"Pas tout de suite ! Encore {wait} secondes.", ok=False), player)
             event = game.start(player, options or {})
             if event.ok:
                 self._game = game
                 self._started_by = player.label()
                 self._last_move.clear()
                 self._final = None
+                if game.is_ready():
+                    self._ready_at[game.id] = self._clock()
             return self._done(event, player)
 
     def move(self, move: dict, player: Player) -> Event:
@@ -334,7 +392,10 @@ class GameMaster:
             if ask is None or ask.get("id") != ask_id:
                 return self._done(Event("no_ask", "Aucun appel caché en attente.", ok=False),
                                   player, count=False)
+            was_ready = game.is_ready()
             event = game.on_answer(ask_id, str(text or ""))
+            if not was_ready and game.is_ready():
+                self._ready_at[game.id] = self._clock()
             if event is None:
                 event = Event("answered", "Réponse reçue.")
             return self._finish_if_over(event, player)
@@ -354,6 +415,7 @@ class GameMaster:
                 return self._done(Event("no_game", "Aucune partie n'est en cours.",
                                         "Il n'y a pas de partie en cours.", ok=False), player)
             name = self._game.name
+            self._forget(self._game)
             self._game = None
             return self._done(Event(
                 "cancelled", f"La partie de {name} a été annulée par {player.label()}.",
@@ -368,7 +430,9 @@ class GameMaster:
             for login, pts in event.points.items():
                 self.scores.add(game.id, login, names.get(login, login), int(pts))
         if game is not None and game.is_over():
-            self._final = {"game": game.id, "name": game.name, "view": game.public_view()}
+            if not game.is_aborted():
+                self._final = {"game": game.id, "name": game.name, "view": game.public_view()}
+            self._forget(game)
             self._game = None
         return self._done(event, player)
 
@@ -377,12 +441,45 @@ class GameMaster:
         if count and event.ok and player.login:
             self._last_player = player.label()
         self.version += 1
+        self._persist()
         if self.on_change is not None:
             try:
                 self.on_change()
             except Exception:
                 pass
         return event
+
+    def _persist(self):
+        game = self._game
+        if self.saves is None or game is None or not game.persistent:
+            return
+        state = game.save()
+        if state is not None:
+            self.saves.put(game.id, self._started_by, state)
+
+    def _forget(self, game: Game):
+        """A persistent game is over or cancelled: its save goes."""
+        if self.saves is not None and game.persistent:
+            self.saves.delete(game.id)
+
+    def _restore(self):
+        """The saved game becomes the running activity again.  A save that cannot be
+        restored is left in the base (a later version may read it)."""
+        if self.saves is None:
+            return
+        for game_id, started_by, state in self.saves.all():
+            factory = self._factories.get(game_id)
+            if factory is None:
+                continue
+            game = factory()
+            game.present = self.present
+            try:
+                game.restore(state)
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
+                print(f"[game-master] saved game {game_id} not restored: {e}", flush=True)
+                continue
+            self._game, self._started_by = game, started_by
+            return
 
 
 class ScoreStore:
@@ -422,6 +519,41 @@ class ScoreStore:
                 "SELECT name, points FROM scores WHERE game = ? ORDER BY points DESC, name"
                 " LIMIT ?", (game, n)).fetchall()
         return [{"name": name, "points": points} for name, points in rows]
+
+
+class SaveStore:
+    """Saved state of persistent games, one per game, kept across restarts (SQLite)."""
+
+    def __init__(self, path: str):
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
+        with self._lock:
+            self._db.execute("CREATE TABLE IF NOT EXISTS saves"
+                             " (game TEXT PRIMARY KEY, started_by TEXT, state TEXT)")
+            self._db.commit()
+
+    def put(self, game: str, started_by: str, state: dict):
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO saves (game, started_by, state)"
+                             " VALUES (?, ?, ?)",
+                             (game, started_by, json.dumps(state, ensure_ascii=False)))
+            self._db.commit()
+
+    def delete(self, game: str):
+        with self._lock:
+            self._db.execute("DELETE FROM saves WHERE game = ?", (game,))
+            self._db.commit()
+
+    def all(self) -> list[tuple[str, str, dict]]:
+        with self._lock:
+            rows = self._db.execute("SELECT game, started_by, state FROM saves").fetchall()
+        saved = []
+        for game, started_by, state in rows:
+            try:
+                saved.append((game, started_by, json.loads(state)))
+            except ValueError:
+                continue
+        return saved
 
 
 class Settings:
