@@ -14,12 +14,32 @@
   Les phrases reçues entre-temps sont jouées après ce clic.
 -->
 <style>
+  /* Layout knobs: override them from OBS (browser source > Custom CSS), e.g.
+     :root { --caption-bottom: auto; --caption-top: 5%; }  — see docs/obs-overlays.md.
+     The caption box shrinks to its text and stays centred between
+     --caption-left and --caption-right. */
+  :root {
+    --caption-top: auto;
+    --caption-bottom: 6%;
+    --caption-left: 4%;
+    --caption-right: 4%;
+    --caption-max-width: 92%;
+    --caption-font-size: 30px;
+    --caption-text-align: center;
+    --caption-bg: #000;
+    --caption-color: #ffff00;
+    --caption-radius: 0;
+  }
   html, body { margin: 0; background: transparent; overflow: hidden;
                font-family: system-ui, sans-serif; }
-  #caption { position: absolute; left: 4%; right: 4%; bottom: 6%;
-             padding: 14px 20px; border-radius: 12px;
-             background: rgba(10, 12, 24, 0.78); color: #fff;
-             font-size: 30px; line-height: 1.3;
+  #caption { position: absolute; top: var(--caption-top); bottom: var(--caption-bottom);
+             left: var(--caption-left); right: var(--caption-right);
+             margin: 0 auto; width: fit-content; max-width: var(--caption-max-width);
+             box-sizing: border-box;
+             padding: 14px 20px; border-radius: var(--caption-radius);
+             background: var(--caption-bg); color: var(--caption-color);
+             font-size: var(--caption-font-size); line-height: 1.3;
+             text-align: var(--caption-text-align);
              opacity: 0; transition: opacity 0.3s; }
   #caption.on { opacity: 1; }
   #unlock { position: absolute; top: 4%; left: 4%; display: none;

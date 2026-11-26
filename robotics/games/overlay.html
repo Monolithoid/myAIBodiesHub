@@ -5,17 +5,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NAO — jeux</title>
 <style>
-  /* OBS browser source: transparent page, one panel in the corner. */
+  /* OBS browser source: the panel fills the whole page, transparent, no frame —
+     meant to be laid over a background picture in OBS (e.g. a chalkboard).
+     Layout knobs: override them from OBS (browser source > Custom CSS), e.g. a framed
+     panel in the bottom-right corner:
+     :root { --panel-top: auto; --panel-left: auto; --panel-right: 24px; --panel-bottom: 24px;
+             --panel-width: 520px; --panel-scale: 1; --panel-bg: rgba(18, 18, 28, 0.86);
+             --panel-border-width: 2px; --panel-radius: 14px; --panel-padding: 16px 20px; }
+     — see docs/obs-overlays.md. Stable hooks: #panel, #title, #view, #event, #footer,
+     #scores, and one class per game view (.hangman). */
+  :root {
+    --panel-top: 0;
+    --panel-right: 0;
+    --panel-bottom: 0;
+    --panel-left: 0;
+    --panel-width: auto;              /* auto = between --panel-left and --panel-right */
+    --panel-padding: 4% 5%;
+    --panel-scale: 2;                 /* zooms the whole panel (text, drawings): 2 for 1920 px */
+    --panel-bg: transparent;
+    --panel-border: rgba(255, 255, 255, 0.18);
+    --panel-border-width: 0;
+    --panel-radius: 0;
+    --panel-color: #f4f4f6;
+    --panel-accent: #9fd3ff;          /* titles */
+    --panel-highlight: #ffe08a;       /* last event, leader */
+  }
+  /* Same look whatever the source size (the scale follows the width, 960 px = 1). */
+  @media (max-width: 1600px) { :root { --panel-scale: 1.333; } }
+  @media (max-width: 1100px) { :root { --panel-scale: 1; } }
   html, body { margin: 0; background: transparent; overflow: hidden; }
-  body { font: 22px/1.35 system-ui, "Segoe UI", sans-serif; color: #f4f4f6; }
+  body { font: 22px/1.35 system-ui, "Segoe UI", sans-serif; color: var(--panel-color); }
   #panel {
-    position: absolute; right: 24px; bottom: 24px; width: 520px; max-width: calc(100vw - 48px);
-    background: rgba(18, 18, 28, 0.86); border: 2px solid rgba(255, 255, 255, 0.18);
-    border-radius: 14px; padding: 16px 20px; box-sizing: border-box;
+    position: absolute; top: var(--panel-top); right: var(--panel-right);
+    bottom: var(--panel-bottom); left: var(--panel-left);
+    width: var(--panel-width); max-width: calc(100vw / var(--panel-scale));
+    zoom: var(--panel-scale);
+    background: var(--panel-bg);
+    border: var(--panel-border-width) solid var(--panel-border);
+    border-radius: var(--panel-radius); padding: var(--panel-padding); box-sizing: border-box;
     transition: opacity 0.4s; opacity: 0;
   }
   #panel.shown { opacity: 1; }
-  #title { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fd3ff; }
+  #title { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--panel-accent); }
   #view { margin: 10px 0; }
   #view .big { font: 700 36px/1.2 ui-monospace, "Cascadia Mono", monospace; letter-spacing: 0.12em;
                word-break: break-all; }
@@ -23,7 +54,7 @@
   /* Hangman */
   .hangman { display: flex; gap: 16px; align-items: flex-start; }
   .hangman svg { flex: none; width: 120px; height: 140px; }
-  .hangman svg .part { stroke: #f4f4f6; stroke-width: 5; stroke-linecap: round; fill: none; }
+  .hangman svg .part { stroke: var(--panel-color); stroke-width: 5; stroke-linecap: round; fill: none; }
   .hangman .side { flex: 1; min-width: 0; }
   /* The word always holds on one line: fitText() shrinks it when it is long. */
   .hangman .big { white-space: nowrap; word-break: normal; letter-spacing: 0.06em; }
@@ -34,15 +65,16 @@
   .hangman .words { font-size: 17px; letter-spacing: 0.04em; }
   .hangman .words span { margin-right: 0.9em; }
   .hangman .errors { font-size: 15px; color: #a8a8b8; }
-  #event { font-size: 19px; color: #ffe08a; min-height: 1.3em; }
+  #event { font-size: 19px; color: var(--panel-highlight); min-height: 1.3em; }
   #footer { font-size: 15px; color: #a8a8b8; margin-top: 6px; }
   /* Ranking of the game (points of every game played, NAO included). */
   #scores { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.15);
             font-size: 16px; color: #d6d6de; }
+  #scores .row { max-width: 22em; }
   #scores:empty { display: none; }
-  #scores .head { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fd3ff; }
+  #scores .head { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--panel-accent); }
   #scores .row { display: flex; justify-content: space-between; }
-  #scores .row.first { color: #ffe08a; font-weight: 700; }
+  #scores .row.first { color: var(--panel-highlight); font-weight: 700; }
   #scores .inline span { margin-right: 14px; }
 </style>
 </head>

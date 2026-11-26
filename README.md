@@ -20,6 +20,7 @@ Self-hosted AI stack on an Ubuntu VPS, deployed with Docker Compose and managed 
 | [NAO robot](docs/nao.md) | Bridge embedded on the robot, deployment, autostart |
 | [Chain test](docs/test-chain.md) | Link-by-link diagnostics WebUI → NAO |
 | [Coolify & VPS](docs/coolify-vps.md) | VPS requirements, Coolify deployment, CI/CD, cloud sync |
+| [OBS overlays](docs/obs-overlays.md) | Placing the voice/subtitle and games overlays on the stream |
 
 ### Architecture decisions (ADR)
 
@@ -175,6 +176,7 @@ ia-agent/
 │   ├── test-chain.md
 │   ├── coolify-vps.md
 │   ├── games.md
+│   ├── obs-overlays.md
 │   └── decisions/           → ADR (Architecture Decision Records)
 ├── tests/                   → test-chain.sh, NAO diagnostics, fake static drone
 ├── .github/workflows/
