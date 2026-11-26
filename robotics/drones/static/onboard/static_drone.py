@@ -21,6 +21,9 @@ principle as the NAO, ADR 002) and handles:
                                                          service's reflex)
     - image                → /drones/{id}/image         (base64 JPEG)
                            ← /drones/{id}/image_request
+    - OBS scene (optional) ← /activity                  ({"activity": "hangman" | null}:
+                                                         OBS switches scene when the
+                                                         activity changes, obs_scenes.py)
 
 Configuration through environment variables (see .env.example). A .env file
 placed next to the script is read at startup, without overwriting variables
@@ -48,6 +51,7 @@ import wave
 import numpy as np
 
 import direction
+import obs_scenes
 import wakeword
 
 log = logging.getLogger("static_drone")
@@ -151,6 +155,11 @@ class Config:
         # A camera movement is an event (/drones/{id}/event) after this many quiet seconds.
         self.motion_event_quiet_s = _env_float("MOTION_EVENT_QUIET_S", 3.0)
         self.image_interval = _env_float("IMAGE_INTERVAL", 10)  # 0 = never periodic
+
+        # OBS (obs_scenes.py): the program scene follows the running activity.
+        self.obs_ws_url = _env("OBS_WS_URL")                    # empty = off
+        self.obs_ws_password = _env("OBS_WS_PASSWORD", "")
+        self.obs_scenes = obs_scenes.parse_scenes(_env("OBS_SCENES", ""))
 
         # Network intervals
         self.status_interval = _env_float("STATUS_INTERVAL", 30)
@@ -501,6 +510,7 @@ def choose_sample_rate(sd, device, channels, wanted, info):
 # ======================================================================
 
 SYNC_TOPIC = "/speech_gesture_sync"
+ACTIVITY_TOPIC = "/activity"   # body-gateway: running activity (C33)
 
 
 def parse_audio_out(data):
@@ -971,6 +981,15 @@ class StaticDrone:
         b.subscribe(self.cfg.topic("audio_out"), "std_msgs/String", self.on_audio_out)
         b.subscribe(SYNC_TOPIC, "std_msgs/String", self.on_speech_sync)
         b.subscribe(self.cfg.topic("image_request"), "std_msgs/Empty", self.on_image_request)
+        switcher = None
+        if self.cfg.obs_ws_url:
+            switcher = obs_scenes.SceneSwitcher(
+                obs_scenes.ObsClient(self.cfg.obs_ws_url, self.cfg.obs_ws_password),
+                self.cfg.obs_scenes)
+            b.subscribe(ACTIVITY_TOPIC, "std_msgs/String", switcher.on_activity)
+            log.info("OBS scenes → %s: %s", self.cfg.obs_ws_url,
+                     ", ".join("{}={}".format(k, v) for k, v in self.cfg.obs_scenes.items())
+                     or "none (OBS_SCENES empty)")
 
         threads = [threading.Thread(target=b.run_forever, name="rosbridge"),
                    threading.Thread(target=self.status_loop, name="status"),
@@ -980,6 +999,9 @@ class StaticDrone:
                                             name="camera"))
             if self.cfg.image_interval > 0:
                 threads.append(threading.Thread(target=self.image_loop, name="image"))
+        if switcher is not None:
+            threads.append(threading.Thread(target=switcher.run, args=(self.stop,),
+                                            name="obs"))
         for t in threads:
             t.daemon = True
             t.start()

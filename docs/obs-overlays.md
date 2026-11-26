@@ -107,3 +107,30 @@ Subtitle on the left, left-aligned, half the screen wide at most:
 
 Changes to the Custom CSS apply when the source is refreshed (OBS does it on
 **OK**). Do not put the token or any secret in the Custom CSS.
+
+## 3. OBS scene follows the activity
+
+The program scene can switch by itself when an activity (a game) starts or ends, so
+each scene places the overlays its own way (section 1). The code decides, not the LLM;
+only the scene changes (no sources, no audio).
+
+```
+game-master ── GET /state (every ACTIVITY_POLL_S) ── body-gateway ── /activity ──► static drone ── obs-websocket ──► OBS
+```
+
+- **body-gateway** publishes `/activity` (`{"activity": "hangman" | null}`) on every
+  change and again every ~15 s. `ACTIVITY_POLL_S` (default 2, `0` = off); nothing is
+  published while game-master cannot be reached.
+- **The static drone** (same local network as OBS) switches the scene through
+  obs-websocket v5 (`robotics/drones/static/onboard/obs_scenes.py`). In its `.env`:
+
+  | Variable | Meaning |
+  |---|---|
+  | `OBS_WS_URL` | `ws://<ip of the OBS PC>:4455`; empty = feature off |
+  | `OBS_WS_PASSWORD` | password of OBS's WebSocket server (Tools > WebSocket Server Settings) |
+  | `OBS_SCENES` | `activity=scene` pairs, e.g. `default=Plateau,hangman=Pendu`; `default` is the scene with no activity, and for an activity without its own scene |
+
+Only **changes** switch the scene: the first value the drone receives after it starts
+is just remembered (a restart during a stream does not force a scene), and between two
+changes the streamer keeps control of OBS. OBS closed, wrong password or unknown scene
+→ a warning in the drone's log, nothing else.

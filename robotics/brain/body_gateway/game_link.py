@@ -20,6 +20,7 @@ control room, timer) through POST /game-event: only step 4.
 The LLM never gets the solution: game-master only sends the public state.
 """
 
+import json
 import re
 import unicodedata
 
@@ -34,6 +35,38 @@ _SECTION_HEAD = (
     "Un arbitre (le code) tranche chaque coup, pas toi : n'annonce jamais si un coup est bon, "
     "ni un score, ni une solution ; ajoute seulement l'action de jeu, l'arbitre décide."
 )
+
+
+def activity_id(state: dict | None) -> str | None:
+    """Id of the running activity ("hangman"…) in a game-master state, None when idle."""
+    activity = (state or {}).get("activity")
+    if isinstance(activity, dict):
+        return str(activity.get("game") or "") or None
+    return None
+
+
+class ActivityWatch:
+    """What body-gateway publishes on /activity (C33: OBS follows the activity).
+
+    update() gets each game-master state (None = unreachable) and returns the JSON
+    to publish, or None: on every change, and again every `repeat_s` so a
+    subscriber that arrives later learns it.  An unreachable game-master
+    publishes nothing (no false "idle")."""
+
+    def __init__(self, repeat_s: float = 15.0):
+        self.repeat_s = repeat_s
+        self.current: str | None = None
+        self._known = False
+        self._sent_at = 0.0
+
+    def update(self, state: dict | None, now: float) -> str | None:
+        if state is None:
+            return None
+        activity = activity_id(state)
+        if self._known and activity == self.current and now - self._sent_at < self.repeat_s:
+            return None
+        self._known, self.current, self._sent_at = True, activity, now
+        return json.dumps({"activity": activity})
 
 
 def prompt_section(state: dict | None) -> str:

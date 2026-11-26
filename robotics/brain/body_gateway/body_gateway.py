@@ -197,6 +197,9 @@ VIEWER_HISTORY      = int(os.environ.get("VIEWER_HISTORY", str(viewers.HISTORY_S
 GAME_REVEAL_MAX_S = float(os.environ.get("GAME_REVEAL_MAX_S", "25"))
 GAMES = game_link.GameLink(os.environ.get("GAME_MASTER_URL", "").strip(),
                            os.environ.get("GAME_TOKEN", "").strip())
+# /activity (C33): the running activity, read from game-master every ACTIVITY_POLL_S
+# (0 = off); the static drone switches the OBS scene when it changes.
+ACTIVITY_POLL_S = float(os.environ.get("ACTIVITY_POLL_S", "2"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompts
@@ -391,6 +394,7 @@ class BodyGatewayNode(Node):
         self.pub_emotion    = self.create_publisher(String, "/emotion_state",       10)
         self.pub_energy     = self.create_publisher(String, "/energy_state",        10)
         self.pub_events     = self.create_publisher(String, "/events",              50)
+        self.pub_activity   = self.create_publisher(String, "/activity",            10)
 
         self._pub_say:     dict[str, object] = {}
         self._pub_motion:  dict[str, object] = {}
@@ -407,6 +411,9 @@ class BodyGatewayNode(Node):
 
         self._dream_thread = threading.Thread(target=self._dream_loop, daemon=True)
         self._dream_thread.start()
+
+        if GAMES.enabled and ACTIVITY_POLL_S > 0:
+            threading.Thread(target=self._activity_loop, daemon=True).start()
 
         if CHAT_PORT > 0:
             self._start_http_server()
@@ -1540,6 +1547,15 @@ class BodyGatewayNode(Node):
             self.get_logger().info("État → IDLE")
         # Lets a régie opened later learn which bodies are connected.
         self._emit_bodies()
+
+    def _activity_loop(self):
+        """Background thread: publishes the running activity on /activity (C33)."""
+        watch = game_link.ActivityWatch()
+        while self._running:
+            data = watch.update(GAMES.state(), time.monotonic())
+            if data is not None:
+                self.pub_activity.publish(String(data=data))
+            time.sleep(ACTIVITY_POLL_S)
 
     def _dream_loop(self):
         """Background thread: trigger a dream inference tick every DREAM_TICK_INTERVAL s.
