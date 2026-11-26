@@ -386,6 +386,9 @@ services:
       # Games with the viewers (ADR 010): game-master on the host's loopback
       - GAME_MASTER_URL=http://127.0.0.1:8098
       - GAME_TOKEN=${GAME_TOKEN:-}
+      # Running activity published on /activity every N s when it changes, for the
+      # static drone's OBS scene switch (docs/obs-overlays.md §3); 0 = off
+      - ACTIVITY_POLL_S=${ACTIVITY_POLL_S:-2}
     volumes:
       # NAO's personality, reread on every LLM call (persona.py)
       - /opt/ia/nao/persona:/opt/nao/persona:ro

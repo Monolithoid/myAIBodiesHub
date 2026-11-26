@@ -276,5 +276,27 @@ class TestGameLink(unittest.TestCase):
         self.assertIsNone(link.play({"type": "game_move", "move": {}}, {}, ""))
 
 
+class TestActivityWatch(unittest.TestCase):
+
+    def test_activity_id(self):
+        self.assertEqual(game_link.activity_id(RUNNING), "hangman")
+        self.assertIsNone(game_link.activity_id(CATALOG))
+        self.assertIsNone(game_link.activity_id(None))
+
+    def test_change_and_repeat(self):
+        watch = game_link.ActivityWatch(repeat_s=15)
+        self.assertEqual(watch.update(CATALOG, 0), '{"activity": null}')
+        self.assertIsNone(watch.update(CATALOG, 2))
+        self.assertEqual(watch.update(RUNNING, 4), '{"activity": "hangman"}')
+        self.assertIsNone(watch.update(RUNNING, 10))
+        self.assertEqual(watch.update(RUNNING, 19), '{"activity": "hangman"}')   # repeated
+
+    def test_unreachable_publishes_nothing(self):
+        watch = game_link.ActivityWatch()
+        watch.update(RUNNING, 0)
+        self.assertIsNone(watch.update(None, 100))
+        self.assertEqual(watch.current, "hangman")
+
+
 if __name__ == "__main__":
     unittest.main()

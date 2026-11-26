@@ -46,6 +46,7 @@ at home.
 | `/drones/{id}/event` | → VPS, gesture service | `std_msgs/String` | `{"kind": "sound"\|"motion", "azimuth_deg"}`: a sound segment heard, or a movement starting after `MOTION_EVENT_QUIET_S` quiet seconds ([reflex](#reflex)) |
 | `/drones/{id}/image` | → VPS | `std_msgs/String` | JSON `{"jpeg": base64, "width", "height", "reason": "periodic\|request"}` |
 | `/drones/{id}/image_request` | ← VPS | `std_msgs/Empty` | Requests an image right away |
+| `/activity` | ← VPS (body-gateway) | `std_msgs/String` | `{"activity": "hangman" \| null}` on every change and every ~15 s; with `OBS_WS_URL` set, OBS switches scene when it changes ([OBS scenes](../../../../docs/obs-overlays.md#3-obs-scene-follows-the-activity)) |
 
 Angles are in degrees: **0 = camera axis, positive = to the right**, between -180
 and 180.
