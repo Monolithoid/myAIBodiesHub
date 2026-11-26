@@ -43,8 +43,8 @@ and these names are kept stable.
 | `--caption-max-width` | `92%` | widest box before the text wraps |
 | `--caption-font-size` | `30px` | text size |
 | `--caption-text-align` | `center` | text alignment inside the box |
-| `--caption-bg` / `--caption-color` | dark translucent / white | colours |
-| `--caption-radius` | `12px` | rounded corners |
+| `--caption-bg` / `--caption-color` | `#000` / `#ffff00` | colours (classic yellow on black) |
+| `--caption-radius` | `0` | corner rounding (square by default) |
 
 Stable hooks: `#caption` (the subtitle, `.on` while shown), `#unlock` (red "Son
 bloqué" banner, `.on` while shown).
