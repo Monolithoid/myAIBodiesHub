@@ -5,7 +5,7 @@ Two pages are meant to be added to OBS as **browser sources**:
 | Overlay | Service | URL | Default layout |
 |---|---|---|---|
 | NAO's voice and subtitle | `obs-agent` (`robotics/drones/obs/overlay.html`) | `https://<obs-agent domain>/overlay?token=$OBS_TOKEN` | subtitle centred at the bottom, box shrunk to the text |
-| Games | `game-master` (`robotics/games/overlay.html`) | `https://<game-master domain>/overlay?token=$GAME_TOKEN` | panel in the bottom-right corner, 520 px wide |
+| Games | `game-master` (`robotics/games/overlay.html`) | `https://<game-master domain>/overlay?token=$GAME_TOKEN` | whole screen, transparent, no frame: meant to sit over a background picture (e.g. a chalkboard) |
 
 Both pages have a transparent background and fill the whole browser source. There are
 two ways (they can be combined) to put them where you want.
@@ -25,7 +25,8 @@ Each scene may hold its own copy of the source with its own transform, so the la
 can change with the scene without touching the pages.
 
 > Keep the source size equal to the canvas. A smaller source re-flows the page
-> (the subtitle wraps sooner, the panel stays 520 px wide) instead of scaling it.
+> (the subtitle wraps sooner) instead of scaling it. The games panel keeps the same look
+> at 1920 and 1280 px wide (its scale follows the width).
 
 ## 2. Custom CSS of the browser source
 
@@ -53,10 +54,12 @@ bloqué" banner, `.on` while shown).
 
 | Variable | Default | Role |
 |---|---|---|
-| `--panel-top` / `--panel-right` / `--panel-bottom` / `--panel-left` | `auto` / `24px` / `24px` / `auto` | position (set the unused sides to `auto`) |
-| `--panel-width` | `520px` | panel width |
-| `--panel-scale` | `1` | zooms the whole panel (text, gallows, ranking); the offsets above are zoomed too |
-| `--panel-bg` / `--panel-border` / `--panel-radius` | dark translucent / light / `14px` | box |
+| `--panel-top` / `--panel-right` / `--panel-bottom` / `--panel-left` | `0` (all four) | position (set the unused sides to `auto`) |
+| `--panel-width` | `auto` | panel width (`auto` = between left and right) |
+| `--panel-padding` | `4% 5%` | margin inside the panel |
+| `--panel-scale` | `2` at 1920 px, `1.333` at 1280 px, `1` below | zooms the whole panel (text, gallows, ranking); the offsets above are zoomed too |
+| `--panel-bg` | `transparent` | panel background |
+| `--panel-border-width` / `--panel-border` / `--panel-radius` | `0` / light / `0` | frame (none by default) |
 | `--panel-color` | `#f4f4f6` | text and drawings |
 | `--panel-accent` | `#9fd3ff` | titles |
 | `--panel-highlight` | `#ffe08a` | last event, ranking leader |
@@ -68,11 +71,26 @@ uses these variables for its colours.
 
 ### Examples
 
-Games panel in the top-left corner, a bit larger:
+Games panel back in a framed box in the bottom-right corner (without a background
+picture):
 
 ```css
-:root { --panel-top: 24px; --panel-bottom: auto; --panel-left: 24px; --panel-right: auto;
-        --panel-scale: 1.25; }
+:root { --panel-top: auto; --panel-left: auto; --panel-right: 24px; --panel-bottom: 24px;
+        --panel-width: 520px; --panel-scale: 1; --panel-padding: 16px 20px;
+        --panel-bg: rgba(18, 18, 28, 0.86); --panel-border-width: 2px; --panel-radius: 14px; }
+```
+
+Full-screen games panel with a larger margin (to stay inside the chalkboard's frame)
+and chalk-like colours:
+
+```css
+:root { --panel-padding: 8% 10%; --panel-accent: #f7f3c6; --panel-highlight: #ffd1dc; }
+```
+
+Games panel in the top-left corner only, half the screen wide:
+
+```css
+:root { --panel-bottom: auto; --panel-right: auto; --panel-width: 480px; }
 ```
 
 Subtitle at the top of the screen, smaller text:
