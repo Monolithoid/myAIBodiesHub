@@ -1,0 +1,91 @@
+# OBS overlays — placing them on the stream
+
+Two pages are meant to be added to OBS as **browser sources**:
+
+| Overlay | Service | URL | Default layout |
+|---|---|---|---|
+| NAO's voice and subtitle | `obs-agent` (`robotics/drones/obs/overlay.html`) | `https://<obs-agent domain>/overlay?token=$OBS_TOKEN` | subtitle centred at the bottom, box shrunk to the text |
+| Games | `game-master` (`robotics/games/overlay.html`) | `https://<game-master domain>/overlay?token=$GAME_TOKEN` | panel in the bottom-right corner, 520 px wide |
+
+Both pages have a transparent background and fill the whole browser source. There are
+two ways (they can be combined) to put them where you want.
+
+## 1. Full-screen source, placed in OBS
+
+Give the browser source the size of the OBS canvas (e.g. **1920 × 1080**, or
+1280 × 720): the page then matches the stream pixel for pixel, and the default
+layout is what the viewers see. To move or shrink an overlay in a scene, use OBS:
+
+- **Transform** (right-click the source → Transform → Edit Transform) to move or
+  scale it;
+- **Crop** (Alt + drag a side, or the Crop fields of Edit Transform) to keep only the
+  part with the panel, then move it.
+
+Each scene may hold its own copy of the source with its own transform, so the layout
+can change with the scene without touching the pages.
+
+> Keep the source size equal to the canvas. A smaller source re-flows the page
+> (the subtitle wraps sooner, the panel stays 520 px wide) instead of scaling it.
+
+## 2. Custom CSS of the browser source
+
+OBS adds the **Custom CSS** field of a browser source after the page's own CSS. Both
+pages expose their layout as CSS variables on `:root`; overriding a variable is enough,
+and these names are kept stable.
+
+### Voice overlay (`#caption`, `#unlock`)
+
+| Variable | Default | Role |
+|---|---|---|
+| `--caption-top` | `auto` | distance from the top (set it and `--caption-bottom: auto` to move the subtitle up) |
+| `--caption-bottom` | `6%` | distance from the bottom |
+| `--caption-left` / `--caption-right` | `4%` / `4%` | the box is centred between these two; set one to `auto` to stick to the other side |
+| `--caption-max-width` | `92%` | widest box before the text wraps |
+| `--caption-font-size` | `30px` | text size |
+| `--caption-text-align` | `center` | text alignment inside the box |
+| `--caption-bg` / `--caption-color` | dark translucent / white | colours |
+| `--caption-radius` | `12px` | rounded corners |
+
+Stable hooks: `#caption` (the subtitle, `.on` while shown), `#unlock` (red "Son
+bloqué" banner, `.on` while shown).
+
+### Games overlay (`#panel`)
+
+| Variable | Default | Role |
+|---|---|---|
+| `--panel-top` / `--panel-right` / `--panel-bottom` / `--panel-left` | `auto` / `24px` / `24px` / `auto` | position (set the unused sides to `auto`) |
+| `--panel-width` | `520px` | panel width |
+| `--panel-scale` | `1` | zooms the whole panel (text, gallows, ranking); the offsets above are zoomed too |
+| `--panel-bg` / `--panel-border` / `--panel-radius` | dark translucent / light / `14px` | box |
+| `--panel-color` | `#f4f4f6` | text and drawings |
+| `--panel-accent` | `#9fd3ff` | titles |
+| `--panel-highlight` | `#ffe08a` | last event, ranking leader |
+
+Stable hooks: `#panel` (`.shown` while visible), `#title`, `#view`, `#event`,
+`#footer`, `#scores`, and one class per game view inside `#view` (`.hangman`, with
+`.big`, `.def`, `.tried`, `.words`, `.errors`). A new game view gets its own class and
+uses these variables for its colours.
+
+### Examples
+
+Games panel in the top-left corner, a bit larger:
+
+```css
+:root { --panel-top: 24px; --panel-bottom: auto; --panel-left: 24px; --panel-right: auto;
+        --panel-scale: 1.25; }
+```
+
+Subtitle at the top of the screen, smaller text:
+
+```css
+:root { --caption-top: 5%; --caption-bottom: auto; --caption-font-size: 24px; }
+```
+
+Subtitle on the left, left-aligned, half the screen wide at most:
+
+```css
+:root { --caption-right: auto; --caption-max-width: 50%; --caption-text-align: left; }
+```
+
+Changes to the Custom CSS apply when the source is refreshed (OBS does it on
+**OK**). Do not put the token or any secret in the Custom CSS.

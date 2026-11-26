@@ -202,6 +202,9 @@ the actions sent to each body.
 **Games overlay** ([games.md](games.md)): add a browser source
 `https://<game-master domain>/overlay?token=$GAME_TOKEN` (transparent background).
 
+To place the overlays on the stream (full-screen source cropped in OBS, or Custom CSS
+variables), see [obs-overlays.md](obs-overlays.md).
+
 ---
 
 ## 8. Updating the services

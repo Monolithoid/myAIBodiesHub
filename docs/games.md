@@ -147,6 +147,7 @@ two moves and the presence apply at once; the hangman settings at the next game.
 Overlay in OBS: give game-master a domain in Coolify (container port 8098, e.g.
 `https://games.$DOMAIN`), then add a browser source
 `https://games.$DOMAIN/overlay?token=$GAME_TOKEN` (transparent background).
+Position, size and colours of the panel: [obs-overlays.md](obs-overlays.md).
 
 ## Adding a game
 
@@ -160,7 +161,8 @@ A game is a `game_core.Game` subclass registered in `game_master.GAMES`:
   `on_answer()` (hidden LLM call).
 
 The overlay has a default view (`view.big`, `view.lines`); a game may add its own
-renderer in `overlay.html` (`views[<id>]`).
+renderer in `overlay.html` (`views[<id>]`), with its own class and the panel's CSS
+variables for its colours ([obs-overlays.md](obs-overlays.md)).
 
 ## Tests
 
