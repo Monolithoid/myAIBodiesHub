@@ -10,7 +10,7 @@ Every message shares these fields:
   id     interaction id: the input, the LLM decision and the actions it
          produced share it ("" for events outside an interaction)
 
-  input     source (webui|twitch|voice|sensor|dream|game), body, text, author
+  input     source (webui|twitch|voice|sensor|dream|game|story), body, text, author
   ignored   source, body, text, reason (wake_word|busy)
   wake      source, body, text: lone wake word heard, the next sentence goes
             to the LLM; detector "local", model and score (0..1) when the static

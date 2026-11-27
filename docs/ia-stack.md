@@ -65,7 +65,7 @@ answer in strict JSON, which is then read by `_parse_json()`.
 | `BRAIN_MODEL` | Leave empty to use the provider's default |
 | `BRAIN_API_KEY` | Provider key. Without a value, `OLLAMA_API_KEYS` is used: for `openai` or `anthropic` it must therefore be set (`sk-...` from platform.openai.com, `sk-ant-...` from console.anthropic.com) |
 | `BRAIN_TIMEOUT` | Maximum delay in seconds between two chunks of the stream (default 120, 60 in the compose file) |
-| `BRAIN_EFFORT` | Anthropic only, optional: `low`, `medium`, `high`… Nothing is sent if the variable is empty |
+| `BRAIN_EFFORT` | Anthropic and OpenAI `gpt-6*`, optional: `low`, `medium`, `high`… Nothing is sent if the variable is empty |
 
 Without `BRAIN_PROVIDER`, nothing changes: local Ollama and `qwen3:1.7b`, as before.
 

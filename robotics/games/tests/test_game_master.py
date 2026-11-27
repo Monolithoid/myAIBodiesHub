@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import game_core  # noqa: E402
 import game_master  # noqa: E402
+import story  # noqa: E402
 from game_core import Event, GameMaster, Player  # noqa: E402
 
 
@@ -375,6 +376,46 @@ class TestHttp(unittest.TestCase):
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(ctx.exception.code, 400)
 
+
+
+class TestStory(unittest.TestCase):
+    """The "story" activity: the control room's only, one activity at a time."""
+
+    VIEW = {"title": "Voyage", "author": "Verne", "year": 1864, "chapter": 1, "chapters": 45}
+    REGIE = Player(name="la régie", source="regie")
+
+    def setUp(self):
+        self.master = GameMaster({"count": CountGame, "story": story.Story})
+
+    def test_only_the_control_room(self):
+        self.assertEqual([g["id"] for g in self.master.catalog()], ["count"])
+        viewer = Player(login="a", name="A")
+        self.assertEqual(self.master.start("story", viewer, "une histoire ?").kind, "unknown_game")
+        self.assertTrue(self.master.start("story", self.REGIE, options=self.VIEW).ok)
+        self.assertEqual(self.master.state()["activity"]["view"], self.VIEW)
+
+    def test_one_activity_at_a_time_both_ways(self):
+        self.master.start("count", self.REGIE)
+        self.assertEqual(self.master.start("story", self.REGIE, options=self.VIEW).kind, "busy")
+        self.assertEqual(self.master.stop(self.REGIE, "story").kind, "no_game")
+        self.assertTrue(self.master.busy)                   # the game is not cancelled
+        self.assertEqual(self.master.state()["last_event"]["kind"], "started")   # overlay untouched
+        self.master.stop(self.REGIE)
+        self.master.start("story", self.REGIE, options=self.VIEW)
+        self.assertIn("histoire", self.master.start("count", self.REGIE).text)
+        self.assertFalse(self.master.move({"type": "number", "value": 3}, self.REGIE).ok)
+        self.assertTrue(self.master.stop(self.REGIE, "story").ok)
+        self.assertFalse(self.master.busy)
+
+    def test_view_update_keeps_the_last_event(self):
+        self.assertFalse(self.master.update_view("story", self.VIEW))
+        self.master.start("story", self.REGIE, options=self.VIEW)
+        before = self.master.state()
+        self.assertTrue(self.master.update_view("story", {**self.VIEW, "chapter": 2, "x": 1}))
+        after = self.master.state()
+        self.assertEqual(after["activity"]["view"], {**self.VIEW, "chapter": 2})
+        self.assertEqual(after["last_event"], before["last_event"])
+        self.assertGreater(after["version"], before["version"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,9 @@ _TEMPERATURE_MODELS = (
     "claude-opus-4-6", "claude-opus-4-5", "claude-opus-4-1", "claude-opus-4-0", "claude-opus-4-2025",
 )
 
+# OpenAI models that reject `temperature` (400) and take `reasoning_effort`.
+_OPENAI_REASONING_MODELS = ("gpt-6",)
+
 # Network/API errors of every provider: body_gateway falls back on them.
 BRAIN_ERRORS = (requests.RequestException, anthropic.APIError)
 
@@ -50,22 +53,31 @@ def accepts_temperature(model: str) -> bool:
     return model.startswith(_TEMPERATURE_MODELS)
 
 
-def build_openai_request(provider: str, model: str, messages: list, temperature: float) -> dict:
-    """JSON body of /v1/chat/completions (Ollama or OpenAI)."""
-    body = {
-        "model":       model,
-        "messages":    messages,
-        "stream":      True,
-        "temperature": temperature,
-    }
+def build_openai_request(provider: str, model: str, messages: list, temperature: float,
+                         schema: dict | None = None, effort: str = "") -> dict:
+    """JSON body of /v1/chat/completions (Ollama or OpenAI).
+
+    schema: JSON schema the answer must follow (structured outputs).
+    """
+    body = {"model": model, "messages": messages, "stream": True}
+    if provider == "openai" and model.startswith(_OPENAI_REASONING_MODELS):
+        # Without BRAIN_EFFORT: the API default.
+        if effort:
+            body["reasoning_effort"] = effort
+    else:
+        body["temperature"] = temperature
     # Ollama-only: disables the reasoning phase of thinking models (Qwen3...).
     if provider == "ollama":
         body["options"] = {"think": False}
+    if schema:
+        body["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "answer", "strict": True, "schema": schema}}
     return body
 
 
 def build_anthropic_request(model: str, messages: list, temperature: float,
-                            effort: str = "") -> dict:
+                            effort: str = "", schema: dict | None = None,
+                            max_tokens: int | None = None) -> dict:
     """Keyword arguments of client.messages.stream().
 
     The OpenAI-style "system" messages become the top-level `system` field.
@@ -75,7 +87,7 @@ def build_anthropic_request(model: str, messages: list, temperature: float,
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     kwargs = {
         "model":      model,
-        "max_tokens": ANTHROPIC_MAX_TOKENS,
+        "max_tokens": max_tokens or ANTHROPIC_MAX_TOKENS,
         "messages":   [
             {"role": m["role"], "content": m["content"]}
             for m in messages if m["role"] != "system"
@@ -89,6 +101,8 @@ def build_anthropic_request(model: str, messages: list, temperature: float,
     # Effort is not accepted by Haiku 4.5: only sent when BRAIN_EFFORT is set.
     if effort:
         kwargs["output_config"] = {"effort": effort}
+    if schema:
+        kwargs.setdefault("output_config", {})["format"] = {"type": "json_schema", "schema": schema}
     return kwargs
 
 
@@ -126,13 +140,18 @@ class BrainClient:
             effort=env.get("BRAIN_EFFORT", "").strip().lower(),
         )
 
-    def chat(self, messages: list, temperature: float) -> str:
-        """Stream the LLM and return the full response text."""
-        if self.provider == "anthropic":
-            return self._anthropic_chat(messages, temperature)
-        return self._openai_chat(messages, temperature)
+    def chat(self, messages: list, temperature: float, schema: dict | None = None,
+             max_tokens: int | None = None) -> str:
+        """Stream the LLM and return the full response text.
 
-    def _openai_chat(self, messages: list, temperature: float) -> str:
+        schema and max_tokens are for long constrained answers (storyteller);
+        max_tokens only applies to Anthropic, which requires a limit.
+        """
+        if self.provider == "anthropic":
+            return self._anthropic_chat(messages, temperature, schema, max_tokens)
+        return self._openai_chat(messages, temperature, schema)
+
+    def _openai_chat(self, messages: list, temperature: float, schema: dict | None = None) -> str:
         """timeout=(10, timeout): 10 s to establish the connection, `timeout` s
         maximum between two chunks — guards against a total stall without
         cutting an active generation mid-stream.
@@ -140,7 +159,8 @@ class BrainClient:
         response = requests.post(
             f"{self.url}/v1/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
-            json=build_openai_request(self.provider, self.model, messages, temperature),
+            json=build_openai_request(self.provider, self.model, messages, temperature, schema,
+                                      self.effort),
             timeout=(10, self.timeout),
             stream=True,
         )
@@ -160,8 +180,10 @@ class BrainClient:
                 chunks.append(delta)
         return "".join(chunks)
 
-    def _anthropic_chat(self, messages: list, temperature: float) -> str:
-        kwargs = build_anthropic_request(self.model, messages, temperature, self.effort)
+    def _anthropic_chat(self, messages: list, temperature: float, schema: dict | None = None,
+                        max_tokens: int | None = None) -> str:
+        kwargs = build_anthropic_request(self.model, messages, temperature, self.effort,
+                                         schema, max_tokens)
         with self._anthropic.messages.stream(**kwargs) as stream:
             text = "".join(stream.text_stream)
             final = stream.get_final_message()

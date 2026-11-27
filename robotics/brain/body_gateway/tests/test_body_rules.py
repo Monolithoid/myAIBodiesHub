@@ -332,5 +332,30 @@ class TestSpeakingTracker(unittest.TestCase):
         self.assertFalse(t.busy(now=d + 0.1))
 
 
+
+class TestPerform(unittest.TestCase):
+
+    def test_defaults_and_gesture_mapping(self):
+        order = body_rules.perform_request(
+            {"actions": [{"type": "speech", "text": "Il pleut."},
+                         {"type": "gesture", "emotion": "scared", "intensity": 0.5}],
+             "emotion": "scared", "energy": "low"}, REGISTRY, ["fear", "joy", "calm"])
+        self.assertEqual(order["actions"][0]["body"], "nao_01")
+        self.assertEqual(order["actions"][1]["emotion"], "fear")
+        self.assertEqual((order["emotion"], order["energy"]), ("uncertain", "low"))
+
+    def test_every_story_emotion_has_a_learned_gesture(self):
+        learned = {"joy", "sadness", "anger", "fear", "surprise", "calm"}
+        for emotion in ("neutral", "calm", "curious", "joyful", "excited", "uncertain",
+                        "worried", "scared", "angry", "sad"):
+            self.assertIn(body_rules.STORY_GESTURES[emotion], learned)
+
+    def test_refused(self):
+        for body in (None, {}, {"actions": []}, {"actions": ["x"]},
+                     {"actions": [{"type": "move", "x": 1}]},
+                     {"actions": [{"type": "speech", "text": " "}]}):
+            with self.assertRaises(ValueError, msg=body):
+                body_rules.perform_request(body, REGISTRY, [])
+
 if __name__ == "__main__":
     unittest.main()

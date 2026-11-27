@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY game_core.py game_master.py hangman.py mystery.py overlay.html ./
+COPY game_core.py game_master.py hangman.py mystery.py story.py overlay.html ./
 COPY words/hangman_fr.json words/README.md words/
 
 EXPOSE 8098

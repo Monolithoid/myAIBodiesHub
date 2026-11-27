@@ -1,0 +1,6 @@
+{"title": "Test horodaté", "author": "NAO", "year": null, "chapters": 2, "source": "hand written", "profile": "test", "timed": true, "voices": {}}
+{"seg": 1, "chapter": 1, "text": "Premier texte, tout de suite.", "emotion": "calm", "at_ms": 0}
+{"seg": 2, "chapter": 1, "text": "Celui-ci commence à la huitième seconde.", "emotion": "curious", "at_ms": 8000, "gesture": {"emotion": "curious", "intensity": 0.4}}
+{"seg": 3, "chapter": 1, "text": "Sans horodatage, je suis le précédent.", "emotion": "neutral"}
+{"sound": "bell", "theme": "cloche", "seg": 3, "chapter": 1}
+{"seg": 4, "chapter": 2, "text": "Et voici le dernier, à la vingt-cinquième seconde.", "emotion": "joyful", "energy": "high", "at_ms": 25000}

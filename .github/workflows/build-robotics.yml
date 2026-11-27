@@ -77,7 +77,7 @@ jobs:
 
           - name: regie
             image: monolithoid/regie
-            context: ./robotics/regie
+            context: ./robotics
             dockerfile: ./robotics/regie/Dockerfile
 
           - name: game-master

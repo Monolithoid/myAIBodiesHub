@@ -597,13 +597,34 @@ services:
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
       - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:-}
       - TWITCH_REDIRECT_URI=${TWITCH_REDIRECT_URI:-}
-      # "Annuler le jeu" button (ADR 010)
+      # "Annuler le jeu" button (ADR 010) and the "story" activity
       - GAME_MASTER_URL=http://game-master:8098
       - GAME_TOKEN=${GAME_TOKEN:-}
+      # Stories (docs/stories.md): body-gateway through chat-relay
+      - BODY_GATEWAY_URL=http://chat-relay:8095
+      - STORIES_DIR=/data/stories
+      # LLM of the preparation: STORY_BRAIN_* when set, else BRAIN_*
+      - BRAIN_PROVIDER=${BRAIN_PROVIDER:-ollama}
+      - BRAIN_URL=${BRAIN_URL:-}
+      - BRAIN_MODEL=${BRAIN_MODEL:-}
+      - BRAIN_API_KEY=${BRAIN_API_KEY:-${OLLAMA_API_KEYS}}
+      - BRAIN_EFFORT=${BRAIN_EFFORT:-}
+      - STORY_BRAIN_PROVIDER=${STORY_BRAIN_PROVIDER:-}
+      # From this container, a local Ollama is http://ollama:11434, not localhost
+      - STORY_BRAIN_URL=${STORY_BRAIN_URL:-}
+      - STORY_BRAIN_MODEL=${STORY_BRAIN_MODEL:-}
+      - STORY_BRAIN_API_KEY=${STORY_BRAIN_API_KEY:-}
+      - STORY_BRAIN_TIMEOUT=${STORY_BRAIN_TIMEOUT:-}
+      - STORY_BRAIN_EFFORT=${STORY_BRAIN_EFFORT:-}
+    volumes:
+      # Prepared stories and bookmarks (SQLite)
+      - /opt/ia/nao/stories:/data/stories
     networks:
       - robotics-net
+      - ai-network     # reaches body-gateway (chat-relay) and ollama
     depends_on:
       - rosbridge-proxy
+      - chat-relay
 
   # ----------------------------------------------------------
   # GAME MASTER — games with the stream's viewers (ADR 010)
@@ -654,7 +675,7 @@ services:
 # ai-network (bridge, internet access):
 #   ollama, open-webui, n8n, chromadb, whisper-asr, naoqi-bridge,
 #   chat-relay, twitch-input
-#   (twitch-input is also on robotics-net, to reach regie)
+#   (twitch-input and regie are also on robotics-net / ai-network)
 #
 # bitterbot-net (bridge, internal: true — no internet access):
 #   bitterbot-gateway, ollama

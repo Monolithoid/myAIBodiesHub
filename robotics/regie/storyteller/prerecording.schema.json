@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Story pre-recording",
+  "description": "JSON Lines file: the first line is a header, each next line a text or a sound.",
+  "$defs": {
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "author",
+        "chapters"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "year": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Year of first publication"
+        },
+        "chapters": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total number of chapters"
+        },
+        "source": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "timed": {
+          "type": "boolean"
+        },
+        "voices": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "f1",
+              "f2",
+              "f3",
+              "m1",
+              "m2",
+              "m3"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "gesture": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "emotion",
+        "intensity"
+      ],
+      "properties": {
+        "emotion": {
+          "enum": [
+            "neutral",
+            "calm",
+            "curious",
+            "joyful",
+            "excited",
+            "uncertain",
+            "worried",
+            "scared",
+            "angry",
+            "sad"
+          ]
+        },
+        "intensity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seg",
+        "chapter",
+        "text",
+        "emotion"
+      ],
+      "properties": {
+        "seg": {
+          "type": "integer"
+        },
+        "chapter": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "emotion": {
+          "enum": [
+            "neutral",
+            "calm",
+            "curious",
+            "joyful",
+            "excited",
+            "uncertain",
+            "worried",
+            "scared",
+            "angry",
+            "sad"
+          ]
+        },
+        "speaker": {
+          "enum": [
+            "narrator",
+            "f1",
+            "f2",
+            "f3",
+            "m1",
+            "m2",
+            "m3"
+          ]
+        },
+        "energy": {
+          "enum": [
+            "very-low",
+            "low",
+            "medium",
+            "high",
+            "very-high"
+          ]
+        },
+        "gesture": {
+          "$ref": "#/$defs/gesture"
+        },
+        "pause_after_s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "sound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sound",
+        "theme"
+      ],
+      "properties": {
+        "sound": {},
+        "theme": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string"
+        },
+        "seg": {
+          "type": "integer"
+        },
+        "chapter": {
+          "type": "integer"
+        },
+        "at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/header"
+    },
+    {
+      "$ref": "#/$defs/text"
+    },
+    {
+      "$ref": "#/$defs/sound"
+    }
+  ]
+}

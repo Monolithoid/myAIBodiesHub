@@ -361,6 +361,47 @@ def gesture_event(azimuth_deg: float | None, offset_deg: float = 0.0) -> dict | 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /perform: actions already computed (storyteller), no LLM
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Emotion of a story script → learned gesture of the generator, then /emotion_state.
+STORY_GESTURES = {"neutral": "calm", "calm": "calm", "curious": "surprise", "joyful": "joy",
+                  "excited": "joy", "uncertain": "surprise", "worried": "fear",
+                  "scared": "fear", "angry": "anger", "sad": "sadness"}
+STORY_EMOTION_STATE = {"curious": "curious", "excited": "excited", "joyful": "excited",
+                       "angry": "excited", "uncertain": "uncertain", "worried": "uncertain",
+                       "scared": "uncertain"}
+PERFORM_ACTIONS = ("speech", "gesture", "leds")
+
+
+def perform_request(body, registry: list[str], gesture_emotions: list) -> dict:
+    """{"actions", "emotion", "energy"} ready to dispatch; ValueError when unusable.
+
+    Actions without "body" go to the NAO (speech is then routed to every voice).
+    A gesture emotion the NAO does not know is mapped to a learned one.
+    """
+    body = body if isinstance(body, dict) else {}
+    actions = body.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("missing actions")
+    nao = next((b for b in registry if not is_voice(b)), registry[0])
+    ready = []
+    for action in actions:
+        if not isinstance(action, dict) or action.get("type") not in PERFORM_ACTIONS:
+            raise ValueError(f"actions must be {', '.join(PERFORM_ACTIONS)} objects")
+        action = {"body": nao, **action}
+        if action["type"] == "speech" and not str(action.get("text", "")).strip():
+            raise ValueError("a speech action needs a text")
+        emotion = str(action.get("emotion", ""))
+        if action["type"] == "gesture" and gesture_emotions and emotion not in gesture_emotions:
+            action["emotion"] = STORY_GESTURES.get(emotion, emotion)
+        ready.append(action)
+    return {"actions": ready,
+            "emotion": STORY_EMOTION_STATE.get(str(body.get("emotion", "")), "neutral"),
+            "energy": str(body.get("energy") or "medium")}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Speech ↔ learned gesture synchronisation
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -68,6 +68,10 @@ and changes the game settings: /game/state, /game/settings, /game/scores (GET),
 /game/settings, /game/scores/reset (POST) are relayed to game-master.
 "Annuler le jeu" (POST /game/stop?token=…) cancels the running game in
 game-master, which has NAO announce it.
+
+The stories page /stories?token=REGIE_TOKEN plays a prepared story (storyteller/,
+docs/stories.md): routes /stories/…, STORIES_DIR (/data/stories), BODY_GATEWAY_URL
+(default http://chat-relay:8095), the "story" activity of game-master.
 """
 
 import collections
@@ -85,6 +89,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from storyteller.web import StoryRoutes
 from twitch_auth import TwitchAuth
 
 ROSBRIDGE_URL   = os.environ.get("ROSBRIDGE_URL", "ws://rosbridge-proxy:80")
@@ -106,6 +111,7 @@ GAME_TOKEN      = os.environ.get("GAME_TOKEN", "").strip()
 PAGE_HTML = pathlib.Path(__file__).with_name("regie.html")
 ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
 GAMES_HTML = pathlib.Path(__file__).with_name("games.html")
+STORIES_HTML = pathlib.Path(__file__).with_name("stories.html")
 # Routes of the /jeux page relayed to game-master (method, regie path → game-master path).
 GAME_ROUTES = {("GET", "/game/state"): "/state", ("GET", "/game/settings"): "/settings",
                ("GET", "/game/scores"): "/scores", ("POST", "/game/settings"): "/settings",
@@ -235,6 +241,7 @@ class Hub:
                     pass
 
 
+STORIES = StoryRoutes(log=lambda text: log(text))
 HUB = Hub(HISTORY)
 # Robot page: only the latest state of each kind (calibration, components, gestures).
 ROBOT_HUB = Hub(0)
@@ -327,6 +334,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, ROBOT_HTML.read_bytes(), "text/html; charset=utf-8")
         elif url.path == "/jeux":
             self._send(200, GAMES_HTML.read_bytes(), "text/html; charset=utf-8")
+        elif url.path == "/stories":
+            self._send(200, STORIES_HTML.read_bytes(), "text/html; charset=utf-8")
+        elif url.path.startswith("/stories/"):
+            code, answer = STORIES.get(url.path, query)
+            self._send(code, json.dumps(answer, ensure_ascii=False).encode(), "application/json")
         elif ("GET", url.path) in GAME_ROUTES:
             extra = {k: v for k, v in query.items() if k != "token"}
             path = GAME_ROUTES[("GET", url.path)]
@@ -369,6 +381,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         if url.path == "/twitch/whisper":
             self._twitch_whisper()
+            return
+        if url.path.startswith("/stories/"):
+            try:
+                length = min(int(self.headers.get("Content-Length", "0")), 10_000)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("not an object")
+            except ValueError:
+                self._send(400, b'{"error": "JSON invalide"}', "application/json")
+                return
+            log(f"story {url.path} ← {json.dumps(body, ensure_ascii=False)}")
+            code, answer = STORIES.post(url.path, body)
+            self._send(code, json.dumps(answer, ensure_ascii=False).encode(), "application/json")
             return
         if url.path == "/game/stop":
             self._stop_game()

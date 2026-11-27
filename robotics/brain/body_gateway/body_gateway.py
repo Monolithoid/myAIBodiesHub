@@ -59,7 +59,7 @@ Environment variables:
   BRAIN_TIMEOUT              Ollama request timeout in seconds, default 120
   BRAIN_PROVIDER             ollama | openai | anthropic, default ollama (see brain_client.py)
                              BRAIN_URL / BRAIN_MODEL defaults depend on the provider
-  BRAIN_EFFORT               Anthropic effort (low/medium/high...), not sent when empty
+  BRAIN_EFFORT               Anthropic / OpenAI gpt-6 effort (low/medium/high...), not sent when empty
   BRAIN_PERSONA_FILE         NAO personality text at the top of the awake prompt,
                              empty or missing file = persona.DEFAULT_PERSONA
   BODY_REGISTRY              comma-separated body IDs, default "nao_01"
@@ -100,6 +100,10 @@ Environment variables:
   VIEWER_MEMORY              0 = no viewer memory, default 1
   VIEWER_PROFILE_MAX         longest viewer profile kept, in characters, default 200
   VIEWER_HISTORY             last messages kept per viewer, with NAO's answer, default 5
+
+POST /perform {"actions": [speech|gesture|leds], "emotion", "energy"}: actions already
+computed (storyteller), dispatched like an LLM answer, without any LLM call; 503
+while an inference runs.
 
 Games with the viewers (ADR 010, game_link.py): with GAME_MASTER_URL and GAME_TOKEN,
 the prompt of a /chat message lists the games, or the running game's public state;
@@ -811,7 +815,7 @@ class BodyGatewayNode(Node):
             self.get_logger().warn(f"_notify_webui error: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # HTTP server — /chat (Path 1) + /voice-pop (Path 2) + /say + /ping + /speaking
+    # HTTP server — /chat (Path 1) + /voice-pop (Path 2) + /say + /perform + /ping + /speaking
     # ─────────────────────────────────────────────────────────────────────────
 
     def _start_http_server(self):
@@ -884,6 +888,10 @@ class BodyGatewayNode(Node):
                     self._handle_chat()
                 elif self.path == "/say":
                     self._handle_say()
+                elif self.path == "/perform":
+                    body = self._read_json()
+                    if body is not None:
+                        self._json(*node._perform(body))
                 elif self.path == "/viewers/reset":
                     self._viewer_reset()
                 elif self.path == "/viewers/missed":
@@ -1228,6 +1236,39 @@ class BodyGatewayNode(Node):
             self.get_logger().error(f"Game event error: {e}")
             self._emit("error", interaction, message=str(e))
             return {"error": str(e)}
+        finally:
+            self._infer_lock.release()
+            self._publish_cognitive("listening")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Actions already computed (storyteller), no LLM
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _perform(self, body: dict) -> tuple[int, dict]:
+        """POST /perform: dispatched like an LLM answer (voices, gesture, sync, /events)."""
+        nao = next((b for b in BODY_REGISTRY if not body_rules.is_voice(b)), BODY_REGISTRY[0])
+        try:
+            order = body_rules.perform_request(body, BODY_REGISTRY,
+                                               self._gesture_emotions.get(nao, []))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        # An answer being computed or played out goes first: the caller retries.
+        if not self._infer_lock.acquire(timeout=5):
+            return 503, {"error": "busy"}
+        try:
+            interaction = events.new_id()
+            text = " ".join(str(a.get("text", "")) for a in order["actions"]
+                            if a["type"] == "speech")
+            self._emit("input", interaction, source="story", body=nao, text=text, author="")
+            self._publish_emotion(order["emotion"])
+            self._publish_energy(order["energy"])
+            self._publish_cognitive("responding")
+            self._dispatch_actions(order["actions"], interaction)
+            return 200, {"ok": True}
+        except Exception as e:
+            self.get_logger().error(f"Perform error: {e}")
+            self._emit("error", message=str(e))
+            return 500, {"error": str(e)}
         finally:
             self._infer_lock.release()
             self._publish_cognitive("listening")

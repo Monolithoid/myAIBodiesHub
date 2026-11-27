@@ -373,5 +373,15 @@ class TestActivityWatch(unittest.TestCase):
         self.assertEqual(watch.current, "hangman")
 
 
+
+class TestStorySection(unittest.TestCase):
+
+    def test_no_game_during_a_story(self):
+        section = game_link.prompt_section({"activity": {
+            "game": "story", "summary": "Histoire en cours : Voyage."}, "games": [{"id": "hangman"}]})
+        self.assertIn("Voyage", section)
+        self.assertIn("aucun jeu", section)
+        self.assertNotIn("Coups possibles", section)
+
 if __name__ == "__main__":
     unittest.main()

@@ -180,5 +180,35 @@ class TestAnthropicChat(unittest.TestCase):
             self._chat("claude-haiku-4-5", stop_reason="refusal")
 
 
+
+class TestConstrainedAnswer(unittest.TestCase):
+
+    SCHEMA = {"type": "object"}
+
+    def test_openai_and_ollama(self):
+        body = brain_client.build_openai_request("openai", "m", [], 0.3, self.SCHEMA)
+        self.assertEqual(body["response_format"]["json_schema"]["schema"], self.SCHEMA)
+        self.assertNotIn("response_format",
+                         brain_client.build_openai_request("ollama", "m", [], 0.3))
+
+    def test_gpt6_takes_an_effort_and_no_temperature(self):
+        body = brain_client.build_openai_request("openai", "gpt-6.2-astra", [], 0.3,
+                                                 self.SCHEMA, "xhigh")
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["reasoning_effort"], "xhigh")
+        self.assertNotIn("reasoning_effort",
+                         brain_client.build_openai_request("openai", "gpt-6.2-astra", [], 0.3))
+        other = brain_client.build_openai_request("openai", "gpt-4o-mini", [], 0.3, effort="low")
+        self.assertEqual((other["temperature"], "reasoning_effort" in other), (0.3, False))
+
+    def test_anthropic_keeps_the_effort(self):
+        kwargs = brain_client.build_anthropic_request("claude-opus-5-5", [], 0.3, "low",
+                                                      self.SCHEMA, 32000)
+        self.assertEqual(kwargs["max_tokens"], 32000)
+        self.assertEqual(kwargs["output_config"], {
+            "effort": "low", "format": {"type": "json_schema", "schema": self.SCHEMA}})
+        self.assertNotIn("output_config",
+                         brain_client.build_anthropic_request("claude-opus-5-5", [], 0.3))
+
 if __name__ == "__main__":
     unittest.main()
