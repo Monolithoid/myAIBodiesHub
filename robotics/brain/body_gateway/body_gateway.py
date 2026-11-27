@@ -101,9 +101,10 @@ Environment variables:
   VIEWER_PROFILE_MAX         longest viewer profile kept, in characters, default 200
   VIEWER_HISTORY             last messages kept per viewer, with NAO's answer, default 5
 
-POST /perform {"actions": [speech|gesture|leds], "emotion", "energy"}: actions already
+POST /perform {"actions": [speech|gesture|leds], "emotion", "energy", "ahead"?}: actions already
 computed (storyteller), dispatched like an LLM answer, without any LLM call; 503
-while an inference runs.
+while an inference runs; the answer says whether voice bodies got it ("voices"), 409
+for an "ahead" sentence (to queue behind the current one) when none is connected.
 
 Games with the viewers (ADR 010, game_link.py): with GAME_MASTER_URL and GAME_TOKEN,
 the prompt of a /chat message lists the games, or the running game's public state;
@@ -1256,6 +1257,12 @@ class BodyGatewayNode(Node):
         if not self._infer_lock.acquire(timeout=5):
             return 503, {"error": "busy"}
         try:
+            # "voices": the sentence goes to bodies that report when they say it.
+            voices = any(body_rules.is_voice(b) and self._body_connected.get(b, False)
+                         for b in BODY_REGISTRY)
+            # "ahead": sent behind a sentence being said, which only a voice can queue.
+            if body.get("ahead") and not voices:
+                return 409, {"error": "no voice to queue the sentence"}
             interaction = events.new_id()
             text = " ".join(str(a.get("text", "")) for a in order["actions"]
                             if a["type"] == "speech")
@@ -1264,7 +1271,7 @@ class BodyGatewayNode(Node):
             self._publish_energy(order["energy"])
             self._publish_cognitive("responding")
             self._dispatch_actions(order["actions"], interaction)
-            return 200, {"ok": True}
+            return 200, {"ok": True, "voices": voices}
         except Exception as e:
             self.get_logger().error(f"Perform error: {e}")
             self._emit("error", message=str(e))

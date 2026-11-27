@@ -6,7 +6,10 @@ Tu construis la piste de NAO pour un passage de l'histoire « {titre} ».
 
 Pour chaque segment, dans l'ordre, sans en sauter ni en ajouter :
 - seg : le numéro du segment ;
-- speaker : "narrator", ou l'id d'un personnage de la fiche ;
+- speaker : "narrator" par défaut, ou l'id d'un personnage de la fiche quand le segment est sa
+  réplique. Les répliques de celui qui raconte à la première personne (« je ») sont aussi
+  "narrator" : dans un dialogue, vérifie qui répond à qui avant d'attribuer (on ne s'appelle pas
+  soi-même par son nom) ; en cas de doute, "narrator" ;
 - emotion : une valeur parmi {emotions} ;
 - energy : une valeur parmi {energies}, selon la scène ;
 - gesture : null le plus souvent ; un geste {{"emotion": ..., "intensity": 0.0 à 1.0}} réservé

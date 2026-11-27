@@ -333,6 +333,31 @@ class TestSpeakingTracker(unittest.TestCase):
 
 
 
+class TestQueuedSentence(unittest.TestCase):
+
+    def test_waiting_behind_a_long_sentence_is_not_late(self):
+        tracker = body_rules.SpeakingTracker(start_grace_s=10, max_speaking_s=120)
+        tracker.answer()
+        tracker.said("static_01", "longue", now=0)
+        tracker.heard("static_01", True, now=1)
+        tracker.answer()
+        tracker.said("static_01", "suivante", now=2)
+        self.assertFalse(tracker.started(now=30))
+        tracker.heard("static_01", False, now=31)
+        self.assertFalse(tracker.started(now=40))
+        tracker.heard("static_01", True, now=40.5)
+        self.assertTrue(tracker.started(now=41))
+
+    def test_still_given_up_when_it_never_starts(self):
+        tracker = body_rules.SpeakingTracker(start_grace_s=10)
+        tracker.said("static_01", "a", now=0)
+        tracker.heard("static_01", True, now=1)
+        tracker.said("static_01", "b", now=2)
+        tracker.heard("static_01", False, now=30)
+        self.assertTrue(tracker.busy(now=39))
+        self.assertFalse(tracker.busy(now=41))
+
+
 class TestPerform(unittest.TestCase):
 
     def test_defaults_and_gesture_mapping(self):
