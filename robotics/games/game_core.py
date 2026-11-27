@@ -113,7 +113,18 @@ class Game:
     # (wrote there or played lately). None = no such source (the game alone).
     present = None
     persistent = False      # saved after each change, restored after a restart
+    hidden = False          # not offered to the viewers: only the control room starts it
     start_cooldown_s = 0.0  # delay before the next start, counted from a game that got ready
+
+    def busy_event(self) -> "Event":
+        """Refusal of another start while this activity runs."""
+        return Event("busy", f"Une partie de {self.name} est déjà en cours : "
+                             "une seule activité à la fois.",
+                     f"On a déjà une partie de {self.name} en cours !", ok=False)
+
+    def cancelled_event(self, player: "Player") -> "Event":
+        return Event("cancelled", f"La partie de {self.name} a été annulée par {player.label()}.",
+                     f"La partie de {self.name} est annulée.")
 
     def configure(self, settings: dict):
         """Settings of the control room (Settings.values()), before start()."""
@@ -226,7 +237,7 @@ class GameMaster:
 
     def catalog(self) -> list[dict]:
         return [{"id": gid, "name": f.name, "how": f.how_to_play, "start": f.start_help}
-                for gid, f in self._factories.items()]
+                for gid, f in self._factories.items() if not getattr(f, "hidden", False)]
 
     def state(self) -> dict:
         """Public state: what body-gateway puts in the prompt, what the overlay shows."""
@@ -316,13 +327,12 @@ class GameMaster:
                         "resume", f"La partie de {self._game.name} reprend. Résume où elle en "
                                   f"est : {self._game.recap()}", self._game.recap()),
                         player, count=False)
-                return self._done(Event(
-                    "busy", f"Une partie de {self._game.name} est déjà en cours : "
-                            "une seule activité à la fois.",
-                    f"On a déjà une partie de {self._game.name} en cours !", ok=False), player)
+                if getattr(self._factories.get(str(game_id)), "hidden", False):
+                    return self._game.busy_event()    # asked by the control room: not shown
+                return self._done(self._game.busy_event(), player)
             factory = self._factories.get(str(game_id))
-            if factory is None:
-                names = ", ".join(f.name for f in self._factories.values()) or "aucun"
+            if factory is None or (getattr(factory, "hidden", False) and player.source != "regie"):
+                names = ", ".join(g["name"] for g in self.catalog()) or "aucun"
                 return self._done(Event(
                     "unknown_game", f"Ce jeu n'existe pas. Jeux disponibles : {names}.",
                     "Je ne connais pas ce jeu.", ok=False), player)
@@ -409,17 +419,30 @@ class GameMaster:
                 return None
             return self._finish_if_over(event, Player(source="regie"))
 
-    def stop(self, player: Player) -> Event:
+    def update_view(self, game_id: str, view: dict) -> bool:
+        """New public state of a hidden activity (the story's chapter); not a move:
+        the last event stays.  False when it is not the running activity."""
         with self._lock:
+            game = self._game
+            if game is None or not game.hidden or game.id != game_id:
+                return False
+            game.set_view(view)
+            self.touch()
+            return True
+
+    def stop(self, player: Player, game_id: str = "") -> Event:
+        """game_id: only stops that activity (the story gives back its own)."""
+        with self._lock:
+            if game_id and (self._game is None or self._game.id != game_id):
+                # Nothing of that activity to give back: the overlay is not touched.
+                return Event("no_game", "Cette activité n'est pas en cours.", ok=False)
             if self._game is None:
                 return self._done(Event("no_game", "Aucune partie n'est en cours.",
                                         "Il n'y a pas de partie en cours.", ok=False), player)
-            name = self._game.name
+            event = self._game.cancelled_event(player)
             self._forget(self._game)
             self._game = None
-            return self._done(Event(
-                "cancelled", f"La partie de {name} a été annulée par {player.label()}.",
-                f"La partie de {name} est annulée."), player)
+            return self._done(event, player)
 
     # ── Internals ───────────────────────────────────────────────────────────
 

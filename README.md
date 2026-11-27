@@ -154,7 +154,7 @@ ia-agent/
 │   │   └── webui/           → Open WebUI pipe (nao_pipe.py)
 │   ├── inputs/
 │   │   └── twitch/          → Twitch chat input "!nao" → body-gateway (ADR 005)
-│   ├── regie/               → Control room page: live /events stream (ADR 007)
+│   ├── regie/               → Control room page: live /events stream (ADR 007), stories (docs/stories.md)
 │   ├── games/               → game-master: games with the viewers (ADR 010)
 │   ├── shared/              → Shared classes (RobotBridgeBase)
 │   └── drones/
@@ -176,6 +176,7 @@ ia-agent/
 │   ├── test-chain.md
 │   ├── coolify-vps.md
 │   ├── games.md
+│   ├── stories.md
 │   ├── obs-overlays.md
 │   └── decisions/           → ADR (Architecture Decision Records)
 ├── tests/                   → test-chain.sh, NAO diagnostics, fake static drone

@@ -101,6 +101,13 @@ def prompt_section(state: dict | None) -> str:
     games = state.get("games") or []
     if activity and activity.get("game") == "mystery":
         return _mystery_section(activity)
+    if activity and activity.get("game") == "story":
+        return "\n".join([
+            "NAO lit une histoire aux spectateurs. Une seule activité à la fois : aucun jeu ne "
+            "peut être lancé, n'ajoute aucune action \"start_game\" ni \"game_move\". "
+            "Ne dévoile jamais la suite de l'histoire.",
+            activity.get("summary", ""),
+        ])
     if activity:
         return "\n".join([
             _SECTION_HEAD,

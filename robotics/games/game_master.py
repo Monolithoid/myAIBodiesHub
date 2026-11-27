@@ -17,7 +17,10 @@ HTTP API (token: "Authorization: Bearer $GAME_TOKEN" or ?token=):
   GET  /state                      {"activity": null | {...}, "games": [...], "last_event"}
   POST /start {"game", "player", "message", "options"}  → {"event", "state"}
   POST /move  {"move", "player"}                         → {"event", "state"}
-  POST /stop  {"player"}                                 → {"event", "state"}, announced by NAO
+  POST /stop  {"player", "game"?}                        → {"event", "state"}, announced by NAO;
+                                   "game" only stops that activity ("story": no announce)
+  POST /activity/view {"game", "view"}                   → {"updated"}: public state of the
+                                   running "story" activity (title, author, year, chapter)
   POST /answer {"id", "text", "player"}                  → {"event", "state"}: text of a
                                    hidden LLM call ("" = failed)
   An answer may also hold "ask": {"id", "purpose", "system", "user"}, a hidden LLM call
@@ -82,6 +85,7 @@ import requests
 import game_core
 import hangman
 import mystery
+import story
 
 GAME_TOKEN       = os.environ.get("GAME_TOKEN", "").strip()
 GAME_PORT        = int(os.environ.get("GAME_PORT", "8098"))
@@ -130,7 +134,8 @@ SETTINGS_SCHEMA = [
 ]
 
 # Games offered to the viewers: id → Game class.
-GAMES: dict = {hangman.Hangman.id: hangman.Hangman, mystery.Mystery.id: mystery.Mystery}
+GAMES: dict = {hangman.Hangman.id: hangman.Hangman, mystery.Mystery.id: mystery.Mystery,
+               story.Story.id: story.Story}   # the story: an activity without game rules
 
 
 def log(text: str):
@@ -308,6 +313,14 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
             if url.path == "/note":
                 self._json(200, {"kept": master.note(str(body.get("text", "")))})
                 return
+            if url.path == "/activity/view":
+                view = body.get("view")
+                updated = master.update_view(str(body.get("game") or ""),
+                                             view if isinstance(view, dict) else {})
+                if updated:
+                    stage.reveal(master.version)
+                self._json(200, {"updated": updated})
+                return
             if url.path == "/settings":
                 if master.settings is None:
                     self._json(503, {"error": "réglages indisponibles"})
@@ -348,13 +361,18 @@ def make_handler(master: game_core.GameMaster, stage: Stage, announcer: Announce
             elif url.path == "/answer":
                 event = master.answer(str(body.get("id", "")), str(body.get("text", "")), player)
             elif url.path == "/stop":
-                event = master.stop(player)
-                if event.ok and announcer is not None:
+                only = str(body.get("game") or "")
+                event = master.stop(player, only)
+                # The story gives its activity back in silence; any other stop is announced.
+                if event.ok and announcer is not None and only != story.Story.id:
                     announcer.announce(event, master.state())
             else:
                 self._json(404, {"error": "not found"})
                 return
             log(f"{url.path[1:]} by {player.label()}: {event.kind} — {event.text[:80]}")
+            if (event.ok and player.source == "regie"
+                    and str(body.get("game") or "") == story.Story.id):
+                stage.reveal(master.version)   # nothing for NAO to say: shown at once
             answer = {"event": event.to_dict(), "state": master.state()}
             ask = master.pending_ask()
             # Only the call that created a hidden call gets it: an old one still

@@ -11,7 +11,7 @@
   :root {
     --bg: #0f1216; --panel: #171b21; --line: #2a313b; --text: #e6e9ee; --muted: #8b95a3;
     --ok: #3ecf8e; --warn: #f0b429; --err: #ef5b5b;
-    --webui: #5b9cf0; --twitch: #a970ff; --voice: #3ecf8e; --sensor: #f0b429; --dream: #7b8794; --game: #ff8fc7;
+    --webui: #5b9cf0; --twitch: #a970ff; --voice: #3ecf8e; --sensor: #f0b429; --dream: #7b8794; --game: #ff8fc7; --story: #e5a0d8;
     --brain: #f07b5b;
   }
   * { box-sizing: border-box; }
@@ -73,10 +73,11 @@
   <a id="obsLink" href="obs" target="_blank" style="color:var(--muted)">OBS : overlay voix →</a>
   <a id="robotLink" href="robot" style="color:var(--muted)">Robot : calibrage et composants →</a>
   <a id="gamesLink" href="jeux" style="color:var(--muted)">Jeux : réglages et classement →</a>
+  <a id="storiesLink" href="stories" style="color:var(--muted)">Histoires : lecture →</a>
   <button id="pause" type="button">Pause</button>
 </header>
 <main>
-  <svg id="map" viewBox="0 0 1000 380" role="img" aria-label="Flux entre les entrées, body-gateway et les corps"></svg>
+  <svg id="map" viewBox="0 0 1000 440" role="img" aria-label="Flux entre les entrées, body-gateway et les corps"></svg>
   <div class="filters">
     <h2>Interactions</h2>
     <span id="filters"></span>
@@ -92,6 +93,7 @@ const SOURCES = [
   ["sensor", "Capteurs"],
   ["dream",  "Rêve"],
   ["game",   "Jeux"],
+  ["story",  "Histoire"],
 ];
 const SOURCE_NAME = Object.fromEntries(SOURCES);
 const COLOR = name => getComputedStyle(document.documentElement).getPropertyValue("--" + name).trim();
@@ -140,10 +142,10 @@ function drawMap() {
   el("text", { x: 880, y: 24, class: "col", "text-anchor": "middle" }, map).textContent = "Corps";
   const edges = el("g", {}, map);
   const step = (h, n, i) => 50 + (h - 50) / n * (i + 0.5);
-  SOURCES.forEach(([key, name], i) => node("in:" + key, 120, step(380, SOURCES.length, i), 210, name, COLOR(key)));
-  node("brain", 500, 200, 240, "body-gateway · LLM", COLOR("brain"));
+  SOURCES.forEach(([key, name], i) => node("in:" + key, 120, step(440, SOURCES.length, i), 210, name, COLOR(key)));
+  node("brain", 500, 230, 240, "body-gateway · LLM", COLOR("brain"));
   bodies.forEach((b, i) => {
-    const n = node("body:" + b, 880, step(380, bodies.length, i), 210, b, COLOR("ok"));
+    const n = node("body:" + b, 880, step(440, bodies.length, i), 210, b, COLOR("ok"));
     n.conn = el("circle", { cx: 190, cy: 20, r: 5, class: "conn" + (connected[b] ? " up" : "") }, n.g);
   });
   for (const k in nodes) {
@@ -423,6 +425,8 @@ document.getElementById("robotLink").href =
   "robot?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
 document.getElementById("gamesLink").href =
   "jeux?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
+document.getElementById("storiesLink").href =
+  "stories?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
 document.getElementById("obsLink").href =
   "obs?token=" + encodeURIComponent(new URLSearchParams(location.search).get("token") || "");
 drawMap();

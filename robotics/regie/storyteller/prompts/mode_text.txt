@@ -1,0 +1,4 @@
+Mode texte. On te donne les segments numérotés, un par ligne : "[numéro] texte".
+NAO lit ce texte mot pour mot : tu ne renvoies jamais de champ "speech" ni "text",
+tu ne réécris, ne résumes ni ne commentes aucun segment.
+Une incise (« dit mon oncle ») reste au personnage dont c'est la réplique.

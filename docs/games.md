@@ -18,7 +18,7 @@ Twitch "!nao je propose le E"
 
 - **Everything goes through `!nao`** in natural language: starting a game ("on joue
   au pendu ?") and playing it. A game only starts from a message that is a question.
-- **One activity at a time**: while a game runs, no other game (or story) can start.
+- **One activity at a time**: while a game runs, no other game (or [story](stories.md)) can start.
 - **First come, first served**: moves are settled in the order they reach the brain.
 - **NAO never sees the solution**: game-master only sends the public state.
 - **NAO never writes in the chat**: results are said by voice and shown on the overlay.

@@ -124,6 +124,7 @@ Optional variables (defaults in `docker-compose.yml`, whose header describes eac
 | Control room | `OBS_URL`: `obs-agent` domain (e.g. `obs.$DOMAIN`, `https://` added if missing), for the control room's "OBS : overlay voix" link; `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET`: Twitch app for the `!rgpd` whispers, the sending account logs in with the "Connecter Twitch" button at each start (redirect URL `https://<regie domain>/twitch/callback`, override with `TWITCH_REDIRECT_URI`) |
 | Twitch | `TWITCH_COMMAND_PREFIX`, `TWITCH_BLOCKLIST`, `TWITCH_MODS_ONLY`, `VIEWER_MEMORY` (viewer profiles in `/opt/ia/nao/viewers/viewers.db`), `REGIE_TOKEN` on twitch-input (`!rgpd` whispers go through the control room) |
 | Games | `GAME_START_ROLES` (`everyone`, or a list among `moderator`, `vip`, `subscriber`), `MOVE_COOLDOWN_S`, `HANGMAN_MAX_ERRORS`, `HANGMAN_MIN_LETTERS`, `PRESENCE_MIN` (scores in `/opt/ia/nao/games/games.db`) |
+| Stories | `STORY_BRAIN_PROVIDER`, `STORY_BRAIN_MODEL`, `STORY_BRAIN_URL`, `STORY_BRAIN_API_KEY`, `STORY_BRAIN_TIMEOUT`, `STORY_BRAIN_EFFORT`, each falling back on `BRAIN_*` (books in `/opt/ia/nao/stories`, [stories.md](stories.md)) |
 | Dreams | `DREAMING_HOUR_START`, `DREAMING_HOUR_END`, `DREAMING_BATTERY_THRESHOLD`, `DREAM_TICK_INTERVAL`, `TZ` |
 | Open WebUI voice notifications | `WEBUI_URL`, `WEBUI_API_KEY`, `WEBUI_PIPE_MODEL`, `WEBUI_VOICE_CHAT_ID` |
 
