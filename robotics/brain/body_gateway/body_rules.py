@@ -453,7 +453,8 @@ class SpeakingTracker:
     Each sentence sent to a connected voice body (static, obs) is pending until
     that body reports speaking=true (synthesis and gesture sync delay the
     start), then busy until speaking=false.  A pending sentence that never
-    starts stops counting after start_grace_s, a speaking=true without its
+    starts stops counting after start_grace_s (counted from the end of the
+    sentence it waits behind), a speaking=true without its
     false after max_speaking_s.  The NAO has no speaking signal: a sentence it
     says itself counts for its estimated duration (speech_seconds).
 
@@ -498,10 +499,15 @@ class SpeakingTracker:
                 if self._pending.get(body_id):
                     self._pending[body_id].pop(0)
             else:
-                self._speaking.pop(body_id, None)
+                if self._speaking.pop(body_id, None) is not None and self._pending.get(body_id):
+                    # The sentences queued behind this one may start from now on.
+                    self._pending[body_id] = [now + self.start_grace_s for _ in self._pending[body_id]]
 
     def _expire(self, now):
         for body_id in list(self._pending):
+            since = self._speaking.get(body_id)
+            if since is not None and now - since < self.max_speaking_s:
+                continue   # queued behind the sentence being said: not late
             self._pending[body_id] = [d for d in self._pending[body_id] if d > now]
 
     def started(self, now: float | None = None) -> bool:

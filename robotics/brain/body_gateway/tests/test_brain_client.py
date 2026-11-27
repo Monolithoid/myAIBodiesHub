@@ -23,6 +23,7 @@ ANSWER = '{"emotion": "joy", "actions": []}'
 
 
 class _FakeResponse:
+    status_code = 200
     def __init__(self, lines):
         self._lines = lines
 
@@ -99,6 +100,17 @@ class TestOpenAICompatible(unittest.TestCase):
         brain = brain_client.BrainClient(provider="openai")
         with mock.patch.object(brain_client.requests, "post", return_value=_FakeResponse(lines)):
             self.assertEqual(brain.chat(MESSAGES, 0.5), ANSWER)
+
+
+class TestRefusedRequest(unittest.TestCase):
+
+    def test_the_reason_is_in_the_error(self):
+        refused = mock.Mock(status_code=400, url="https://api.openai.com/v1/chat/completions",
+                            text="Unsupported value: 'reasoning_effort'")
+        client = brain_client.BrainClient(provider="openai", model="gpt-6-luna")
+        with mock.patch.object(brain_client.requests, "post", return_value=refused):
+            with self.assertRaisesRegex(brain_client.requests.HTTPError, "reasoning_effort"):
+                client.chat([], 0.3)
 
 
 class TestAnthropicRequest(unittest.TestCase):

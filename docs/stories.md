@@ -25,14 +25,14 @@ Set on the `regie` service; each variable falls back on `BRAIN_*` when empty.
 | `STORY_BRAIN_URL` | API URL; from the `regie` container a local Ollama is `http://ollama:11434` |
 | `STORY_BRAIN_API_KEY` | API key |
 | `STORY_BRAIN_TIMEOUT` | longest silence of the API in seconds, default 600 |
-| `STORY_BRAIN_EFFORT` | reasoning effort (Anthropic, OpenAI `gpt-6*`): `low` to `max` |
+| `STORY_BRAIN_EFFORT` | reasoning effort (Anthropic, OpenAI `gpt-6*`): `low`, `medium`, `high`, `xhigh`; the values accepted depend on the model (`gpt-6-luna` refuses `max`) |
 
 The preparation runs once per book. With OpenAI, a low-cost setting to start with:
 
 ```
 STORY_BRAIN_PROVIDER=openai
 STORY_BRAIN_MODEL=gpt-6-luna
-STORY_BRAIN_EFFORT=max
+STORY_BRAIN_EFFORT=xhigh
 STORY_BRAIN_TIMEOUT=1800
 ```
 
@@ -46,7 +46,9 @@ The source is a plain text or HTML file (for example from Project Gutenberg), in
 `/opt/ia/nao/stories/` on the host (`/data/stories` in the container):
 
 ```bash
-docker exec regie python3 -m storyteller.prepare /data/stories/book.txt \
+# Coolify adds a suffix to container names
+REGIE=$(docker ps --filter name=regie --format '{{.Names}}' | head -1)
+docker exec "$REGIE" python3 -m storyteller.prepare /data/stories/book.txt \
     --out /data/stories/my-book --title "Voyage au centre de la Terre" \
     --author "Jules Verne" --year 1864 --chapter 1 --segment-only
 ```
@@ -77,7 +79,7 @@ and not played yet; voices per speaker are not applied yet either.
 A hand-written timed example:
 
 ```bash
-docker exec regie cp -r /app/storyteller/examples/timed-test /data/stories/
+docker exec "$REGIE" cp -r /app/storyteller/examples/timed-test /data/stories/
 ```
 
 ## Read it
@@ -89,6 +91,11 @@ Control room → **Histoires** (`/stories?token=$REGIE_TOKEN`): pick the story, 
   {author}, chapitre {n}" and reads from the bookmark. After a pause: no sentence.
 - While reading, every command waits for the end of the passage; seeks add up.
   Paused or stopped, a seek moves at once.
+- To read fluently, like the chat, the next passage is sent as soon as the current
+  one starts, so its voice is ready. The bar is then slower: a command usually applies
+  one passage later. Nothing is sent ahead across a chapter, before a timed text or
+  one with a gesture, after a pause of 1 s or more, or without a connected voice body;
+  there a command applies at the end of the current passage.
 - ⏸ keeps the activity. ⏹ saves the bookmark and gives it back; when already stopped,
   it frees a `story` activity left behind.
 - ⏮ goes to the start of the chapter, then to the previous one.

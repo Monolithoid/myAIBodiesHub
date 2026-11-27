@@ -164,7 +164,11 @@ class BrainClient:
             timeout=(10, self.timeout),
             stream=True,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # The body says what was refused (parameter, model, quota…).
+            raise requests.HTTPError(
+                f"{response.status_code} from {response.url}: {response.text[:500]}",
+                response=response)
         chunks = []
         for line in response.iter_lines():
             # Skip blank lines and non-SSE lines (e.g. HTTP headers in chunked encoding).

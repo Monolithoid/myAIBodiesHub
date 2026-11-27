@@ -10,7 +10,10 @@ While it reads, the story is game-master's running activity (id "story"): no
 game can start, and the OBS scene follows.  The activity is given back when the
 reading stops, whatever the reason, errors included.
 
-  texts follow each other on GET /speaking, then "pause_after_s"
+  texts follow each other, like the chat: the next one is sent as soon as the
+  current one starts (its voice is synthesized meanwhile), unless a command waits,
+  a chapter changes, the next text is timed or has a gesture, or "pause_after_s" is
+  long; a command given after that applies one passage later
   "at_ms": the text waits for that instant on the story clock (paused with the reading)
 """
 
@@ -183,26 +186,28 @@ class BodyGateway:
     def __init__(self, url: str):
         self.url = url.rstrip("/")
 
-    def perform(self, order: dict) -> bool:
-        """True once sent to the bodies, False while body-gateway is busy with someone else."""
+    def perform(self, order: dict) -> dict | None:
+        """The answer once sent to the bodies ({"voices": True} when voice bodies report
+        what they say), None while body-gateway is busy with someone else."""
         try:
             # The single-threaded server answers after its running inference.
             status, data = _call(f"{self.url}/perform", order, timeout=150)
         except TimeoutError:
             # Sent and queued there: sending it again would say it twice.
-            return True
-        if status == 503:
-            return False
+            return {}
+        if status == 503 or (status == 409 and order.get("ahead")):
+            return None
         if status != 200:
             raise PlayerError(f"body-gateway /perform : {status} {data.get('error', '')}")
-        return True
+        return data
 
-    def speaking(self) -> bool:
+    def speaking(self) -> tuple[bool, bool]:
+        """(a sentence is being said or waits, the last one sent has started)."""
         # The single-threaded server answers after its running inference.
         status, data = _call(f"{self.url}/speaking", timeout=130)
         if status != 200:
             raise PlayerError(f"body-gateway /speaking : {status}")
-        return bool(data.get("speaking"))
+        return bool(data.get("speaking")), bool(data.get("started"))
 
 
 class GameMasterActivity:
@@ -266,7 +271,8 @@ class GameMasterActivity:
 class Player:
     """One reading at a time.  Commands come from the HTTP threads, a worker thread reads."""
 
-    SPEAKING_POLL_S = 0.4
+    SPEAKING_POLL_S = 0.2
+    LONG_PAUSE_S = 1.0     # a pause this long is kept: nothing is sent ahead
     BUSY_RETRY_S = 1.0
     BUSY_TRIES = 120
     NETWORK_TRIES = 3
@@ -278,6 +284,7 @@ class Player:
         self.bodies = bodies
         self.activity = activity
         self.log = log
+        self._ahead: int | None = None  # passage already sent behind the one being said
         self.clock = clock or Clock()
         self._cond = threading.Condition()
         self._status = STOPPED
@@ -315,7 +322,7 @@ class Player:
                     self._release()
                     raise
                 self._story, self._index = story, index
-                self._pending = self._target = None
+                self._pending = self._target = self._ahead = None
                 self._error, self._lag_ms = "", 0
                 self._saying = True             # the resume sentence: commands wait
                 self._chapter = story.chapter(index)
@@ -474,26 +481,92 @@ class Player:
             self.clock.resume()
         if not self._settle(self._index):
             return
+        sent = None      # the passage already sent ahead, with the answer of body-gateway
         while True:
-            passage = self._next_passage()
-            if passage is None:
-                return
-            if self.activity.held() is False:
-                self.log("story activity taken away (!stop or game-master restarted)")
-                with self._cond:
-                    self._error = "activité « histoire » retirée (!stop ou game-master redémarré)"
-                return
-            if passage["chapter"] != self._chapter:
-                self._chapter = passage["chapter"]
-                self._progress()
-                self._say({"text": f"Chapitre {passage['chapter']}.", "emotion": "calm"})
-            self._say(passage)
+            if sent is None:
+                passage = self._next_passage()
+                if passage is None:
+                    return
+                if self._taken_away():
+                    return
+                if passage["chapter"] != self._chapter:
+                    self._chapter = passage["chapter"]
+                    self._progress()
+                    self._say({"text": f"Chapitre {passage['chapter']}.", "emotion": "calm"})
+                answer = self._send(passage)
+            else:
+                passage, answer = sent
+            sent = self._listen(passage, answer)
+            if sent is not None:
+                self._chained()
+                continue
             following = self._index + 1
             moved = self._target is not None
             if not self._settle(following):
                 return
             if not moved:
                 self._pause_after(passage, following)
+
+    def _taken_away(self) -> bool:
+        if self.activity.held() is not False:
+            return False
+        self.log("story activity taken away (!stop or game-master restarted)")
+        with self._cond:
+            self._error = "activité « histoire » retirée (!stop ou game-master redémarré)"
+        return True
+
+    def _listen(self, passage: dict, answer: dict) -> tuple[dict, dict] | None:
+        """Waits until the passage has been said.  Once it starts the next one may be
+        sent: returns it (with body-gateway's answer) when it starts too, else None."""
+        sent, tried = None, False
+        while True:
+            speaking, started = self._retry(self.bodies.speaking)
+            if sent is not None:
+                if started or not speaking:
+                    return sent
+            elif not speaking:
+                return None
+            elif started and not tried and answer.get("voices"):
+                following = self._can_send_ahead(passage)
+                if following is not None and self.activity.held() is not False:
+                    tried = True
+                    order = {**self._order(following), "ahead": True}
+                    reply = self._retry(lambda: self.bodies.perform(order))
+                    if reply is None:          # refused: said the usual way afterwards
+                        with self._cond:
+                            self._ahead = None
+                    else:
+                        sent = following, reply
+                elif following is not None:
+                    with self._cond:
+                        self._ahead = None
+            time.sleep(self.SPEAKING_POLL_S)
+
+    def _can_send_ahead(self, passage: dict) -> dict | None:
+        """The next passage if nothing stands between the two; it is then committed."""
+        with self._cond:
+            index = self._index + 1
+            if (self._status != PLAYING or self._pending
+                    or self._target is not None or index >= len(self._story.passages)
+                    or passage.get("pause_after_s", prerecording.DEFAULT_PAUSE_S)
+                    >= self.LONG_PAUSE_S):
+                return None
+            following = self._story.passages[index]
+            # A gesture sent early would start during the passage being said.
+            if (following["chapter"] != passage["chapter"] or "at_ms" in following
+                    or following.get("gesture")):
+                return None
+            self._ahead = index
+            return following
+
+    def _chained(self):
+        """The passage sent ahead has started, so the one before has been heard.  A
+        command asked meanwhile waits for the end of this one."""
+        with self._cond:
+            self._index, self._ahead = self._ahead, None
+            if self._target == self._index:      # asked for the passage now starting
+                self._target = None
+            self.bookmarks.put(self._story, self._index)
 
     def _next_passage(self) -> dict | None:
         """Waits while paused and until the passage's instant; marks it as being said."""
@@ -549,20 +622,27 @@ class Player:
                 self._cond.wait_for(lambda: self._status != PLAYING or self._index != following,
                                     timeout=pause)
 
-    def _say(self, passage: dict):
-        """Sends one text to the bodies and waits until it has been spoken."""
+    @staticmethod
+    def _order(passage: dict) -> dict:
         actions = [{"type": "speech", "text": passage["text"]}]
         if passage.get("gesture"):
             actions.append({"type": "gesture", **passage["gesture"]})
-        order = {"source": ACTIVITY, "emotion": passage["emotion"],
-                 "energy": passage.get("energy", "medium"), "actions": actions}
+        return {"source": ACTIVITY, "emotion": passage["emotion"],
+                "energy": passage.get("energy", "medium"), "actions": actions}
+
+    def _send(self, passage: dict) -> dict:
+        """Sends one text to the bodies, waiting while body-gateway is busy."""
         for _ in range(self.BUSY_TRIES):
-            if self._retry(lambda: self.bodies.perform(order)):
-                break
+            answer = self._retry(lambda: self.bodies.perform(self._order(passage)))
+            if answer is not None:
+                return answer
             time.sleep(self.BUSY_RETRY_S)
-        else:
-            raise PlayerError("body-gateway reste occupé")
-        while self._retry(self.bodies.speaking):
+        raise PlayerError("body-gateway reste occupé")
+
+    def _say(self, passage: dict):
+        """Sends one text and waits until it has been spoken."""
+        self._send(passage)
+        while self._retry(self.bodies.speaking)[0]:
             time.sleep(self.SPEAKING_POLL_S)
 
     def _retry(self, call):

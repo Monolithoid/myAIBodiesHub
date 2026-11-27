@@ -28,9 +28,11 @@ ENTRIES = [passage(n, (n + 2) // 3) for n in range(1, 8)]
 
 
 class Bodies:
-    """Each sentence is "spoken" until finish() is called."""
+    """A voice: sentences queue, each is "spoken" until finish() is called."""
 
     def __init__(self):
+        self.voices = False
+        self._queue = 0
         self.said = []
         self.orders = []
         self.fail = False
@@ -44,16 +46,18 @@ class Bodies:
                 raise OSError("down")
             if self.busy:
                 self.busy -= 1
-                return False
+                return None
             self.orders.append(order)
             self.said.append(order["actions"][0]["text"])
+            if self._speaking:
+                self._queue += 1
             self._speaking = True
             self._cond.notify_all()
-            return True
+            return {"voices": self.voices}
 
     def speaking(self):
         with self._cond:
-            return self._speaking
+            return self._speaking, self._queue == 0
 
     def wait(self, count):
         with self._cond:
@@ -62,8 +66,12 @@ class Bodies:
         return self.said[count - 1]
 
     def finish(self):
+        """The sentence being said ends; a queued one starts."""
         with self._cond:
-            self._speaking = False
+            if self._queue:
+                self._queue -= 1
+            else:
+                self._speaking = False
 
 
 class Activity:
@@ -123,6 +131,7 @@ class Base(unittest.TestCase):
     def end(self):
         self.bodies.fail = True
         self.player.stop()
+        self.bodies._queue = 0
         self.bodies.finish()
         if self.player._worker:
             self.player._worker.join(3)
@@ -328,6 +337,112 @@ class TestReading(Base):
         self.write("s", HEADER, [{"sound": "x", "theme": "vent"}, passage(1, 1)])
         self.assertEqual({s["id"]: s["passages"] for s in self.player.library.list()},
                          {"s": 1, "voyage": 7})
+
+
+class TestSentAhead(Base):
+    """Voice bodies connected: the next passage leaves while the current one is said."""
+
+    def setUp(self):
+        super().setUp()
+        self.bodies.voices = True
+
+    def begin(self):
+        """The resume sentence, then t1 with t2 already sent behind it."""
+        self.start()
+        self.hear("t1")
+        self.bodies.wait(3)
+        self.assertEqual(self.bodies.said[2], "t2")
+
+    def heard(self, count):
+        """The current sentence ends; waits for `count` sentences sent in all."""
+        self.bodies.finish()
+        self.bodies.wait(count)
+
+    def test_chain_and_bookmark(self):
+        self.begin()
+        self.assertEqual(self.player.state()["seg"], 1)
+        self.heard(4)                                    # t2 starts, t3 leaves
+        until(lambda: self.player.state()["seg"] == 2)
+        self.assertEqual(self.bodies.said[1:], ["t1", "t2", "t3"])
+        self.assertEqual(player.Bookmarks(str(self.root / "bookmarks.db"))
+                         .index(self.player.library.load("voyage")), 1)
+
+    def test_nothing_ahead_across_a_chapter_then_the_end(self):
+        self.begin()
+        self.heard(4)
+        self.bodies.finish()                             # t3 starts, chapter 2 follows
+        time.sleep(0.05)
+        self.assertEqual(len(self.bodies.said), 4)
+        self.heard(5)
+        self.assertEqual(self.bodies.said[4], "Chapitre 2.")
+
+    def test_late_pause_waits_one_more_passage(self):
+        self.begin()
+        self.assertEqual(self.player.pause()["pending"]["command"], "paused")
+        self.bodies.finish()                             # t2, already sent, is said
+        until(lambda: self.player.state()["seg"] == 2)
+        self.assertEqual(self.player.state()["status"], "playing")
+        self.finish_to("paused")
+        self.assertEqual(len(self.bodies.said), 3)       # nothing sent behind a command
+        self.assertEqual(self.player.state()["seg"], 3)
+
+    def test_late_next_does_not_repeat_the_passage_sent(self):
+        self.begin()
+        self.player.seek("passage", 1)
+        self.heard(4)
+        self.assertEqual(self.bodies.said[1:], ["t1", "t2", "t3"])
+        self.assertIsNone(self.player.state()["pending"])
+
+    def test_late_seek_applies_after_the_passage_sent(self):
+        self.begin()
+        self.player.seek("chapter", 1)
+        self.bodies.finish()
+        until(lambda: self.player.state()["seg"] == 2)
+        self.heard(4)
+        self.assertEqual(self.bodies.said[3], "Chapitre 2.")
+
+    def test_command_before_the_next_one_is_sent(self):
+        self.start()
+        self.player.pause()                              # during the resume sentence
+        self.finish_to("paused")
+        self.player.play()
+        self.bodies.wait(3)                              # t1, then t2 behind it
+        self.assertEqual(self.bodies.said[1:], ["t1", "t2"])
+
+    def test_long_pause_and_timed_text_are_not_sent_ahead(self):
+        self.write("p", HEADER, [passage(1, 1, pause_after_s=1.5), passage(2, 1),
+                                 passage(3, 1, at_ms=0)])
+        self.player.play("p")
+        self.bodies.wait(1)
+        self.hear("t1")
+        time.sleep(0.05)
+        self.assertEqual(len(self.bodies.said), 2)
+        self.hear("t2")
+        time.sleep(0.05)
+        self.assertEqual(len(self.bodies.said), 3)
+
+    def test_gesture_is_not_sent_ahead(self):
+        self.write("g", HEADER, [passage(1, 1), passage(2, 1, gesture={"emotion": "calm",
+                                                                      "intensity": 0.5})])
+        self.player.play("g")
+        self.bodies.wait(1)
+        self.hear("t1")
+        time.sleep(0.05)
+        self.assertEqual(len(self.bodies.said), 2)
+        self.hear("t2")
+
+    def test_only_the_early_sentence_says_ahead(self):
+        self.begin()
+        self.assertEqual([o.get("ahead", False) for o in self.bodies.orders], [False, False, True])
+
+    def test_refused_ahead_is_said_afterwards(self):
+        perform = self.bodies.perform
+        self.bodies.perform = lambda order: None if order.get("ahead") else perform(order)
+        self.start()
+        self.hear("t1")
+        time.sleep(0.05)
+        self.assertEqual(len(self.bodies.said), 2)
+        self.hear("t2")
 
 
 class TestTimed(Base):

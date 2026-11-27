@@ -59,12 +59,14 @@
   const pending = [];
   let playing = false;
   let blocked = false;
+  let hideTimer = null;
 
   function speaking(state) {
-    fetch(`speaking?token=${q}`, {
+    return fetch(`speaking?token=${q}`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({speaking: state}),
+      signal: AbortSignal.timeout(2000),   // the next sentence waits for this answer
     }).catch(() => {});
   }
 
@@ -78,9 +80,18 @@
     const ev = pending.shift();
     playing = true;
     show(ev);
+    clearTimeout(hideTimer);
+    let ended = false;
     const done = () => {
-      speaking(false);
-      setTimeout(() => { caption.classList.remove("on"); playing = false; next(); }, 1500);
+      if (ended) return;   // a failed load fires both onerror and play()'s rejection
+      ended = true;
+      // A queued sentence follows at once (once "false" is in, so the two do not
+      // cross); the caption of the last one stays a moment.
+      speaking(false).finally(() => {
+        playing = false;
+        hideTimer = setTimeout(() => caption.classList.remove("on"), 1500);
+        next();
+      });
     };
     const audio = new Audio(`audio/${ev.id}.mp3?token=${q}`);
     audio.onplay = () => speaking(true);
