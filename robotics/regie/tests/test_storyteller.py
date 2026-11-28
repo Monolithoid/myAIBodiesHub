@@ -155,7 +155,7 @@ SHEET = [{"id": "lidenbrock", "name": "Lidenbrock", "aliases": ["mon oncle"],
 
 def annotation(seg, **extra):
     return {"seg": seg, "speaker": "narrator", "emotion": "calm", "energy": "medium",
-            "gesture": None, "pause_after_s": 0.3, **extra}
+            "gesture": None, "pause_after_s": 0.3, "sound": None, **extra}
 
 
 class FakeClient:
@@ -198,6 +198,32 @@ class TestAnnotate(unittest.TestCase):
         close = [annotation(n, gesture=gesture if n in (1, 3) else None) for n in range(1, 7)]
         self.assertTrue(self.errors(close))
         self.assertTrue(self.errors(spaced, previous=-1))   # too close to the block before
+
+    def test_sounds(self):
+        spaced = [annotation(n, sound="coup de feu" if n in (1, 6) else None) for n in range(1, 7)]
+        self.assertEqual(self.errors(spaced), [])
+        close = [annotation(n, sound="explosion" if n in (1, 3) else None) for n in range(1, 7)]
+        self.assertTrue(self.errors(close))
+        self.assertTrue(annotate.director_errors(
+            {"segments": spaced}, SEGMENTS, SPEAKERS, None, previous_sound=-2))
+        for bad in ("", "  ", "x" * (annotate.MAX_THEME + 1), 3):
+            self.assertTrue(self.errors([annotation(1, sound=bad), *spaced[1:]]), bad)
+        missing = annotation(1)
+        del missing["sound"]
+        self.assertTrue(self.errors([missing, *spaced[1:]]))
+
+    def test_sound_follows_its_segment(self):
+        entries = annotate.merge(SEGMENTS[:3], [annotation(1), annotation(2, sound=" Coup de feu "),
+                                                annotation(3)], SHEET)
+        self.assertEqual([e.get("seg") for e in entries], [1, 2, 2, 3])
+        self.assertEqual(entries[2], {"sound": "coup-de-feu", "theme": "Coup de feu",
+                                      "seg": 2, "chapter": 1})
+        self.assertEqual(annotate.sound_id("Éboulement !"), "eboulement")
+        prerecording.dumps(HEADER, entries)          # valid pre-recording
+        old = [annotation(n) for n in (1, 2)]        # annotations written before the sounds
+        for a in old:
+            del a["sound"]
+        self.assertEqual(len(annotate.merge(SEGMENTS[:2], old, SHEET)), 2)
 
     def test_retry_once_with_the_errors(self):
         client = FakeClient("pas du JSON", {"summary": "s", "segments": [annotation(n) for n in range(1, 7)]})
