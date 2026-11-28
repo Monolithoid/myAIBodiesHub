@@ -254,12 +254,14 @@ class StaticDriverNode(Node):
         if not text:
             return
         self.get_logger().info(f"[{DRONE_ID}] → TTS : {text[:80]!r}" + (f" (sync {sync})" if sync else ""))
-        threading.Thread(target=self._tts_and_publish, args=(text, sync), daemon=True).start()
+        options = speech_services.say_options(msg.data)
+        threading.Thread(target=self._tts_and_publish, args=(text, sync, options),
+                         daemon=True).start()
 
-    def _tts_and_publish(self, text: str, sync: str = ""):
+    def _tts_and_publish(self, text: str, sync: str = "", options: dict | None = None):
         # The drone has no local speech synthesis: without edge-tts nothing is said.
         try:
-            audio_mp3 = speech_services.synthesize_mp3(text, TTS_VOICE)
+            audio_mp3 = speech_services.synthesize_mp3(text, TTS_VOICE, options)
         except ImportError:
             self.get_logger().error("edge-tts non installé — phrase perdue")
             self._release(sync, "edge-tts absent")
@@ -290,7 +292,7 @@ class StaticDriverNode(Node):
 
 
 def parse_say(data: str) -> tuple[str, str]:
-    """(text, sync id) of an /actuators/say message: plain text or JSON {"text", "sync"}."""
+    """(text, sync id) of an /actuators/say message: plain text or JSON {"text", "sync"?, …}."""
     data = (data or "").strip()
     if data.startswith("{"):
         try:

@@ -1487,10 +1487,9 @@ class BodyGatewayNode(Node):
     def _execute_action(self, body_id: str, kind: str, action: dict, sync: dict | None = None):
         if kind == "speech":
             msg = String()
-            msg.data = action.get("text", "")
-            if sync and body_rules.is_voice(body_id):
-                # The room speaker and the OBS voice hold this sentence until the gesture starts.
-                msg.data = json.dumps({"text": msg.data, "sync": sync["id"]})
+            # The room speaker and the OBS voice hold this sentence until the gesture starts.
+            msg.data = body_rules.say_payload(
+                action, sync["id"] if sync and body_rules.is_voice(body_id) else "")
             self._pub_say[body_id].publish(msg)
             # A disconnected voice will never report speaking: do not wait for it.
             if not body_rules.is_voice(body_id) or self._body_connected.get(body_id, False):

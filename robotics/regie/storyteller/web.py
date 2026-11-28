@@ -7,6 +7,8 @@ web — the /stories/… routes of the control room (the token is checked by reg
   POST /stories/pause
   POST /stories/stop
   POST /stories/seek  {"story", "unit": "passage"|"chapter", "delta": -1|1}
+  GET  /stories/casting?story=            characters, their voice slot, voice of each slot
+  POST /stories/casting {"story", "characters": {id: slot}, "voices": {slot: voice}}
 
 Answers: the player's state, or 409 {"error", ...state} for a refused command.
 """
@@ -15,6 +17,7 @@ import os
 import threading
 
 from storyteller import player as player_module
+from storyteller import voices
 
 STORIES_DIR = os.environ.get("STORIES_DIR", "/data/stories")
 
@@ -50,6 +53,12 @@ class StoryRoutes:
                 return 200, {"stories": self.player().library.list()}
             if path == "/stories/state":
                 return 200, self.player().state(query.get("story", [""])[0])
+            if path == "/stories/casting":
+                library = self.player().library
+                story = library.load(query.get("story", [""])[0])
+                return 200, voices.casting(library.root / story.id)
+        except (player_module.PlayerError, ValueError) as e:
+            return 409, {"error": str(e)}
         except OSError as e:
             return 503, {"error": f"histoires indisponibles : {e}"}
         return 404, {"error": "not found"}
@@ -66,6 +75,13 @@ class StoryRoutes:
                 return 200, player.stop()
             if path == "/stories/seek":
                 return 200, player.seek(str(body.get("unit")), body.get("delta"), story)
+            if path == "/stories/casting":
+                directory = player.library.root / player.library.load(story).id
+                try:
+                    return 200, player.edit(story, lambda: voices.save(
+                        directory, body.get("characters", {}), body.get("voices", {})))
+                except (player_module.PlayerError, ValueError) as e:
+                    return 409, {"error": str(e)}
         except player_module.PlayerError as e:
             return 409, {**self.player().state(), "error": str(e)}
         except OSError as e:

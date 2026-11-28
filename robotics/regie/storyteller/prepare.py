@@ -17,7 +17,7 @@ import pathlib
 import sys
 import time
 
-from storyteller import annotate, book, prerecording, segment
+from storyteller import annotate, book, prerecording, segment, voices
 
 
 def _write(path: pathlib.Path, data):
@@ -59,7 +59,8 @@ def prepare(source: pathlib.Path, out: pathlib.Path, title: str, author: str, ye
                                      previous.get("summary", ""), log)
     _write(base.with_suffix(".annotations.json"), {"chapter": chapter, **result})
     header = {"title": title, "author": author, "year": year, "chapters": len(chapters),
-              "source": source.name, "profile": "stream", "timed": False, "voices": {}}
+              "source": source.name, "profile": "stream", "timed": False,
+              "voices": _read(out / voices.CHOICES_FILE, {})}
     entries = annotate.merge(segments, result["segments"], characters)
     _write(base.with_suffix(".script.jsonl"), prerecording.dumps(header, entries))
     log(f"{base.with_suffix('.script.jsonl')} written in {time.monotonic() - started:.0f} s "

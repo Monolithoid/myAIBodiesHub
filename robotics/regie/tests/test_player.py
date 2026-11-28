@@ -174,6 +174,24 @@ class TestReading(Base):
             "actions": [{"type": "speech", "text": "t1"},
                         {"type": "gesture", "emotion": "angry", "intensity": 0.7}]})
 
+    def test_a_character_has_its_voice_the_narrator_none(self):
+        header = {**HEADER, "voices": {"m1": "fr-CA-JeanNeural"}}
+        self.write("v", header, [passage(1, 1, speaker="m1"), passage(2, 1, speaker="narrator")])
+        self.player.play("v")
+        self.bodies.wait(1)
+        self.hear("t1", "t2")
+        self.assertEqual(self.bodies.orders[1]["actions"][0], {
+            "type": "speech", "text": "t1", "voice": "fr-CA-JeanNeural",
+            "rate": "+0%", "pitch": "+0Hz"})
+        self.assertEqual(self.bodies.orders[0]["actions"][0].keys(), {"type", "text"})
+        self.assertEqual(self.bodies.orders[2]["actions"][0].keys(), {"type", "text"})
+
+    def test_no_edit_while_reading(self):
+        self.start()
+        with self.assertRaises(player.PlayerError):
+            self.player.edit(self.player.state()["story"], lambda: self.fail("edited"))
+        self.assertEqual(self.player.edit("other", lambda: 1), 1)
+
     def test_pause_waits_for_the_end_of_the_passage(self):
         self.start()
         self.hear("t1")

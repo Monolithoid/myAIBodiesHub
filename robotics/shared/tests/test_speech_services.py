@@ -6,10 +6,41 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import speech_services  # noqa: E402
+
+
+class TestVoice(unittest.TestCase):
+
+    def test_say_options(self):
+        data = '{"text": "a", "voice": "fr-FR-HenriNeural", "rate": "-5%", "pitch": "+2Hz"}'
+        self.assertEqual(speech_services.say_options(data),
+                         {"voice": "fr-FR-HenriNeural", "rate": "-5%", "pitch": "+2Hz"})
+        for data in ("bonjour", "", "[1]", '{"text": "a", "sync": "s-1"}',
+                     '{"text": "a", "voice": "male", "rate": "fast", "pitch": 2}'):
+            self.assertEqual(speech_services.say_options(data), {}, data)
+
+    def test_say_text_never_reads_the_json_aloud(self):
+        self.assertEqual(speech_services.say_text('{"text": "a", "voice": "male"}'), "a")
+        for data in ("bonjour", "42", '{"x": 1}'):
+            self.assertEqual(speech_services.say_text(data), data)
+
+    def test_failed_voice_falls_back_to_the_default(self):
+        calls = []
+
+        def synth(text, voice, **prosody):
+            calls.append((voice, prosody))
+            if voice != "default":
+                raise RuntimeError("no audio")
+            return b"mp3"
+
+        with mock.patch.object(speech_services, "_synthesize", synth):
+            options = {"voice": "fr-FR-HenriNeural", "rate": "-5%"}
+            self.assertEqual(speech_services.synthesize_mp3("a", "default", options), b"mp3")
+        self.assertEqual(calls, [("fr-FR-HenriNeural", {"rate": "-5%"}), ("default", {})])
 
 
 def _frames(n, version=2, bitrate_idx=6, rate_idx=1):

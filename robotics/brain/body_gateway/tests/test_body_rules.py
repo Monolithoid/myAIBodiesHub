@@ -3,6 +3,7 @@
     cd robotics/brain/body_gateway && python3 -m unittest discover -s tests -v
 """
 
+import json
 import math
 import os
 import sys
@@ -356,6 +357,17 @@ class TestQueuedSentence(unittest.TestCase):
         tracker.heard("static_01", False, now=30)
         self.assertTrue(tracker.busy(now=39))
         self.assertFalse(tracker.busy(now=41))
+
+
+class TestSayPayload(unittest.TestCase):
+
+    def test_plain_text_unless_sync_or_voice(self):
+        self.assertEqual(body_rules.say_payload({"text": "Bonjour."}), "Bonjour.")
+        self.assertEqual(json.loads(body_rules.say_payload({"text": "a"}, "s-1")),
+                         {"text": "a", "sync": "s-1"})
+        action = {"text": "a", "voice": "fr-FR-HenriNeural", "rate": "-5%", "pitch": "", "x": 1}
+        self.assertEqual(json.loads(body_rules.say_payload(action)),
+                         {"text": "a", "voice": "fr-FR-HenriNeural", "rate": "-5%"})
 
 
 class TestPerform(unittest.TestCase):
