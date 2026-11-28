@@ -32,40 +32,74 @@ def _read(path: pathlib.Path, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
-def prepare(source: pathlib.Path, out: pathlib.Path, title: str, author: str, year: int | None,
-            chapter: int = 1, rule: str = book.DEFAULT_CHAPTER_RULE, client=None, log=print):
-    """client None: import and segmentation only.  Returns the files' base path of the chapter."""
-    text = book.clean(book.decode(source.read_bytes()))
+def cut(raw: bytes, rule: str = book.DEFAULT_CHAPTER_RULE) -> tuple[str, list, list]:
+    """(cleaned text, chapters, segments of each chapter) of a book file."""
+    text = book.clean(book.decode(raw))
     chapters = book.chapters(text, rule)
-    if not 1 <= chapter <= len(chapters):
-        raise ValueError(f"chapter {chapter}: the book has {len(chapters)}")
-    segments = segment.segment_book(chapters)[chapter - 1]
-    base = out / "chapters" / f"{chapter:02d}"
+    return text, chapters, segment.segment_book(chapters)
+
+
+def import_book(raw: bytes, out: pathlib.Path, title: str, author: str, year: int | None,
+                source: str, rule: str = book.DEFAULT_CHAPTER_RULE) -> list:
+    """Writes the cleaned text, the description and the segments of every chapter."""
+    text, chapters, segments = cut(raw, rule)
     _write(out / "source.txt", text)
     _write(out / "book.json", {"title": title, "author": author, "year": year,
-                               "chapters": len(chapters), "source": source.name})
-    _write(base.with_suffix(".segments.json"), segments)
-    chars = sum(len(s["text"]) for s in segments)
-    log(f"{len(chapters)} chapter(s); chapter {chapter}: {len(segments)} segments, "
-        f"{chars} characters, about {chars / 14 / 60:.0f} min of speech")
-    if client is None:
-        return base
+                               "chapters": len(chapters), "source": source,
+                               "chapter_rule": rule})
+    for old in (out / "chapters").glob("*.segments.json"):
+        old.unlink()
+    for number, part in enumerate(segments, 1):
+        _write(out / "chapters" / f"{number:02d}.segments.json", part)
+    return segments
+
+
+def annotate_chapter(out: pathlib.Path, chapter: int, client, log=print) -> pathlib.Path:
+    """The two LLM passes of an imported chapter, then its pre-recording."""
+    base = out / "chapters" / f"{chapter:02d}"
+    meta = _read(out / "book.json", None)
+    if meta is None:
+        raise ValueError("not an imported book: no book.json")
+    if not 1 <= chapter <= meta["chapters"]:
+        raise ValueError(f"chapter {chapter}: the book has {meta['chapters']}")
+    segments = _read(base.with_suffix(".segments.json"), None)
+    if segments is None:      # imported by an earlier version: one segments file only
+        rule = meta.get("chapter_rule") or book.DEFAULT_CHAPTER_RULE
+        segments = cut((out / "source.txt").read_bytes(), rule)[2][chapter - 1]
+        _write(base.with_suffix(".segments.json"), segments)
     started = time.monotonic()
     sheet = _read(out / "characters.json", {"characters": []})["characters"]
-    characters = annotate.update_characters(client, title, sheet, segments, log)
+    characters = annotate.update_characters(client, meta["title"], sheet, segments, log)
     _write(out / "characters.json", {"characters": characters})
     previous = _read(out / "chapters" / f"{chapter - 1:02d}.annotations.json", {})
-    result = annotate.direct_chapter(client, title, characters, segments,
+    result = annotate.direct_chapter(client, meta["title"], characters, segments,
                                      previous.get("summary", ""), log)
     _write(base.with_suffix(".annotations.json"), {"chapter": chapter, **result})
-    header = {"title": title, "author": author, "year": year, "chapters": len(chapters),
-              "source": source.name, "profile": "stream", "timed": False,
+    header = {"title": meta["title"], "author": meta["author"], "year": meta.get("year"),
+              "chapters": meta["chapters"], "source": meta.get("source", ""),
+              "profile": "stream", "timed": False,
               "voices": _read(out / voices.CHOICES_FILE, {})}
     entries = annotate.merge(segments, result["segments"], characters)
     _write(base.with_suffix(".script.jsonl"), prerecording.dumps(header, entries))
     log(f"{base.with_suffix('.script.jsonl')} written in {time.monotonic() - started:.0f} s "
         f"({client.provider} / {client.model})")
     return base
+
+
+def prepare(source: pathlib.Path, out: pathlib.Path, title: str, author: str, year: int | None,
+            chapter: int = 1, rule: str = book.DEFAULT_CHAPTER_RULE, client=None, log=print):
+    """client None: import and segmentation only.  Returns the files' base path of the chapter."""
+    raw = source.read_bytes()
+    count = len(cut(raw, rule)[1])
+    if not 1 <= chapter <= count:
+        raise ValueError(f"chapter {chapter}: the book has {count}")
+    segments = import_book(raw, out, title, author, year, source.name, rule)[chapter - 1]
+    chars = sum(len(s["text"]) for s in segments)
+    log(f"{count} chapter(s); chapter {chapter}: {len(segments)} segments, "
+        f"{chars} characters, about {chars / 14 / 60:.0f} min of speech")
+    if client is None:
+        return out / "chapters" / f"{chapter:02d}"
+    return annotate_chapter(out, chapter, client, log)
 
 
 def main(argv=None):
