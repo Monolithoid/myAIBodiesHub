@@ -37,7 +37,7 @@ class FakeClient:
                    if line.startswith("[")]
         return json.dumps({"summary": "s", "segments": [
             {"seg": n, "speaker": "narrator", "emotion": "calm", "energy": "medium",
-             "gesture": None, "pause_after_s": 0.3} for n in numbers]})
+             "gesture": None, "pause_after_s": 0.3, "sound": None} for n in numbers]})
 
 
 class Base(unittest.TestCase):

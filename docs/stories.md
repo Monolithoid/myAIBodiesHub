@@ -95,6 +95,12 @@ one line per text: `text`, `emotion`, `seg`, `chapter`, and optionally `speaker`
 story; the text waits for that instant). Entries `{sound, theme, file?}` are accepted
 and not played yet.
 
+The director may propose a sound after a segment that tells it: a short noise only
+(gunshot, rockfall, explosion, thunder), never music or a lasting ambience, at most one
+every 5 segments. It is written right after its text as
+`{"sound": "coup-de-feu", "theme": "coup de feu", "seg", "chapter"}`, without a file.
+A chapter prepared before this has no proposed sound: prepare it again to get some.
+
 A hand-written timed example:
 
 ```bash

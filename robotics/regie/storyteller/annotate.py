@@ -2,7 +2,8 @@
 annotate — the two LLM passes that prepare a chapter, and the merge into the pre-recording.
 
   1. characters sheet (grows chapter after chapter);
-  2. director: annotations by segment number only, never the text.
+  2. director: annotations by segment number only, never the text; it may propose a
+     noise (gunshot, rockfall...) played after a segment, as a theme without a file.
 
 The answers are constrained by a JSON schema, then checked by this code; an
 invalid answer is asked again once with the list of errors, then AnnotationError
@@ -16,11 +17,14 @@ back on BRAIN_* when empty (brain_client.py, shared with body-gateway).
 import json
 import pathlib
 import re
+import unicodedata
 
 from storyteller import prerecording
 
 PROMPTS = pathlib.Path(__file__).with_name("prompts")
 GESTURE_SPACING = 4       # at most one gesture every N segments
+SOUND_SPACING = 5         # at most one sound every N segments
+MAX_THEME = 40            # characters of a sound's theme
 BLOCK_SEGMENTS = 250      # a longer chapter is annotated in blocks
 CONTEXT_SEGMENTS = 10     # already annotated segments recalled to the next block
 MAX_TOKENS = 32000        # annotations of a whole block
@@ -84,7 +88,8 @@ def director_schema(speakers: list[str]) -> dict:
         "emotion": emotion,
         "energy": {"type": "string", "enum": list(prerecording.ENERGIES)},
         "gesture": gesture,
-        "pause_after_s": {"type": "number"}})}})
+        "pause_after_s": {"type": "number"},
+        "sound": {"anyOf": [_STRING, {"type": "null"}]}})}})
 
 
 def parse_json(raw: str) -> dict:
@@ -125,7 +130,8 @@ def character_errors(answer: dict, known: list[dict]) -> list[str]:
 
 
 def director_errors(answer: dict, segments: list[dict], speakers: list[str],
-                    previous_gesture: int | None = None) -> list[str]:
+                    previous_gesture: int | None = None,
+                    previous_sound: int | None = None) -> list[str]:
     """Every rule the schema cannot state, and the schema's again (not every LLM obeys it)."""
     annotations = answer.get("segments")
     if not isinstance(annotations, list) or not all(isinstance(a, dict) for a in annotations):
@@ -137,8 +143,8 @@ def director_errors(answer: dict, segments: list[dict], speakers: list[str],
         detail = f"; missing: {missing[:20]}" if missing else ""
         return [f"exactly one object per segment, in order, from {expected[0]} to {expected[-1]} "
                 f"({len(expected)} expected, {len(given)} given{detail})"]
-    errors, last_gesture = [], previous_gesture
-    allowed = {"seg", "speaker", "emotion", "energy", "gesture", "pause_after_s"}
+    errors, last_gesture, last_sound = [], previous_gesture, previous_sound
+    allowed = {"seg", "speaker", "emotion", "energy", "gesture", "pause_after_s", "sound"}
     for a in annotations:
         seg = a["seg"]
         errors += [f"segment {seg}: forbidden field {k!r}" for k in a if k not in allowed]
@@ -158,6 +164,15 @@ def director_errors(answer: dict, segments: list[dict], speakers: list[str],
                 errors.append(f"segment {seg}: gesture too close to the one of segment "
                               f"{last_gesture} (one every {GESTURE_SPACING} segments at most)")
             last_gesture = seg
+        sound = a.get("sound")
+        if sound is not None:
+            if not isinstance(sound, str) or not 0 < len(sound.strip()) <= MAX_THEME:
+                errors.append(f"segment {seg}: sound must be null or a theme of 1 to "
+                              f"{MAX_THEME} characters")
+            if last_sound is not None and seg - last_sound < SOUND_SPACING:
+                errors.append(f"segment {seg}: sound too close to the one of segment "
+                              f"{last_sound} (one every {SOUND_SPACING} segments at most)")
+            last_sound = seg
     return errors
 
 
@@ -206,6 +221,7 @@ def direct_chapter(client, title: str, characters: list[dict], segments: list[di
     speakers = [NARRATOR] + [c["id"] for c in characters if c["id"] != NARRATOR]
     system = prompt("director.txt").format(
         titre=title, bloc_mode=prompt("mode_text.txt"), ecart_gestes=GESTURE_SPACING,
+        ecart_sons=SOUND_SPACING, longueur_theme=MAX_THEME,
         emotions=", ".join(prerecording.EMOTIONS), energies=", ".join(prerecording.ENERGIES))
     sheet = json.dumps({"characters": characters}, ensure_ascii=False)
     annotations: list[dict] = []
@@ -221,16 +237,21 @@ def direct_chapter(client, title: str, characters: list[dict], segments: list[di
                                      for a in annotations[-CONTEXT_SEGMENTS:]))
         parts.append(f"Segments à annoter :\n{numbered(block)}")
         last_gesture = next((a["seg"] for a in reversed(annotations) if a["gesture"]), None)
+        last_sound = next((a["seg"] for a in reversed(annotations) if a["sound"]), None)
         log(f"director: segments {block[0]['seg']}-{block[-1]['seg']} ({len(block)})")
         answer = ask(client, system, "\n\n".join(parts), director_schema(speakers),
-                     lambda a: director_errors(a, block, speakers, last_gesture), log)
+                     lambda a: director_errors(a, block, speakers, last_gesture, last_sound),
+                     log)
         annotations += answer["segments"]
         summaries.append(str(answer.get("summary", "")).strip())
     return {"summary": " ".join(s for s in summaries if s), "segments": annotations}
 
 
 def merge(segments: list[dict], annotations: list[dict], characters: list[dict]) -> list[dict]:
-    """Pre-recording entries: the frozen text with its annotations, speakers as voice slots."""
+    """Pre-recording entries: the frozen text with its annotations, speakers as voice slots.
+
+    A proposed sound follows its segment, without a file until one is chosen.
+    """
     voices = {c["id"]: c["voice"] for c in characters}
     by_seg = {a["seg"]: a for a in annotations}
     entries = []
@@ -244,4 +265,14 @@ def merge(segments: list[dict], annotations: list[dict], characters: list[dict])
         if a.get("gesture"):
             entry["gesture"] = a["gesture"]
         entries.append(entry)
+        theme = (a.get("sound") or "").strip()     # absent from annotations of older versions
+        if theme:
+            entries.append({"sound": sound_id(theme), "theme": theme,
+                            "seg": s["seg"], "chapter": s["chapter"]})
     return entries
+
+
+def sound_id(theme: str) -> str:
+    """'Coup de feu' -> 'coup-de-feu': the name a sound bank can match."""
+    plain = unicodedata.normalize("NFKD", theme).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-") or "sound"
