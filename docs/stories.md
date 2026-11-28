@@ -100,6 +100,9 @@ Control room → **Histoires** (`/stories?token=$REGIE_TOKEN`): pick the story, 
   it frees a `story` activity left behind.
 - ⏮ goes to the start of the chapter, then to the previous one.
 
+The games overlay (`game-master`, `/overlay`) shows the title, the author, the year
+(if known) and "Chapitre n / total", one line each, and clears when the reading stops.
+
 One activity at a time: no game starts during a story and the other way round. The
 OBS scene can follow it with `story=<scene>` in `OBS_SCENES`
 ([obs-overlays.md](obs-overlays.md) §3). A moderator's `!stop` or "Annuler le jeu"
