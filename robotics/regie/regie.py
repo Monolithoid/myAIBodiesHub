@@ -112,6 +112,7 @@ PAGE_HTML = pathlib.Path(__file__).with_name("regie.html")
 ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
 GAMES_HTML = pathlib.Path(__file__).with_name("games.html")
 STORIES_HTML = pathlib.Path(__file__).with_name("stories.html")
+STORY_IMPORT_MAX_BYTES = 12_000_000     # a book in base64 (about 9 MB of file)
 # Routes of the /jeux page relayed to game-master (method, regie path → game-master path).
 GAME_ROUTES = {("GET", "/game/state"): "/state", ("GET", "/game/settings"): "/settings",
                ("GET", "/game/scores"): "/scores", ("POST", "/game/settings"): "/settings",
@@ -383,15 +384,21 @@ class Handler(BaseHTTPRequestHandler):
             self._twitch_whisper()
             return
         if url.path.startswith("/stories/"):
+            # A whole book is sent at its import.
+            limit = STORY_IMPORT_MAX_BYTES if url.path == "/stories/import" else 10_000
             try:
-                length = min(int(self.headers.get("Content-Length", "0")), 10_000)
-                body = json.loads(self.rfile.read(length) or b"{}")
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > limit:
+                    self._send(413, b'{"error": "fichier trop gros"}', "application/json")
+                    return
+                body = json.loads(self.rfile.read(max(0, length)) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("not an object")
             except ValueError:
                 self._send(400, b'{"error": "JSON invalide"}', "application/json")
                 return
-            log(f"story {url.path} ← {json.dumps(body, ensure_ascii=False)}")
+            shown = {k: v for k, v in body.items() if k != "content"}
+            log(f"story {url.path} ← {json.dumps(shown, ensure_ascii=False)}")
             code, answer = STORIES.post(url.path, body)
             self._send(code, json.dumps(answer, ensure_ascii=False).encode(), "application/json")
             return

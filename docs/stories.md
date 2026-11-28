@@ -40,7 +40,25 @@ STORY_BRAIN_TIMEOUT=1800
 disappoint. The key is the one of `BRAIN_API_KEY` when the chat already uses OpenAI.
 Set `STORY_BRAIN_EFFORT` whenever `BRAIN_EFFORT` is set, or the chat's effort is used.
 
-## Prepare a chapter
+## Import and prepare from the page
+
+Control room → **Histoires**, section **Livres**:
+
+1. **Importer un livre…**: the file (plain text or HTML, about 9 MB at most), title,
+   author, year of first publication, identifier (the story's directory). The chapters
+   found are listed with their number of passages and estimated length. If the split is
+   wrong, import again with another "Titres de chapitre" regular expression (possible
+   as long as no chapter is prepared).
+2. **Préparer** on a chapter calls the LLM in the background (one chapter at a time,
+   several minutes with some models). Prepare the chapters in order: the character
+   sheet grows and the previous summary is recalled. "Préparer à nouveau" overwrites
+   the script, hand edits included.
+3. Title, author and year can be corrected at any time while the story is stopped; the
+   scripts are updated. Once a chapter is prepared, the story can be read.
+
+The state of a preparation is kept in memory: restarting `regie` interrupts it.
+
+## Prepare a chapter from the command line
 
 The source is a plain text or HTML file (for example from Project Gutenberg), in
 `/opt/ia/nao/stories/` on the host (`/data/stories` in the container):
@@ -61,7 +79,7 @@ regular expression.
 | File in the story directory | Content |
 |---|---|
 | `book.json`, `source.txt` | description and cleaned text |
-| `chapters/01.segments.json` | frozen segments |
+| `chapters/NN.segments.json` | frozen segments, one file per chapter |
 | `characters.json` | characters and their voice slot (`f1`-`f3`, `m1`-`m3`) |
 | `voices.json` | voice chosen for each slot (written by the stories page) |
 | `chapters/01.annotations.json` | summary and annotations of the LLM |

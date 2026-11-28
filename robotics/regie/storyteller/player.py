@@ -396,7 +396,8 @@ class Player:
                     or (self._worker is not None and self._worker.is_alive())):
                 raise PlayerError("arrête d'abord la lecture de cette histoire")
             result = change()
-            if self._story is not None and self._story.id == story_id:
+            if (self._story is not None and self._story.id == story_id
+                    and prerecording.script_files(self.library.root / story_id)):
                 self._story = self.library.load(story_id)
                 self._index = self.bookmarks.index(self._story)
             return result

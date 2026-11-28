@@ -43,6 +43,17 @@
   .cast + .cast { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
   #save { font-size: 14px; margin-top: 14px; }
   #saved { margin-left: 10px; }
+  .fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px;
+            align-items: center; margin-top: 12px; }
+  input { background: #1e242c; color: var(--text); border: 1px solid var(--line);
+          border-radius: 6px; padding: 6px 10px; font: inherit; width: 100%; }
+  button.text { font-size: 14px; }
+  form button.text { margin-top: 12px; }
+  #chapters { list-style: none; margin: 14px 0 0; padding: 0; max-height: 320px; overflow: auto; }
+  #chapters li { display: flex; gap: 10px; align-items: center; padding: 6px 0;
+                 border-top: 1px solid var(--line); }
+  #chapters li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #joblog { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -79,6 +90,30 @@
     <div class="cast" id="characters"></div>
     <div class="cast" id="slots"></div>
     <button type="button" id="save">Enregistrer</button><span id="saved" role="status"></span>
+  </section>
+  <section>
+    <h2>Livres</h2>
+    <div class="row">
+      <label for="book">Livre</label>
+      <select id="book"></select>
+    </div>
+    <form id="bookform">
+      <div class="fields">
+        <label for="file" class="import">Fichier</label>
+        <input type="file" id="file" class="import" accept=".txt,.html,.htm,text/plain,text/html">
+        <label for="title">Titre</label><input id="title" required>
+        <label for="author">Auteur</label><input id="author" required>
+        <label for="year">Année de sortie</label><input id="year" type="number" step="1">
+        <label for="newid" class="import">Identifiant</label>
+        <input id="newid" class="import" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,80}">
+        <label for="rule" class="import" title="Vide : « Chapitre … » ou un chiffre romain seul sur sa ligne">Titres de chapitre (regex)</label>
+        <input id="rule" class="import" placeholder="automatique">
+      </div>
+      <button type="submit" class="text" id="booksave">Importer</button>
+    </form>
+    <div class="msg" id="bookmessage" role="status"></div>
+    <ul id="chapters"></ul>
+    <div id="job" hidden><div id="jobstatus" role="status"></div><div id="joblog" class="muted"></div></div>
   </section>
 </main>
 <script>
@@ -223,6 +258,7 @@ async function refresh() {
 async function loadStories() {
   const { stories } = await call("GET", "stories/list");
   const select = $("story");
+  const selected = select.value;
   select.replaceChildren(...stories.map(s => {
     const option = document.createElement("option");
     option.value = s.id;
@@ -230,9 +266,10 @@ async function loadStories() {
     option.title = s.error || "";
     return option;
   }));
-  if (!stories.length) commandError = "Aucune histoire préparée (docs/stories.md).";
+  commandError = stories.length ? "" : "Aucune histoire préparée : importe un livre ci-dessous.";
   const current = await call("GET", "stories/state");
-  if (current.story) select.value = current.story;
+  if (stories.some(s => s.id === selected)) select.value = selected;
+  else if (current.story) select.value = current.story;
 }
 
 for (const button of document.querySelectorAll("button[data-cmd]")) {
@@ -251,11 +288,156 @@ for (const button of document.querySelectorAll("button[data-cmd]")) {
 }
 $("story").addEventListener("change", () => { commandError = ""; refresh(); loadCasting(); });
 
+// Books: import, description, preparation of the chapters.  The form is only filled
+// when the book changes or after a change, never by the refresh loop.
+let shownBook = null;
+let preparing = false;
+
+function bookMessage(message, error) {
+  $("bookmessage").textContent = message;
+  $("bookmessage").className = error ? "msg err" : "msg";
+}
+
+function showBook(next) {
+  shownBook = next;
+  for (const field of document.querySelectorAll("#bookform .import")) field.hidden = !!next;
+  $("file").required = $("newid").required = !next;
+  $("booksave").textContent = next ? "Enregistrer" : "Importer";
+  for (const key of ["title", "author", "year"]) $(key).value = next ? next[key] ?? "" : "";
+  $("chapters").replaceChildren(...(next ? next.chapters : []).map(c => {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `${c.chapter}. ${c.title || "Sans titre"} — ${c.segments} passages, ≈ ${c.minutes} min`
+      + (c.prepared ? " — préparé ✓" : "");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "text";
+    button.textContent = c.prepared ? "Préparer à nouveau" : "Préparer";
+    button.disabled = preparing;
+    button.addEventListener("click", () => prepare(c));
+    item.append(label, button);
+    return item;
+  }));
+}
+
+async function loadBooks(selected) {
+  const { books, job } = await call("GET", "stories/books");
+  const option = (id, text) => Object.assign(document.createElement("option"), { value: id, textContent: text });
+  $("book").replaceChildren(...books.map(b => option(b.id, `${b.title} — ${b.author}`)),
+                            option("", "Importer un livre…"));
+  const wanted = selected ?? (job.running ? job.story : $("story").value);
+  $("book").value = books.some(b => b.id === wanted) ? wanted : books.length ? books[0].id : "";
+  renderJob(job);
+  await openBook();
+}
+
+async function openBook() {
+  const id = $("book").value;
+  if (!id) return showBook(null);
+  const next = await call("GET", "stories/book?story=" + encodeURIComponent(id));
+  if ($("book").value === id) showBook(next);
+}
+
+function renderJob(job) {
+  preparing = job.running;
+  $("job").hidden = !job.story;
+  const what = `${job.story}, chapitre ${job.chapter}`;
+  $("jobstatus").textContent = job.running ? `Préparation en cours : ${what}…`
+    : job.error ? `Préparation échouée (${what}) : ${job.error}` : `Préparation terminée : ${what}.`;
+  $("jobstatus").className = job.error ? "err" : "";
+  $("joblog").textContent = (job.log || []).join("\n");
+  for (const button of $("chapters").querySelectorAll("button")) button.disabled = job.running;
+}
+
+async function prepare(chapter) {
+  if (chapter.prepared && !confirm(
+      "Préparer à nouveau ce chapitre écrase son script, corrections à la main comprises. Continuer ?")) return;
+  bookMessage("");
+  try {
+    renderJob(await call("POST", "stories/prepare",
+      { story: shownBook.id, chapter: chapter.chapter, overwrite: chapter.prepared }));
+    watchJob();
+  } catch (e) {
+    bookMessage(e.message, true);
+  }
+}
+
+let watching = false;
+async function watchJob() {
+  if (watching) return;
+  watching = true;
+  try {
+    for (;;) {
+      await new Promise(done => setTimeout(done, 2000));
+      let job;
+      try { ({ job } = await call("GET", "stories/books")); } catch (e) { continue; }
+      renderJob(job);
+      if (!job.running) break;
+    }
+    await openBook();
+    await loadStories();
+    await loadCasting();
+  } catch (e) {
+    bookMessage(e.message, true);
+  } finally {
+    watching = false;
+  }
+}
+
+const slug = text => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+let ownId = false;
+$("newid").addEventListener("input", () => { ownId = !!$("newid").value; });
+$("title").addEventListener("input", () => { if (!ownId) $("newid").value = slug($("title").value); });
+
+function base64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("fichier illisible"));
+    reader.readAsDataURL(file);
+  });
+}
+
+$("bookform").addEventListener("submit", async event => {
+  event.preventDefault();
+  const year = $("year").value.trim();
+  const body = { title: $("title").value, author: $("author").value,
+                 year: year === "" ? null : Number(year) };
+  const importing = !shownBook;
+  $("booksave").disabled = true;
+  bookMessage(importing ? "Import en cours…" : "");
+  try {
+    if (importing) {
+      const file = $("file").files[0];
+      Object.assign(body, { story: $("newid").value, filename: file.name,
+                            rule: $("rule").value, content: await base64(file) });
+    } else {
+      body.story = shownBook.id;
+    }
+    const saved = await call("POST", importing ? "stories/import" : "stories/book", body);
+    if (importing) { $("bookform").reset(); ownId = false; }
+    await loadBooks(saved.id);
+    await loadStories();
+    bookMessage(importing ? `Livre importé : ${saved.chapters.length} chapitre(s).` : "Enregistré.");
+    refresh();
+  } catch (e) {
+    bookMessage(e.message, true);
+  } finally {
+    $("booksave").disabled = false;
+  }
+});
+$("book").addEventListener("change", () => {
+  bookMessage("");
+  openBook().catch(e => bookMessage(e.message, true));
+});
+
 async function loop() {
   await refresh();
   setTimeout(loop, 1000);
 }
 loadStories().then(loadCasting).catch(e => { commandError = e.message; }).finally(loop);
+loadBooks().then(() => { if (preparing) watchJob(); }).catch(e => bookMessage(e.message, true));
 </script>
 </body>
 </html>
