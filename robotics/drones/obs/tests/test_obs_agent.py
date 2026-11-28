@@ -21,6 +21,21 @@ class TestParse(unittest.TestCase):
         self.assertEqual(oa.parse_say("bonjour"), "bonjour")
         self.assertEqual(oa.parse_say(json.dumps({"text": "bonjour", "sync": "s-1"})), "bonjour")
 
+    def test_noise_caption(self):
+        noise = json.dumps({"text": "[coup de feu]", "sound": "bXAz"})
+        self.assertEqual(oa.parse_say(noise), "[coup de feu]")
+        self.assertTrue(oa.is_sound(noise))
+        for data in ("bonjour", json.dumps({"text": "a", "sync": "s-1"}), "{bad"):
+            self.assertFalse(oa.is_sound(data), data)
+        hub = oa.OverlayHub()
+        q = hub.subscribe()
+        hub.add_caption("Bonjour.")
+        hub.add_caption("[coup de feu]", True)
+        hub.publish_audio(b"a")
+        hub.publish_audio(b"b")
+        self.assertEqual([(e["text"], e["sound"]) for e in (q.get_nowait(), q.get_nowait())],
+                         [("Bonjour.", False), ("[coup de feu]", True)])
+
     def test_audio_out(self):
         b64 = base64.b64encode(b"mp3").decode()
         self.assertEqual(oa.parse_audio_out(b64), (b"mp3", ""))

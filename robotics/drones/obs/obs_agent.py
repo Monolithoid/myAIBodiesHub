@@ -183,18 +183,18 @@ class OverlayHub:
         with self._lock:
             return self._audio.get(audio_id)
 
-    def add_caption(self, text: str):
+    def add_caption(self, text: str, sound: bool = False):
         with self._lock:
-            self._captions.append((time.monotonic(), text))
+            self._captions.append((time.monotonic(), text, sound))
 
-    def _pop_caption(self) -> str:
+    def _pop_caption(self) -> tuple[str, bool]:
         # Each "say" text is synthesized into one MP3, in the same order.
         now = time.monotonic()
         while self._captions:
-            t, text = self._captions.popleft()
+            t, text, sound = self._captions.popleft()
             if now - t <= CAPTION_MAX_AGE_S:
-                return text
-        return ""
+                return text, sound
+        return "", False
 
     def publish_audio(self, mp3: bytes) -> str:
         audio_id = str(next(self._ids))
@@ -202,7 +202,9 @@ class OverlayHub:
             self._audio[audio_id] = mp3
             while len(self._audio) > self._keep:
                 self._audio.pop(next(iter(self._audio)))
-            event = {"id": audio_id, "text": self._pop_caption()}
+            text, sound = self._pop_caption()
+            # "sound": a story's noise, captioned like for the deaf ("[coup de feu]").
+            event = {"id": audio_id, "text": text, "sound": sound}
             for q in self._clients:
                 try:
                     q.put_nowait(event)
@@ -226,6 +228,15 @@ def parse_say(data: str) -> str:
         if isinstance(obj, dict) and "text" in obj:
             return str(obj.get("text") or "").strip()
     return data
+
+
+def is_sound(data: str) -> bool:
+    """A story's noise: JSON {"text": "[coup de feu]", "sound": base64 MP3}."""
+    try:
+        obj = json.loads(data or "")
+    except ValueError:
+        return False
+    return isinstance(obj, dict) and isinstance(obj.get("sound"), str) and bool(obj["sound"])
 
 
 def parse_audio_out(data: str) -> tuple[bytes, str]:
@@ -298,9 +309,10 @@ _audio_q: queue.Queue = queue.Queue(maxsize=50)
 
 
 def on_say(msg: dict):
-    text = parse_say(msg.get("data") or "")
+    data = msg.get("data") or ""
+    text = parse_say(data)
     if text:
-        HUB.add_caption(text)
+        HUB.add_caption(text, is_sound(data))
 
 
 def on_audio_out(msg: dict):

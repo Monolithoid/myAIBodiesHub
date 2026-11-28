@@ -113,6 +113,7 @@ ROBOT_HTML = pathlib.Path(__file__).with_name("robot.html")
 GAMES_HTML = pathlib.Path(__file__).with_name("games.html")
 STORIES_HTML = pathlib.Path(__file__).with_name("stories.html")
 STORY_IMPORT_MAX_BYTES = 12_000_000     # a book in base64 (about 9 MB of file)
+STORY_SOUND_MAX_BYTES = 1_400_000       # a noise in base64 (sounds.MAX_BYTES of file)
 # Routes of the /jeux page relayed to game-master (method, regie path → game-master path).
 GAME_ROUTES = {("GET", "/game/state"): "/state", ("GET", "/game/settings"): "/settings",
                ("GET", "/game/scores"): "/scores", ("POST", "/game/settings"): "/settings",
@@ -385,7 +386,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if url.path.startswith("/stories/"):
             # A whole book is sent at its import.
-            limit = STORY_IMPORT_MAX_BYTES if url.path == "/stories/import" else 10_000
+            limit = {"/stories/import": STORY_IMPORT_MAX_BYTES,
+                     "/stories/sounds/upload": STORY_SOUND_MAX_BYTES}.get(url.path, 10_000)
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > limit:

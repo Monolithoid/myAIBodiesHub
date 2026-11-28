@@ -3,6 +3,8 @@
     cd robotics/shared && python3 -m unittest discover -s tests -v
 """
 
+import base64
+import json
 import os
 import sys
 import unittest
@@ -27,6 +29,14 @@ class TestVoice(unittest.TestCase):
         self.assertEqual(speech_services.say_text('{"text": "a", "voice": "male"}'), "a")
         for data in ("bonjour", "42", '{"x": 1}'):
             self.assertEqual(speech_services.say_text(data), data)
+
+    def test_say_sound(self):
+        self.assertEqual(speech_services.say_sound('{"text": "[tonnerre]", "sound": "bXAz"}'),
+                         b"mp3")
+        big = base64.b64encode(b"x" * (speech_services.MAX_SOUND_BYTES + 1)).decode()
+        for data in ("bonjour", "", '{"text": "a"}', '{"text": "a", "sound": "pas du base64 !"}',
+                     '{"text": "a", "sound": 3}', json.dumps({"text": "a", "sound": big})):
+            self.assertEqual(speech_services.say_sound(data), b"", data[:40])
 
     def test_failed_voice_falls_back_to_the_default(self):
         calls = []

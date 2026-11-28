@@ -15,6 +15,10 @@ reading stops, whatever the reason, errors included.
   a chapter changes, the next text is timed or has a gesture, or "pause_after_s" is
   long; a command given after that applies one passage later
   "at_ms": the text waits for that instant on the story clock (paused with the reading)
+
+A sound with a file of the bank (sounds.py) is a passage too, played like a sentence
+by the same voices ("as if NAO made the noise"), captioned "[theme]"; a sound
+without a file, or whose file is missing, is skipped.
 """
 
 import json
@@ -24,9 +28,10 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import base64
 import urllib.request
 
-from storyteller import prerecording, voices
+from storyteller import prerecording, sounds, voices
 
 STOPPED, PLAYING, PAUSED = "stopped", "playing", "paused"
 ACTIVITY = "story"
@@ -42,11 +47,20 @@ class PlayerError(Exception):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class Story:
-    def __init__(self, story_id: str, header: dict, entries: list):
+    def __init__(self, story_id: str, header: dict, entries: list, bank: list[str] = ()):
         self.id = story_id
         self.header = header
-        # Sounds are not played yet.
-        self.passages = [e for e in entries if "sound" not in e]
+        self.passages = []
+        for entry in entries:
+            if "sound" not in entry:
+                self.passages.append(entry)
+            elif entry.get("file") in bank and self.passages:
+                # Said in the mood of the text it follows.
+                before = self.passages[-1]
+                self.passages.append({**entry, "text": f"[{entry['theme']}]",
+                                      "emotion": before["emotion"],
+                                      "energy": before.get("energy", "medium"),
+                                      "pause_after_s": 0})
         if not self.passages:
             raise ValueError("no text to read")
 
@@ -85,7 +99,8 @@ class Library:
         if not _STORY_ID.fullmatch(story_id) or not (self.root / story_id).is_dir():
             raise PlayerError(f"histoire inconnue : {story_id!r}")
         try:
-            return Story(story_id, *prerecording.load_story(self.root / story_id))
+            return Story(story_id, *prerecording.load_story(self.root / story_id),
+                         sounds.files(self.root))
         except ValueError as e:
             raise PlayerError(f"{story_id} illisible : {e}") from None
 
@@ -107,7 +122,8 @@ class Library:
 
 
 class Bookmarks:
-    """Where each story stands (SQLite): the next passage to read, by segment number."""
+    """Where each story stands (SQLite): the next passage to read, by segment number
+    (sound = 1: the sound after that segment)."""
 
     def __init__(self, path: str):
         self._db = sqlite3.connect(path, check_same_thread=False)
@@ -115,24 +131,29 @@ class Bookmarks:
         with self._lock:
             self._db.execute("CREATE TABLE IF NOT EXISTS bookmarks (story TEXT PRIMARY KEY,"
                              " chapter INTEGER, seg INTEGER, updated REAL)")
+            columns = [row[1] for row in self._db.execute("PRAGMA table_info(bookmarks)")]
+            if "sound" not in columns:      # bookmarks written before the sounds
+                self._db.execute("ALTER TABLE bookmarks ADD COLUMN sound INTEGER DEFAULT 0")
             self._db.commit()
 
     def put(self, story: Story, index: int):
         passage = story.passages[index]
         with self._lock:
-            self._db.execute("INSERT OR REPLACE INTO bookmarks VALUES (?, ?, ?, ?)",
-                             (story.id, passage["chapter"], passage["seg"], time.time()))
+            self._db.execute("INSERT OR REPLACE INTO bookmarks (story, chapter, seg, updated,"
+                             " sound) VALUES (?, ?, ?, ?, ?)",
+                             (story.id, passage["chapter"], passage["seg"], time.time(),
+                              int("sound" in passage)))
             self._db.commit()
 
     def index(self, story: Story) -> int:
         with self._lock:
-            row = self._db.execute("SELECT chapter, seg FROM bookmarks WHERE story = ?",
+            row = self._db.execute("SELECT chapter, seg, sound FROM bookmarks WHERE story = ?",
                                    (story.id,)).fetchone()
         if row is None:
             return 0
         # The script may have changed: the first passage at or after the bookmark.
         return next((i for i, p in enumerate(story.passages)
-                     if (p["chapter"], p["seg"]) >= tuple(row)), 0)
+                     if (p["chapter"], p["seg"], int("sound" in p)) >= tuple(row)), 0)
 
 
 class Clock:
@@ -637,8 +658,16 @@ class Player:
                                     timeout=pause)
 
     def _order(self, passage: dict) -> dict:
-        actions = [{"type": "speech", "text": passage["text"],
-                    **voices.speech_options(self._story.header, passage.get("speaker"))}]
+        if "sound" in passage:
+            try:
+                mp3 = sounds.read(self.library.root, passage["file"])
+            except (OSError, ValueError) as e:
+                raise PlayerError(f"son {passage['file']} illisible : {e}") from None
+            actions = [{"type": "speech", "text": passage["text"],
+                        "sound": base64.b64encode(mp3).decode()}]
+        else:
+            actions = [{"type": "speech", "text": passage["text"],
+                        **voices.speech_options(self._story.header, passage.get("speaker"))}]
         if passage.get("gesture"):
             actions.append({"type": "gesture", **passage["gesture"]})
         return {"source": ACTIVITY, "emotion": passage["emotion"],

@@ -46,8 +46,9 @@ and these names are kept stable.
 | `--caption-text-align` | `center` | text alignment inside the box |
 | `--caption-bg` / `--caption-color` | `#000` / `#ffff00` | colours (classic yellow on black) |
 | `--caption-radius` | `0` | corner rounding (square by default) |
+| `--caption-sound-color` | `#c77dff` | colour of a story's noise caption, e.g. `[coup de feu]` (purple) |
 
-Stable hooks: `#caption` (the subtitle, `.on` while shown), `#unlock` (red "Son
+Stable hooks: `#caption` (the subtitle, `.on` while shown, `.sound` for a noise), `#unlock` (red "Son
 bloqué" banner, `.on` while shown).
 
 ### Games overlay (`#panel`)

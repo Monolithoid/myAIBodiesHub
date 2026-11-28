@@ -92,8 +92,8 @@ JSON Lines, schema in
 A header line `{title, author, year, chapters, source, profile, timed, voices}`, then
 one line per text: `text`, `emotion`, `seg`, `chapter`, and optionally `speaker`,
 `energy`, `gesture`, `pause_after_s`, `at_ms` (milliseconds from the start of the
-story; the text waits for that instant). Entries `{sound, theme, file?}` are accepted
-and not played yet.
+story; the text waits for that instant). Entries `{sound, theme, file?}` are noises
+played after the text before them (see **Sounds**).
 
 The director may propose a sound after a segment that tells it: a short noise only
 (gunshot, rockfall, explosion, thunder), never music or a lasting ambience, at most one
@@ -123,6 +123,27 @@ the same voices.
 `POST /perform` takes `voice`, `rate` and `pitch` on a speech action; a voice that
 fails falls back to NAO's voice. Redeploy `body-gateway`, `regie`, `nao-core` (and
 the static drone if it should use them): an older driver ignores them.
+
+## Sounds
+
+The bank is `_sounds/` in the stories directory (`/opt/ia/nao/stories/_sounds/` on the
+host), shared by every story: short MP3 noises, 1 MB at most, named after the sound
+they make (`coup-de-feu.mp3`). It is never listed as a story.
+
+In **Sons**, on the stories page (while the story is stopped), each proposed sound
+shows the text it follows. Pick a file of the bank, or upload an MP3: it joins the
+bank under the sound's name, then is assigned (an existing file is never replaced:
+pick it from the list). "Associer …" offers the bank file named after the sound.
+"Retirer" takes the sound out of the script.
+
+A sound with a file is read like a sentence, as if NAO made the noise: `POST /perform`
+gets a speech action whose text is the caption `[coup de feu]` and whose `sound` is the
+MP3 (base64). It goes to the same voices as NAO's speech (OBS, the static drone's
+speaker, NAO when no voice is connected and its driver plays MP3), without edge-tts,
+and the next text waits for its end. The OBS caption is shown in purple
+(`--caption-sound-color`, [OBS overlays](obs-overlays.md)). A sound without a file, or
+whose file is missing, is skipped. Redeploy `regie`, `body-gateway`, `nao-core` and
+`obs-agent`: an older driver would read the caption aloud.
 
 ## Read it
 

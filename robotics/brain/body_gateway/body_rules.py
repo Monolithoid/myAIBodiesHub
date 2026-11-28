@@ -12,6 +12,8 @@ Angles du drone statique (ADR 004) : degrés, 0 = axe de la caméra,
 positif = à droite.  HeadYaw du NAO : radians, positif = vers la gauche du robot.
 """
 
+import base64
+import binascii
 import json
 import math
 import re
@@ -373,13 +375,16 @@ STORY_EMOTION_STATE = {"curious": "curious", "excited": "excited", "joyful": "ex
                        "angry": "excited", "uncertain": "uncertain", "worried": "uncertain",
                        "scared": "uncertain"}
 PERFORM_ACTIONS = ("speech", "gesture", "leds")
+MAX_SOUND_BYTES = 1_000_000     # a story's noise (speech_services.MAX_SOUND_BYTES)
 
 
 def perform_request(body, registry: list[str], gesture_emotions: list) -> dict:
     """{"actions", "emotion", "energy"} ready to dispatch; ValueError when unusable.
 
     Actions without "body" go to the NAO (speech is then routed to every voice).
-    A gesture emotion the NAO does not know is mapped to a learned one.
+    A gesture emotion the NAO does not know is mapped to a learned one.  A speech
+    action with "sound" (base64 MP3) is a story's noise: played instead of the text,
+    which is its caption ("[coup de feu]").
     """
     body = body if isinstance(body, dict) else {}
     actions = body.get("actions")
@@ -393,6 +398,8 @@ def perform_request(body, registry: list[str], gesture_emotions: list) -> dict:
         action = {"body": nao, **action}
         if action["type"] == "speech" and not str(action.get("text", "")).strip():
             raise ValueError("a speech action needs a text")
+        if action["type"] == "speech" and "sound" in action:
+            _check_sound(action["sound"])
         emotion = str(action.get("emotion", ""))
         if action["type"] == "gesture" and gesture_emotions and emotion not in gesture_emotions:
             action["emotion"] = STORY_GESTURES.get(emotion, emotion)
@@ -402,14 +409,24 @@ def perform_request(body, registry: list[str], gesture_emotions: list) -> dict:
             "energy": str(body.get("energy") or "medium")}
 
 
+def _check_sound(sound):
+    try:
+        size = len(base64.b64decode(sound, validate=True)) if isinstance(sound, str) else 0
+    except (binascii.Error, ValueError):
+        size = 0
+    if not 0 < size <= MAX_SOUND_BYTES:
+        raise ValueError(f"'sound' must be a base64 MP3 of at most {MAX_SOUND_BYTES} bytes")
+
+
 SAY_OPTIONS = ("voice", "rate", "pitch")   # a story character; the drivers check them
 
 
 def say_payload(action: dict, sync_id: str = "") -> str:
     """/actuators/say message of a speech action: plain text, or JSON {"text", "sync"?,
-    "voice"?, "rate"?, "pitch"?}."""
+    "voice"?, "rate"?, "pitch"?, "sound"?}."""
     text = action.get("text", "")
-    extra = {k: action[k] for k in SAY_OPTIONS if isinstance(action.get(k), str) and action[k]}
+    extra = {k: action[k] for k in (*SAY_OPTIONS, "sound")
+             if isinstance(action.get(k), str) and action[k]}
     if sync_id:
         extra["sync"] = sync_id
     return json.dumps({"text": text, **extra}) if extra else text

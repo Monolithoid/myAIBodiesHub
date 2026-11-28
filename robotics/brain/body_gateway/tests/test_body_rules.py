@@ -368,6 +368,8 @@ class TestSayPayload(unittest.TestCase):
         action = {"text": "a", "voice": "fr-FR-HenriNeural", "rate": "-5%", "pitch": "", "x": 1}
         self.assertEqual(json.loads(body_rules.say_payload(action)),
                          {"text": "a", "voice": "fr-FR-HenriNeural", "rate": "-5%"})
+        self.assertEqual(json.loads(body_rules.say_payload({"text": "[tonnerre]", "sound": "bXAz"})),
+                         {"text": "[tonnerre]", "sound": "bXAz"})
 
 
 class TestPerform(unittest.TestCase):
@@ -381,6 +383,12 @@ class TestPerform(unittest.TestCase):
         self.assertEqual(order["actions"][1]["emotion"], "fear")
         self.assertEqual((order["emotion"], order["energy"]), ("uncertain", "low"))
 
+    def test_noise(self):
+        order = body_rules.perform_request(
+            {"actions": [{"type": "speech", "text": "[coup de feu]", "sound": "bXAz"}]},
+            REGISTRY, [])
+        self.assertEqual(order["actions"][0]["sound"], "bXAz")
+
     def test_every_story_emotion_has_a_learned_gesture(self):
         learned = {"joy", "sadness", "anger", "fear", "surprise", "calm"}
         for emotion in ("neutral", "calm", "curious", "joyful", "excited", "uncertain",
@@ -390,7 +398,10 @@ class TestPerform(unittest.TestCase):
     def test_refused(self):
         for body in (None, {}, {"actions": []}, {"actions": ["x"]},
                      {"actions": [{"type": "move", "x": 1}]},
-                     {"actions": [{"type": "speech", "text": " "}]}):
+                     {"actions": [{"type": "speech", "text": " "}]},
+                     {"actions": [{"type": "speech", "text": "[x]", "sound": "pas du base64"}]},
+                     {"actions": [{"type": "speech", "text": "[x]", "sound": ""}]},
+                     {"actions": [{"type": "speech", "text": "[x]", "sound": 3}]}):
             with self.assertRaises(ValueError, msg=body):
                 body_rules.perform_request(body, REGISTRY, [])
 
