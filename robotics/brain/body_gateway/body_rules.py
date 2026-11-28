@@ -12,6 +12,7 @@ Angles du drone statique (ADR 004) : degrés, 0 = axe de la caméra,
 positif = à droite.  HeadYaw du NAO : radians, positif = vers la gauche du robot.
 """
 
+import json
 import math
 import re
 import threading
@@ -399,6 +400,19 @@ def perform_request(body, registry: list[str], gesture_emotions: list) -> dict:
     return {"actions": ready,
             "emotion": STORY_EMOTION_STATE.get(str(body.get("emotion", "")), "neutral"),
             "energy": str(body.get("energy") or "medium")}
+
+
+SAY_OPTIONS = ("voice", "rate", "pitch")   # a story character; the drivers check them
+
+
+def say_payload(action: dict, sync_id: str = "") -> str:
+    """/actuators/say message of a speech action: plain text, or JSON {"text", "sync"?,
+    "voice"?, "rate"?, "pitch"?}."""
+    text = action.get("text", "")
+    extra = {k: action[k] for k in SAY_OPTIONS if isinstance(action.get(k), str) and action[k]}
+    if sync_id:
+        extra["sync"] = sync_id
+    return json.dumps({"text": text, **extra}) if extra else text
 
 
 # ─────────────────────────────────────────────────────────────────────────────

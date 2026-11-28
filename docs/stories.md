@@ -63,6 +63,7 @@ regular expression.
 | `book.json`, `source.txt` | description and cleaned text |
 | `chapters/01.segments.json` | frozen segments |
 | `characters.json` | characters and their voice slot (`f1`-`f3`, `m1`-`m3`) |
+| `voices.json` | voice chosen for each slot (written by the stories page) |
 | `chapters/01.annotations.json` | summary and annotations of the LLM |
 | `chapters/01.script.jsonl` | the pre-recording; may be edited by hand |
 
@@ -74,13 +75,30 @@ A header line `{title, author, year, chapters, source, profile, timed, voices}`,
 one line per text: `text`, `emotion`, `seg`, `chapter`, and optionally `speaker`,
 `energy`, `gesture`, `pause_after_s`, `at_ms` (milliseconds from the start of the
 story; the text waits for that instant). Entries `{sound, theme, file?}` are accepted
-and not played yet; voices per speaker are not applied yet either.
+and not played yet.
 
 A hand-written timed example:
 
 ```bash
 docker exec "$REGIE" cp -r /app/storyteller/examples/timed-test /data/stories/
 ```
+
+## Voices
+
+The narrator keeps NAO's voice (`TTS_VOICE` of the drivers). Every other `speaker` is
+a slot, `f1`-`f3` or `m1`-`m3`, chosen by the LLM for each character. Each slot has a
+default French edge-tts voice with a slight rate and pitch of its own. Two characters
+in the same slot sound the same.
+
+In **Personnages et voix**, at the bottom of the stories page, move a character to
+another slot or pick the voice behind a slot, then save (only while the story is
+stopped). The scripts are rewritten: their header `voices`, and the `speaker` of the
+moved characters' passages; other hand edits are kept. Chapters prepared later use
+the same voices.
+
+`POST /perform` takes `voice`, `rate` and `pitch` on a speech action; a voice that
+fails falls back to NAO's voice. Redeploy `body-gateway`, `regie`, `nao-core` (and
+the static drone if it should use them): an older driver ignores them.
 
 ## Read it
 
@@ -99,6 +117,9 @@ Control room → **Histoires** (`/stories?token=$REGIE_TOKEN`): pick the story, 
 - ⏸ keeps the activity. ⏹ saves the bookmark and gives it back; when already stopped,
   it frees a `story` activity left behind.
 - ⏮ goes to the start of the chapter, then to the previous one.
+
+The games overlay (`game-master`, `/overlay`) shows the title, the author, the year
+(if known) and "Chapitre n / total", one line each, and clears when the reading stops.
 
 One activity at a time: no game starts during a story and the other way round. The
 OBS scene can follow it with `story=<scene>` in `OBS_SCENES`

@@ -47,5 +47,6 @@ class Story(game_core.Game):
                      "Je suis en pleine histoire !", ok=False)
 
     def cancelled_event(self, player: Player) -> Event:
-        return Event("cancelled", f"La lecture de l'histoire a été arrêtée par {player.label()}.",
+        # Not "cancelled": there is no finished game to leave on the overlay, it just clears.
+        return Event("closed", f"La lecture de l'histoire a été arrêtée par {player.label()}.",
                      "J'arrête là l'histoire.")

@@ -375,21 +375,24 @@ class NAOqiDriverNode(Node):
                   on /nao/audio_out → NAOqi ALAudioPlayer (better voice quality).
         text path: send raw text on /nao/speech → NAOqi ALTextToSpeech (fallback).
         """
-        text = msg.data
+        # Plain text, or JSON {"text", "voice"?, …} for a story character.
+        text = speech_services.say_text(msg.data)
+        options = speech_services.say_options(msg.data)
         self.get_logger().info(
             f"[{ROBOT_ID}] → TTS ({self._tts_method}) : {text[:80]!r}"
         )
         # Use edge-tts audio generation when both the mp3 method is selected
         # AND a voice name is configured in TTS_VOICE.
         if self._tts_method == "mp3" and TTS_VOICE:
-            threading.Thread(target=self._tts_and_publish, args=(text,), daemon=True).start()
+            threading.Thread(target=self._tts_and_publish, args=(text, options),
+                             daemon=True).start()
         else:
             # Fallback: send raw text for native NAOqi TTS synthesis on the robot.
-            self.pub_nao_speech.publish(msg)
+            self.pub_nao_speech.publish(String(data=text))
 
-    def _tts_and_publish(self, text: str):
+    def _tts_and_publish(self, text: str, options: dict | None = None):
         try:
-            audio_mp3 = speech_services.synthesize_mp3(text, TTS_VOICE)
+            audio_mp3 = speech_services.synthesize_mp3(text, TTS_VOICE, options)
         except ImportError:
             # edge-tts not available in this environment — fall back to native TTS.
             self.get_logger().warn("edge-tts non installé — fallback texte NAOqi")

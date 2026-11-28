@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 
-from storyteller import prerecording
+from storyteller import prerecording, voices
 
 STOPPED, PLAYING, PAUSED = "stopped", "playing", "paused"
 ACTIVITY = "story"
@@ -388,6 +388,19 @@ class Player:
                     self._cond.notify_all()
             return self._state()
 
+    def edit(self, story_id: str, change):
+        """change() rewrites a story's files: refused while it is read."""
+        with self._cond:
+            if self._story is not None and self._story.id == story_id and (
+                    self._status != STOPPED
+                    or (self._worker is not None and self._worker.is_alive())):
+                raise PlayerError("arrête d'abord la lecture de cette histoire")
+            result = change()
+            if self._story is not None and self._story.id == story_id:
+                self._story = self.library.load(story_id)
+                self._index = self.bookmarks.index(self._story)
+            return result
+
     def state(self, story_id: str = "") -> dict:
         with self._cond:
             if self._status == STOPPED and story_id:
@@ -622,9 +635,9 @@ class Player:
                 self._cond.wait_for(lambda: self._status != PLAYING or self._index != following,
                                     timeout=pause)
 
-    @staticmethod
-    def _order(passage: dict) -> dict:
-        actions = [{"type": "speech", "text": passage["text"]}]
+    def _order(self, passage: dict) -> dict:
+        actions = [{"type": "speech", "text": passage["text"],
+                    **voices.speech_options(self._story.header, passage.get("speaker"))}]
         if passage.get("gesture"):
             actions.append({"type": "gesture", **passage["gesture"]})
         return {"source": ACTIVITY, "emotion": passage["emotion"],

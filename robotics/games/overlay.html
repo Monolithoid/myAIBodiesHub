@@ -13,7 +13,7 @@
              --panel-width: 520px; --panel-scale: 1; --panel-bg: rgba(18, 18, 28, 0.86);
              --panel-border-width: 2px; --panel-radius: 14px; --panel-padding: 16px 20px; }
      — see docs/obs-overlays.md. Stable hooks: #panel, #title, #view, #event, #footer,
-     #scores, and one class per game view (.hangman, .investigation). */
+     #scores, and one class per game view (.hangman, .investigation, .story). */
   :root {
     --panel-top: 0;
     --panel-right: 0;
@@ -79,6 +79,10 @@
   .investigation .card.solution { color: var(--panel-highlight); font-weight: 700; }
   .investigation .clues { margin-top: 8px; font-size: 14px; font-style: italic; color: #cfe6ff; }
   .investigation .who { margin-top: 6px; font-size: 14px; color: #a8a8b8; }
+  /* Story: title, author, year and chapter, one line each. */
+  .story > div { overflow-wrap: anywhere; }
+  .story .book { font-size: 32px; font-weight: 700; line-height: 1.2; margin-bottom: 6px; }
+  .story .chapter { margin-top: 10px; color: var(--panel-highlight); font-weight: 700; }
   /* A long case: the event line is kept short. */
   #panel.mystery #event { font-size: 16px; }
   #event { font-size: 19px; color: var(--panel-highlight); min-height: 1.3em; }
@@ -201,6 +205,15 @@ views.mystery = (view, el) => {
   el.append(box);
 };
 
+// Story: the book NAO reads and where the reading is.
+views.story = (view, el) => {
+  const box = text("div", "story", "");
+  box.append(text("div", "book", view.title || ""), text("div", "author", view.author || ""));
+  if (view.year != null) box.append(text("div", "year", view.year));
+  if (view.chapter != null) box.append(text("div", "chapter", `Chapitre ${view.chapter} / ${view.chapters}`));
+  el.append(box);
+};
+
 // Shrinks an element's font until its text fits its width (one line).
 function fitText(el, maxPx, minPx) {
   if (!el) return;
@@ -264,12 +277,14 @@ function render(state) {
   const viewEl = document.getElementById("view");
   viewEl.replaceChildren();
   if (activity) {
+    const story = activity.game === "story";
     document.getElementById("title").textContent =
+      story ? "Lecture en cours" :
       activity.game === "mystery" ? "Enquête en cours" : activity.name + " — en cours";
     (views[activity.game] || defaultView)(activity.view || {}, viewEl);
     // The mystery view names its last investigator itself.
-    document.getElementById("footer").textContent = activity.game === "mystery"
-      ? "Lancée par " + activity.started_by
+    document.getElementById("footer").textContent = story ? ""
+      : activity.game === "mystery" ? "Lancée par " + activity.started_by
       : activity.last_player ? "Dernier coup : " + activity.last_player : "Lancée par " + activity.started_by;
   } else {
     // Game just over: its last view and the last event stay on screen a little while.
@@ -281,7 +296,9 @@ function render(state) {
     hideTimer = setTimeout(() => panel.classList.remove("shown"),
                            shownGame === "mystery" ? 60000 : 20000);
   }
-  document.getElementById("event").textContent = last ? (last.say || last.text) : "";
+  // The start of a story says nothing more than the view: no event line.
+  const quiet = !last || (activity && activity.game === "story" && last.kind === "started");
+  document.getElementById("event").textContent = quiet ? "" : (last.say || last.text);
   renderScores(state.scores, !activity);
   panel.classList.add("shown");
   fitPanel(panel);

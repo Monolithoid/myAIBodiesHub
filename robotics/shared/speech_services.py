@@ -14,6 +14,8 @@ block the rclpy loop.
 
 import asyncio
 import io
+import json
+import re
 
 import requests
 
@@ -59,12 +61,54 @@ def is_meaningful(text: str) -> bool:
     return not any(h in lower for h in HALLUCINATIONS)
 
 
-def synthesize_mp3(text: str, voice: str) -> bytes:
-    """Generates an MP3 with edge-tts. Raises ImportError if edge-tts is not installed."""
+# Optional voice of an /actuators/say message (a story character), by its format.
+VOICE_OPTIONS = {"voice": r"[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural",
+                 "rate": r"[+-]\d{1,2}%", "pitch": r"[+-]\d{1,2}Hz"}
+
+
+def say_options(data: str) -> dict:
+    """{"voice"?, "rate"?, "pitch"?} of a JSON /actuators/say message; {} for plain text."""
+    try:
+        obj = json.loads(data or "")
+    except ValueError:
+        return {}
+    if not isinstance(obj, dict) or "text" not in obj:
+        return {}
+    return {key: obj[key] for key, form in VOICE_OPTIONS.items()
+            if isinstance(obj.get(key), str) and re.fullmatch(form, obj[key])}
+
+
+def say_text(data: str) -> str:
+    """The sentence of an /actuators/say message: plain text or JSON {"text", …}."""
+    try:
+        obj = json.loads(data or "")
+    except ValueError:
+        return data
+    return str(obj["text"] or "") if isinstance(obj, dict) and "text" in obj else data
+
+
+def synthesize_mp3(text: str, voice: str, options: dict | None = None) -> bytes:
+    """Generates an MP3 with edge-tts. Raises ImportError if edge-tts is not installed.
+
+    options (say_options) replace `voice` and set rate and pitch; if that synthesis
+    fails, the sentence is said with `voice` rather than lost.
+    """
+    if options:
+        extra = {k: v for k, v in options.items() if k != "voice"}
+        try:
+            return _synthesize(text, options.get("voice", voice), **extra)
+        except ImportError:
+            raise
+        except Exception as e:
+            print(f"[speech] voice {options} failed ({e}): default voice", flush=True)
+    return _synthesize(text, voice)
+
+
+def _synthesize(text: str, voice: str, **prosody) -> bytes:
     import edge_tts
 
     async def _gen():
-        communicate = edge_tts.Communicate(text, voice)
+        communicate = edge_tts.Communicate(text, voice, **prosody)
         buf = io.BytesIO()
         async for chunk in communicate.stream():
             # Only audio chunks contain binary data — skip metadata events.

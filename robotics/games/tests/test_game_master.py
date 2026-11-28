@@ -404,7 +404,9 @@ class TestStory(unittest.TestCase):
         self.master.start("story", self.REGIE, options=self.VIEW)
         self.assertIn("histoire", self.master.start("count", self.REGIE).text)
         self.assertFalse(self.master.move({"type": "number", "value": 3}, self.REGIE).ok)
-        self.assertTrue(self.master.stop(self.REGIE, "story").ok)
+        event = self.master.stop(self.REGIE, "story")
+        self.assertTrue(event.ok)
+        self.assertEqual(event.kind, "closed")     # the overlay clears: no "game over" panel
         self.assertFalse(self.master.busy)
 
     def test_view_update_keeps_the_last_event(self):

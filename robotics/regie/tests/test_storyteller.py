@@ -13,7 +13,7 @@ import unittest
 REGIE = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REGIE))
 
-from storyteller import annotate, book, prepare, prerecording, segment  # noqa: E402
+from storyteller import annotate, book, prepare, prerecording, segment, voices  # noqa: E402
 
 HEADER = {"title": "Voyage", "author": "Jules Verne", "year": 1864, "chapters": 2,
           "source": "v.txt", "profile": "stream", "timed": False, "voices": {}}
@@ -244,6 +244,57 @@ class TestAnnotate(unittest.TestCase):
         other = annotate.brain_env({**env, "STORY_BRAIN_PROVIDER": "anthropic",
                                     "STORY_BRAIN_TIMEOUT": "900"})
         self.assertEqual(other, {"BRAIN_PROVIDER": "anthropic", "BRAIN_TIMEOUT": "900"})
+
+
+class TestCasting(unittest.TestCase):
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = pathlib.Path(tmp.name)
+        (self.dir / "chapters").mkdir()
+        sheet = [SHEET[0], {**SHEET[0], "id": "axel", "name": "Axel"}]      # both in m2
+        (self.dir / "characters.json").write_text(json.dumps({"characters": sheet}))
+        speakers = ["lidenbrock", "axel", "narrator"]
+        annotations = [annotation(n, speaker=who) for n, who in enumerate(speakers, 1)]
+        (self.dir / "chapters" / "01.annotations.json").write_text(
+            json.dumps({"segments": annotations}))
+        header = {"title": "V", "author": "A", "year": None, "chapters": 1, "voices": {}}
+        self.script = self.dir / "chapters" / "01.script.jsonl"
+        self.script.write_text(prerecording.dumps(
+            header, annotate.merge(SEGMENTS[:3], annotations, sheet)))
+
+    def speakers(self):
+        return [e["speaker"] for e in prerecording.load_story(self.dir)[1]]
+
+    def test_defaults(self):
+        cast = voices.casting(self.dir)
+        self.assertEqual([c["id"] for c in cast["characters"]], ["lidenbrock", "axel"])
+        self.assertEqual(set(cast["voices"]), set(prerecording.VOICE_SLOTS))
+        self.assertTrue(set(cast["voices"].values()) <= set(voices.CHOICES))
+        self.assertEqual(voices.speech_options({}, "narrator"), {})
+
+    def test_move_a_character_and_pick_a_voice(self):
+        cast = voices.save(self.dir, {"axel": "m3"}, {"m3": "fr-CA-JeanNeural"})
+        self.assertEqual(self.speakers(), ["m2", "m3", "narrator"])
+        self.assertEqual(prerecording.load_story(self.dir)[0]["voices"]["m3"], "fr-CA-JeanNeural")
+        self.assertEqual([c["voice"] for c in cast["characters"]], ["m2", "m3"])
+        self.assertEqual(cast["voices"]["m3"], "fr-CA-JeanNeural")
+
+    def test_a_speaker_corrected_by_hand_stays(self):
+        header, entries = prerecording.load_story(self.dir)
+        entries[1]["speaker"] = "narrator"
+        self.script.write_text(prerecording.dumps(header, entries))
+        voices.save(self.dir, {"axel": "m3"}, {})
+        self.assertEqual(self.speakers(), ["m2", "narrator", "narrator"])
+
+    def test_refused_without_writing(self):
+        before = self.script.read_text()
+        for slots, chosen in (({"x": "m1"}, {}), ({"axel": "m9"}, {}), ({}, {"m1": "robot"}),
+                              ({}, {"x1": "fr-CA-JeanNeural"}), (None, {})):
+            with self.assertRaises(ValueError, msg=(slots, chosen)):
+                voices.save(self.dir, slots, chosen)
+        self.assertEqual(self.script.read_text(), before)
 
 
 class TestPrepare(unittest.TestCase):
