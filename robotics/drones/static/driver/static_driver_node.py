@@ -29,6 +29,7 @@ Sensor flow (drone → brain):
 
 Command flow (brain → drone):
   /bodies/{id}/actuators/say → edge-tts → /drones/{id}/audio_out (String, MP3 base64)
+                                 a story's noise ({"text", "sound"}): its MP3, no edge-tts
   Speech ↔ gesture sync: body_gateway sends {"text", "sync"} instead of plain text
   when a NAO gesture goes with the sentence.  Then audio_out is JSON
   {"mp3", "sync", "speech_s"} (the drone holds the sentence until the gesture
@@ -253,6 +254,12 @@ class StaticDriverNode(Node):
         text, sync = parse_say(msg.data)
         if not text:
             return
+        sound = speech_services.say_sound(msg.data)
+        if sound:
+            # A story's noise: its MP3 is played like a sentence, the text is its caption.
+            self.get_logger().info(f"[{DRONE_ID}] → son : {text[:80]!r}")
+            self._publish_mp3(sound, sync)
+            return
         self.get_logger().info(f"[{DRONE_ID}] → TTS : {text[:80]!r}" + (f" (sync {sync})" if sync else ""))
         options = speech_services.say_options(msg.data)
         threading.Thread(target=self._tts_and_publish, args=(text, sync, options),
@@ -270,6 +277,10 @@ class StaticDriverNode(Node):
             self.get_logger().warn(f"edge-tts erreur: {e} — phrase perdue")
             self._release(sync, "edge-tts en erreur")
             return
+        self._publish_mp3(audio_mp3, sync)
+        self.get_logger().info(f"TTS audio envoyé ({len(audio_mp3)} octets MP3)")
+
+    def _publish_mp3(self, audio_mp3: bytes, sync: str = ""):
         b64 = base64.b64encode(audio_mp3).decode()
         out = String()
         if sync:
@@ -282,7 +293,6 @@ class StaticDriverNode(Node):
         else:
             out.data = b64
         self.pub_audio_out.publish(out)
-        self.get_logger().info(f"TTS audio envoyé ({len(audio_mp3)} octets MP3)")
 
     def _release(self, sync: str, reason: str):
         """No sentence after all: the gesture must not wait for it."""

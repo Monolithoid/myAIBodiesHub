@@ -54,6 +54,11 @@
                  border-top: 1px solid var(--line); }
   #chapters li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   #joblog { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+  #soundlist { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+  #soundlist li { padding: 8px 0; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+  #soundlist .theme { color: #c77dff; font-weight: 600; }
+  #soundlist .before { overflow-wrap: anywhere; }
+  #soundlist input[type=file] { width: auto; }
 </style>
 </head>
 <body>
@@ -90,6 +95,13 @@
     <div class="cast" id="characters"></div>
     <div class="cast" id="slots"></div>
     <button type="button" id="save">Enregistrer</button><span id="saved" role="status"></span>
+  </section>
+  <section id="sounds" hidden>
+    <h2>Sons</h2>
+    <p class="muted">Bruits proposés à la préparation, joués après le passage cité. Un son sans
+      fichier n'est pas joué. Modifiable quand la lecture est arrêtée.</p>
+    <ul id="soundlist"></ul>
+    <div class="msg" id="soundmessage" role="status"></div>
   </section>
   <section>
     <h2>Livres</h2>
@@ -181,6 +193,7 @@ let castStory = "";
 function lockCasting() {
   const locked = (state.status || "stopped") !== "stopped";
   for (const field of $("casting").querySelectorAll("select, button")) field.disabled = locked;
+  for (const field of $("sounds").querySelectorAll("select, input, button.change")) field.disabled = locked;
 }
 
 function choice(label, options, value, data) {
@@ -286,7 +299,113 @@ for (const button of document.querySelectorAll("button[data-cmd]")) {
     }
   });
 }
-$("story").addEventListener("change", () => { commandError = ""; refresh(); loadCasting(); });
+$("story").addEventListener("change", () => { commandError = ""; refresh(); loadCasting(); loadSounds(); });
+
+// Sounds: like the casting, loaded when the story changes or after a change.
+let soundStory = "";
+
+function soundMessage(message, error) {
+  $("soundmessage").textContent = message;
+  $("soundmessage").className = error ? "msg err" : "msg";
+}
+
+function soundRow(sound, bank) {
+  const item = document.createElement("li");
+  const head = document.createElement("div");
+  const theme = Object.assign(document.createElement("span"),
+    { className: "theme", textContent: `[${sound.theme}]` });
+  head.append(theme, ` chapitre ${sound.chapter}`);
+  const before = Object.assign(document.createElement("div"),
+    { className: "before muted", textContent: `après « ${sound.before} »` });
+  const row = document.createElement("div");
+  row.className = "row";
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", `Fichier du son ${sound.theme}`);
+  const option = (value, text) => Object.assign(document.createElement("option"), { value, textContent: text });
+  select.append(option("", "— aucun fichier —"), ...bank.map(f => option(f, f)));
+  if (sound.missing) select.append(option(sound.file, `${sound.file} (absent)`));
+  select.value = sound.file;
+  select.addEventListener("change", () => assignSound(sound, { file: select.value }));
+  const listen = Object.assign(document.createElement("button"),
+    { type: "button", className: "text", textContent: "Écouter" });
+  listen.addEventListener("click", () => playSound(select.value));
+  const upload = Object.assign(document.createElement("input"),
+    { type: "file", accept: ".mp3,audio/mpeg", title: "Ajouter un MP3 à la banque et l'associer" });
+  upload.setAttribute("aria-label", `Téléverser un MP3 pour ${sound.theme}`);
+  upload.addEventListener("change", () => uploadSound(sound, upload.files[0]));
+  const remove = Object.assign(document.createElement("button"),
+    { type: "button", className: "text change", textContent: "Retirer" });
+  remove.addEventListener("click", () => {
+    if (confirm(`Retirer le son [${sound.theme}] du script ?`)) assignSound(sound, { remove: true });
+  });
+  row.append(select, listen, upload, remove);
+  if (sound.suggested && !sound.file) {
+    const use = Object.assign(document.createElement("button"),
+      { type: "button", className: "text change", textContent: `Associer ${sound.suggested}` });
+    use.addEventListener("click", () => assignSound(sound, { file: sound.suggested }));
+    row.append(use);
+  }
+  item.append(head, before, row);
+  return item;
+}
+
+function renderSounds(listing) {
+  $("soundlist").replaceChildren(...listing.sounds.map(s => soundRow(s, listing.bank)));
+  $("sounds").hidden = !listing.sounds.length;
+  lockCasting();
+}
+
+async function loadSounds() {
+  const story = $("story").value;
+  soundStory = story;
+  $("sounds").hidden = true;
+  soundMessage("");
+  if (!story) return;
+  try {
+    const listing = await call("GET", "stories/sounds?story=" + encodeURIComponent(story));
+    if (soundStory === story) renderSounds(listing);
+  } catch (e) {
+    soundMessage(e.message, true);
+  }
+}
+
+async function assignSound(sound, change) {
+  soundMessage("");
+  try {
+    renderSounds(await call("POST", "stories/sound",
+      { story: soundStory, chapter: sound.chapter, seg: sound.seg, ...change }));
+    soundMessage(change.remove ? "Son retiré." : "Enregistré, pris en compte à la prochaine lecture.");
+    refresh();
+    loadStories().catch(() => {});      // its passage count changes
+  } catch (e) {
+    soundMessage(e.message, true);
+    loadSounds();
+  }
+}
+
+async function uploadSound(sound, file) {
+  if (!file) return;
+  soundMessage("Envoi…");
+  try {
+    // Named after the sound it makes, so other stories find it.
+    const { file: name } = await call("POST", "stories/sounds/upload",
+      { name: slug(sound.theme) || file.name, content: await base64(file) });
+    await assignSound(sound, { file: name });
+  } catch (e) {
+    soundMessage(e.message, true);
+    loadSounds();
+  }
+}
+
+async function playSound(name) {
+  if (!name) return soundMessage("Choisis d'abord un fichier.", true);
+  try {
+    const { content } = await call("GET", "stories/sounds/file?name=" + encodeURIComponent(name));
+    await new Audio("data:audio/mpeg;base64," + content).play();
+  } catch (e) {
+    soundMessage(e.message, true);
+  }
+}
 
 // Books: import, description, preparation of the chapters.  The form is only filled
 // when the book changes or after a change, never by the refresh loop.
@@ -377,6 +496,7 @@ async function watchJob() {
     await openBook();
     await loadStories();
     await loadCasting();
+    await loadSounds();
   } catch (e) {
     bookMessage(e.message, true);
   } finally {
@@ -436,7 +556,7 @@ async function loop() {
   await refresh();
   setTimeout(loop, 1000);
 }
-loadStories().then(loadCasting).catch(e => { commandError = e.message; }).finally(loop);
+loadStories().then(loadCasting).then(loadSounds).catch(e => { commandError = e.message; }).finally(loop);
 loadBooks().then(() => { if (preparing) watchJob(); }).catch(e => bookMessage(e.message, true));
 </script>
 </body>

@@ -374,10 +374,20 @@ class NAOqiDriverNode(Node):
         mp3 path: generate audio via edge-tts on the VPS, send base64 MP3
                   on /nao/audio_out → NAOqi ALAudioPlayer (better voice quality).
         text path: send raw text on /nao/speech → NAOqi ALTextToSpeech (fallback).
+        A story's noise (JSON with "sound") is its own MP3, played only on the mp3 path.
         """
         # Plain text, or JSON {"text", "voice"?, …} for a story character.
         text = speech_services.say_text(msg.data)
         options = speech_services.say_options(msg.data)
+        sound = speech_services.say_sound(msg.data)
+        if sound:
+            # A story's noise: its MP3, never the caption read aloud by NAOqi.
+            if self._tts_method != "mp3":
+                self.get_logger().warn(f"[{ROBOT_ID}] son {text!r} ignoré : pas de sortie MP3")
+                return
+            self.pub_nao_audio_out.publish(String(data=base64.b64encode(sound).decode()))
+            self.get_logger().info(f"[{ROBOT_ID}] → son : {text[:80]!r}")
+            return
         self.get_logger().info(
             f"[{ROBOT_ID}] → TTS ({self._tts_method}) : {text[:80]!r}"
         )

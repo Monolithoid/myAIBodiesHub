@@ -15,6 +15,10 @@ web — the /stories/… routes of the control room (the token is checked by reg
                         "rule"?}
   POST /stories/book   {"story", "title", "author", "year"}
   POST /stories/prepare {"story", "chapter", "overwrite"?}
+  GET  /stories/sounds?story=             sounds the story asks for, and the bank's files
+  GET  /stories/sounds/file?name=         {"name", "content" (base64)}: to listen to it
+  POST /stories/sounds/upload {"name", "content" (base64 MP3)}: a new file of the bank
+  POST /stories/sound  {"story", "chapter", "seg", "file" (bank file, "" = none), "remove"?}
 
 Answers: the player's state, or 409 {"error", ...state} for a refused command.
 """
@@ -22,7 +26,9 @@ Answers: the player's state, or 409 {"error", ...state} for a refused command.
 import os
 import threading
 
-from storyteller import books, voices
+import base64
+
+from storyteller import books, sounds, voices
 from storyteller import player as player_module
 
 STORIES_DIR = os.environ.get("STORIES_DIR", "/data/stories")
@@ -71,6 +77,14 @@ class StoryRoutes:
             if path == "/stories/book":
                 root = self.player().library.root
                 return 200, books.describe(root, query.get("story", [""])[0])
+            if path == "/stories/sounds":
+                library = self.player().library
+                story = library.load(query.get("story", [""])[0])
+                return 200, sounds.listing(library.root, library.root / story.id)
+            if path == "/stories/sounds/file":
+                name = query.get("name", [""])[0]
+                mp3 = sounds.read(self.player().library.root, name)
+                return 200, {"name": name, "content": base64.b64encode(mp3).decode()}
         except (player_module.PlayerError, ValueError) as e:
             return 409, {"error": str(e)}
         except OSError as e:
@@ -89,8 +103,15 @@ class StoryRoutes:
                 return 200, player.stop()
             if path == "/stories/seek":
                 return 200, player.seek(str(body.get("unit")), body.get("delta"), story)
+            if path == "/stories/sounds/upload":
+                try:
+                    with self._files:
+                        return 200, sounds.add(player.library.root, body.get("name"),
+                                               body.get("content"))
+                except ValueError as e:
+                    return 409, {"error": str(e)}
             if path in ("/stories/casting", "/stories/import", "/stories/book",
-                        "/stories/prepare"):
+                        "/stories/prepare", "/stories/sound"):
                 try:
                     with self._files:
                         return 200, self._change(player, path, story, body)
@@ -116,4 +137,7 @@ class StoryRoutes:
                 directory, body.get("characters", {}), body.get("voices", {})))
         if path == "/stories/import":
             return player.edit(story, lambda: books.add(root, body))
+        if path == "/stories/sound":
+            directory = root / player.library.load(story).id
+            return player.edit(story, lambda: sounds.assign(root, directory, body))
         return player.edit(story, lambda: books.update(root, body))

@@ -29,6 +29,7 @@
     --caption-bg: #000;
     --caption-color: #ffff00;
     --caption-radius: 0;
+    --caption-sound-color: #c77dff;
   }
   html, body { margin: 0; background: transparent; overflow: hidden;
                font-family: system-ui, sans-serif; }
@@ -42,6 +43,7 @@
              text-align: var(--caption-text-align);
              opacity: 0; transition: opacity 0.3s; }
   #caption.on { opacity: 1; }
+  #caption.sound { color: var(--caption-sound-color); }
   #unlock { position: absolute; top: 4%; left: 4%; display: none;
             padding: 8px 14px; border-radius: 8px;
             background: #b3261e; color: #fff; font-size: 20px; }
@@ -72,6 +74,7 @@
 
   function show(ev) {
     caption.textContent = ev.text;
+    caption.classList.toggle("sound", !!ev.sound);   // a story's noise: "[coup de feu]"
     if (ev.text) caption.classList.add("on");
   }
 

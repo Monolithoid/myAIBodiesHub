@@ -10,9 +10,12 @@ block the rclpy loop.
     if is_meaningful(text): ...
     mp3 = synthesize_mp3(text, "fr-FR-DeniseNeural") # raises ImportError if edge-tts is missing
     seconds = mp3_duration(mp3)                      # sentence duration, None if unreadable
+    sound = say_sound(data)                          # a story's noise: its MP3, no synthesis
 """
 
 import asyncio
+import base64
+import binascii
 import io
 import json
 import re
@@ -76,6 +79,26 @@ def say_options(data: str) -> dict:
         return {}
     return {key: obj[key] for key, form in VOICE_OPTIONS.items()
             if isinstance(obj.get(key), str) and re.fullmatch(form, obj[key])}
+
+
+MAX_SOUND_BYTES = 1_000_000     # a short noise; body_rules refuses a bigger one
+
+
+def say_sound(data: str) -> bytes:
+    """The MP3 of a story's noise (JSON {"text": "[coup de feu]", "sound": base64}): said
+    instead of synthesizing the text, which is only its caption.  b"" for a sentence."""
+    try:
+        obj = json.loads(data or "")
+    except ValueError:
+        return b""
+    sound = obj.get("sound") if isinstance(obj, dict) else None
+    if not isinstance(sound, str) or not sound:
+        return b""
+    try:
+        mp3 = base64.b64decode(sound, validate=True)
+    except (binascii.Error, ValueError):
+        return b""
+    return mp3 if len(mp3) <= MAX_SOUND_BYTES else b""
 
 
 def say_text(data: str) -> str:

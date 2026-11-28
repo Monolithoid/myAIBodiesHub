@@ -102,7 +102,8 @@ Environment variables:
   VIEWER_HISTORY             last messages kept per viewer, with NAO's answer, default 5
 
 POST /perform {"actions": [speech|gesture|leds], "emotion", "energy", "ahead"?}: actions already
-computed (storyteller), dispatched like an LLM answer, without any LLM call; 503
+computed (storyteller), dispatched like an LLM answer, without any LLM call (a speech
+with "sound", base64 MP3, is a noise played by the voices, its text the caption); 503
 while an inference runs; the answer says whether voice bodies got it ("voices"), 409
 for an "ahead" sentence (to queue behind the current one) when none is connected.
 
