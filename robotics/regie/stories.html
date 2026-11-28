@@ -59,6 +59,8 @@
   #soundlist .theme { color: #c77dff; font-weight: 600; }
   #soundlist .before { overflow-wrap: anywhere; }
   #soundlist input[type=file] { width: auto; }
+  #soundbanks { margin: 0 0 6px; }
+  .search { font-size: 13px; }
 </style>
 </head>
 <body>
@@ -100,6 +102,12 @@
     <h2>Sons</h2>
     <p class="muted">Bruits proposés à la préparation, joués après le passage cité. Un son sans
       fichier n'est pas joué. Modifiable quand la lecture est arrêtée.</p>
+    <p class="muted" id="soundbanks">Bruitages gratuits à télécharger en MP3 :
+      <a href="https://pixabay.com/sound-effects/" target="_blank" rel="noopener">Pixabay</a>,
+      <a href="https://freesound.org/" target="_blank" rel="noopener">Freesound</a> (choisir la licence CC0),
+      <a href="https://mixkit.co/free-sound-effects/" target="_blank" rel="noopener">Mixkit</a>,
+      <a href="https://lasonotheque.org/" target="_blank" rel="noopener">La Sonothèque</a>.
+      Vérifie la licence de chaque son avant de le diffuser en stream.</p>
     <ul id="soundlist"></ul>
     <div class="msg" id="soundmessage" role="status"></div>
   </section>
@@ -345,7 +353,17 @@ function soundRow(sound, bank) {
     use.addEventListener("click", () => assignSound(sound, { file: sound.suggested }));
     row.append(use);
   }
-  item.append(head, before, row);
+  // Searches by theme on the banks linked above (French themes: English often finds more).
+  const search = Object.assign(document.createElement("div"),
+    { className: "search muted", textContent: "Chercher : " });
+  const query = encodeURIComponent(sound.theme);
+  for (const [name, url] of [["Pixabay", `https://pixabay.com/sound-effects/search/${query}/`],
+                             ["Freesound", `https://freesound.org/search/?q=${query}`]]) {
+    if (search.children.length) search.append(" · ");
+    search.append(Object.assign(document.createElement("a"),
+      { href: url, target: "_blank", rel: "noopener", textContent: name }));
+  }
+  item.append(head, before, row, search);
   return item;
 }
 

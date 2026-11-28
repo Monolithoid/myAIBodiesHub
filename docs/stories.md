@@ -135,6 +135,9 @@ shows the text it follows. Pick a file of the bank, or upload an MP3: it joins t
 bank under the sound's name, then is assigned (an existing file is never replaced:
 pick it from the list). "Associer …" offers the bank file named after the sound.
 "Retirer" takes the sound out of the script.
+The section links to free sound effect banks (Pixabay, Freesound with the CC0
+licence, Mixkit, La Sonothèque) and, for each sound, to a search of its theme on
+Pixabay and Freesound; check each sound's licence before using it on a stream.
 
 A sound with a file is read like a sentence, as if NAO made the noise: `POST /perform`
 gets a speech action whose text is the caption `[coup de feu]` and whose `sound` is the
